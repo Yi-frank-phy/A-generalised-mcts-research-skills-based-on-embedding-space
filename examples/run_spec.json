@@ -1,0 +1,17 @@
+{
+  "problem": "Explore whether a proposed high-dimensional quantum protocol can satisfy the required symmetry constraints.",
+  "goal": "Produce a rigorous but concise research report with assumptions, derivation paths, rejected alternatives, and confidence levels.",
+  "constraints": [
+    "Preserve mathematical derivations.",
+    "Separate conjecture from proven claims.",
+    "Do not bypass the DTE Judge/Evolution/Synthesis protocol."
+  ],
+  "mode": "mandatory_frontier",
+  "budget": {
+    "max_iterations": 2,
+    "total_child_budget": 3,
+    "max_research_iterations": 1
+  },
+  "allow_self_organized_executor": true,
+  "require_final_synthesis": true
+}

@@ -1,0 +1,84 @@
+"""Typed data models for the DTE skill backend.
+
+These models are intentionally small and explicit. They are the machine-facing
+contract between Codex/Kimi/OpenClaw executor episodes and the DTE controller.
+"""
+
+from __future__ import annotations
+
+from typing import Literal
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class BudgetSpec(BaseModel):
+    """Hard budget limits for one DTE run."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    max_iterations: int = Field(default=2, ge=1, le=20)
+    total_child_budget: int = Field(default=3, ge=1, le=50)
+    max_research_iterations: int = Field(default=1, ge=0, le=5)
+
+
+class DTERunSpec(BaseModel):
+    """Top-level run specification.
+
+    This is the source of truth. Free-form Markdown or prompt text cannot
+override this object after validation.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    problem: str = Field(min_length=1)
+    goal: str = Field(min_length=1)
+    constraints: list[str] = Field(default_factory=list)
+    mode: Literal["mandatory_frontier"] = "mandatory_frontier"
+    budget: BudgetSpec = Field(default_factory=BudgetSpec)
+    allow_self_organized_executor: bool = True
+    require_final_synthesis: bool = True
+
+
+class SearchNode(BaseModel):
+    """A node in the DTE search graph/frontier."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    node_id: str
+    node_type: Literal[
+        "candidate",
+        "evidence",
+        "counterexample",
+        "merge",
+        "synthesis",
+    ] = "candidate"
+    claim: str = Field(min_length=1)
+    rationale: str = Field(default="")
+    assumptions: list[str] = Field(default_factory=list)
+    evidence: list[str] = Field(default_factory=list)
+    risks: list[str] = Field(default_factory=list)
+    parent_ids: list[str] = Field(default_factory=list)
+    confidence: float = Field(default=0.5, ge=0.0, le=1.0)
+
+    # Local/offline prototype features. Real adapters may replace this with an
+    # external embedding, but the backend can still run deterministically.
+    local_embedding: list[float] | None = None
+    judge_reasoning: str | None = None
+
+    # DTE metrics. These are filled by Judge/EvolutionController.
+    score: float | None = Field(default=None, ge=0.0, le=1.0)
+    uncertainty: float | None = Field(default=None, ge=0.0)
+    ucb_score: float | None = None
+    expansion_budget: int = Field(default=0, ge=0)
+    status: Literal["frontier", "closed", "archived", "merged", "synthesis"] = "frontier"
+
+
+class AllocationResult(BaseModel):
+    """Expansion budget assignment for a frontier batch."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    node_id: str
+    score: float
+    uncertainty: float
+    ucb_score: float
+    expansion_budget: int

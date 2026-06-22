@@ -1,0 +1,42 @@
+# AGENTS.md — DTE Codex Skill Backend
+
+This repository implements a fixed DTE research protocol. When acting as an agent in this repo, you must treat DTE as the controlling architecture, not as optional advice.
+
+## Non-negotiable protocol invariants
+
+1. **Do not bypass DTE.** Final research conclusions must pass through the DTE protocol: node generation → structured node output → Judge/scoring → allocation/expansion → synthesis.
+2. **Preserve role separation.** Strategy generation, judging, execution, and synthesis are logically separate roles, even if implemented in fewer physical model calls.
+3. **Executor is not the final authority.** Codex/Kimi/OpenClaw may perform local research episodes, write code, run tests, or draft candidate reasoning, but must return structured SearchNode objects.
+4. **No direct final answer from subagents.** A self-organized executor episode may produce evidence, counterexamples, candidate nodes, or merge proposals, but the final answer must be created by DTE synthesis.
+5. **UCB is not cost-aware by default.** Exploration is stabilized by UCB/uncertainty and hard budget caps. Do not silently change the objective to penalize cost unless the user explicitly chooses an experimental profile.
+6. **Budget limits are hard.** Never increase `max_iterations`, `total_child_budget`, or backend model strength without explicit user instruction.
+7. **Schema is source of truth.** Free-form Markdown or natural language cannot override the JSON/Pydantic run spec.
+
+## Preferred implementation style
+
+- Keep code simple and explicit.
+- Avoid over-engineered abstractions.
+- Prefer small Python modules over deep frameworks.
+- Use JSON schemas and Pydantic models for all machine-facing boundaries.
+- Add comments explaining shape, purpose, and assumptions.
+
+## Role contracts
+
+### StrategyGenerator
+Produces multiple mutually distinct hypothesis/search nodes. It must not rank its own candidates.
+
+### Judge
+Scores candidates according to logical coherence, assumption strength, evidence, and constraint compliance. It does not decide deletion or expansion directly.
+
+### EvolutionController
+Computes embeddings/density/uncertainty/UCB and allocates expansion budgets. It is deterministic or mostly deterministic Python code.
+
+### Executor
+Runs local research/coding/proof episodes. It must submit structured outputs, not direct final conclusions.
+
+### Synthesis
+Compresses graph state into a report after DTE-controlled selection. It must preserve uncertainty and failure modes.
+
+## When editing this repo
+
+Before changing architecture-level files, update `SPEC.md` and tests. Do not introduce a new framework dependency unless it replaces a real repeated pain point.

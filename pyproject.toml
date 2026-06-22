@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dte-codex-skill-backend"
+version = "0.1.0"
+description = "DTE fixed research protocol packaged as a Codex-compatible skill/backend."
+requires-python = ">=3.10"
+dependencies = [
+  "numpy>=1.24",
+  "pydantic>=2.0",
+  "pyyaml>=6.0"
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0"]
+
+[project.scripts]
+dte-backend = "dte_backend.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

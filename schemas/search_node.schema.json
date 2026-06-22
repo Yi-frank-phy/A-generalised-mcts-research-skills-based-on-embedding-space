@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SearchNode",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["node_id", "node_type", "claim"],
+  "properties": {
+    "node_id": {"type": "string"},
+    "node_type": {"enum": ["candidate", "evidence", "counterexample", "merge", "synthesis"]},
+    "claim": {"type": "string", "minLength": 1},
+    "rationale": {"type": "string"},
+    "assumptions": {"type": "array", "items": {"type": "string"}},
+    "evidence": {"type": "array", "items": {"type": "string"}},
+    "risks": {"type": "array", "items": {"type": "string"}},
+    "parent_ids": {"type": "array", "items": {"type": "string"}},
+    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+    "score": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+    "uncertainty": {"type": ["number", "null"], "minimum": 0},
+    "status": {"enum": ["frontier", "closed", "archived", "merged", "synthesis"]}
+  }
+}

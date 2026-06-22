@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DTERunSpec",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["problem", "goal", "mode", "budget"],
+  "properties": {
+    "problem": {"type": "string", "minLength": 1},
+    "goal": {"type": "string", "minLength": 1},
+    "constraints": {"type": "array", "items": {"type": "string"}},
+    "mode": {"const": "mandatory_frontier"},
+    "allow_self_organized_executor": {"type": "boolean"},
+    "require_final_synthesis": {"type": "boolean"},
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["max_iterations", "total_child_budget", "max_research_iterations"],
+      "properties": {
+        "max_iterations": {"type": "integer", "minimum": 1, "maximum": 20},
+        "total_child_budget": {"type": "integer", "minimum": 1, "maximum": 50},
+        "max_research_iterations": {"type": "integer", "minimum": 0, "maximum": 5}
+      }
+    }
+  }
+}

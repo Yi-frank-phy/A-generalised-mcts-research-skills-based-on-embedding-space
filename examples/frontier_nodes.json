@@ -1,0 +1,30 @@
+[
+  {
+    "node_id": "n1",
+    "node_type": "candidate",
+    "claim": "The protocol can be framed as a cyclic-group action on paired modular outcomes.",
+    "rationale": "This route preserves the user's intuition about mutually mod-linked readings.",
+    "assumptions": ["The measurement basis induces a faithful cyclic representation."],
+    "evidence": [],
+    "risks": ["May fail if the representation is not faithful in higher dimensions."],
+    "parent_ids": [],
+    "confidence": 0.65,
+    "score": 0.72,
+    "uncertainty": 0.4,
+    "status": "frontier"
+  },
+  {
+    "node_id": "n2",
+    "node_type": "candidate",
+    "claim": "The protocol should be analyzed through rank constraints before group constraints.",
+    "rationale": "Rank obstruction may rule out some communication patterns earlier.",
+    "assumptions": ["The relevant maps admit a stable matrix representation."],
+    "evidence": [],
+    "risks": ["May miss constructive group-theoretic paths."],
+    "parent_ids": [],
+    "confidence": 0.55,
+    "score": 0.61,
+    "uncertainty": 0.7,
+    "status": "frontier"
+  }
+]

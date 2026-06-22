@@ -1,0 +1,29 @@
+{
+  "parent": {
+    "node_id": "seed-direct",
+    "node_type": "candidate",
+    "claim": "Direct route for the protocol symmetry question",
+    "rationale": "Start from the most direct constraint formulation.",
+    "assumptions": ["The symmetry constraints are stated consistently."],
+    "evidence": [],
+    "risks": [],
+    "parent_ids": [],
+    "confidence": 0.55,
+    "status": "frontier"
+  },
+  "count": 1,
+  "iteration": 1,
+  "spec": {
+    "problem": "Explore whether a proposed high-dimensional quantum protocol can satisfy the required symmetry constraints.",
+    "goal": "Produce structured executor candidate nodes, not a final answer.",
+    "constraints": ["Do not bypass DTE synthesis."],
+    "mode": "mandatory_frontier",
+    "budget": {
+      "max_iterations": 2,
+      "total_child_budget": 3,
+      "max_research_iterations": 1
+    },
+    "allow_self_organized_executor": true,
+    "require_final_synthesis": true
+  }
+}

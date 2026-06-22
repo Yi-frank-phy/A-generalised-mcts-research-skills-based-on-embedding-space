@@ -32,6 +32,7 @@ Judge/Evolution metrics or produce synthesis nodes.
 Example:
 
 ```bash
+python -m dte_backend validate-executor --request examples/expansion_request.json --executor-command "python examples/echo_executor_adapter.py"
 python -m dte_backend run --spec examples/run_spec.json --nodes examples/frontier_nodes.json --executor-command "python path/to/adapter.py"
 ```
 

@@ -9,30 +9,27 @@ from __future__ import annotations
 
 import json
 import subprocess
-from dataclasses import dataclass
 from typing import Protocol
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from .models import DTERunSpec, SearchNode
 
 
-@dataclass(frozen=True)
-class ExpansionRequest:
+class ExpansionRequest(BaseModel):
     """Structured input passed to one executor episode."""
 
+    model_config = ConfigDict(extra="forbid")
+
     parent: SearchNode
-    count: int
-    iteration: int
+    count: int = Field(ge=0)
+    iteration: int = Field(ge=1)
     spec: DTERunSpec | None = None
 
     def to_json_dict(self) -> dict:
         """Return the stable JSON payload sent to external adapters."""
 
-        return {
-            "parent": self.parent.model_dump(),
-            "count": self.count,
-            "iteration": self.iteration,
-            "spec": self.spec.model_dump() if self.spec is not None else None,
-        }
+        return self.model_dump()
 
 
 class ExecutorAdapter(Protocol):

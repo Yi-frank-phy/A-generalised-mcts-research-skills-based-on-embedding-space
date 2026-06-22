@@ -4,14 +4,21 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shlex
 from pathlib import Path
 
-from .executor_adapter import SubprocessExecutorAdapter
+from .executor_adapter import ExpansionRequest, SubprocessExecutorAdapter
 from .math_engine import allocate_frontier
 from .models import DTERunSpec, SearchNode
 from .runner import run_frontier_search
 from .validators import load_json_list, load_json_model
+
+
+def _split_command(command: str) -> list[str]:
+    """Split a user-provided command without corrupting Windows paths."""
+
+    return shlex.split(command, posix=os.name != "nt")
 
 
 def cmd_validate(args: argparse.Namespace) -> None:
@@ -32,10 +39,17 @@ def cmd_allocate(args: argparse.Namespace) -> None:
     print(json.dumps([a.model_dump() for a in allocations], ensure_ascii=False, indent=2))
 
 
+def cmd_validate_executor(args: argparse.Namespace) -> None:
+    request = load_json_model(args.request, ExpansionRequest)
+    adapter = SubprocessExecutorAdapter(_split_command(args.executor_command), timeout_seconds=args.timeout)
+    children = adapter.expand(request)
+    print(json.dumps([child.model_dump() for child in children], ensure_ascii=False, indent=2))
+
+
 def cmd_run(args: argparse.Namespace) -> None:
     spec = load_json_model(args.spec, DTERunSpec)
     nodes = load_json_list(args.nodes, SearchNode) if args.nodes else None
-    executor_adapter = SubprocessExecutorAdapter(shlex.split(args.executor_command)) if args.executor_command else None
+    executor_adapter = SubprocessExecutorAdapter(_split_command(args.executor_command)) if args.executor_command else None
     result = run_frontier_search(spec, nodes, executor_adapter=executor_adapter)
 
     out_dir = Path(args.out_dir)
@@ -79,6 +93,12 @@ def build_parser() -> argparse.ArgumentParser:
     allocate.add_argument("--temperature", type=float, default=1.0)
     allocate.add_argument("--allocation-metric", choices=["ucb", "score"], default="ucb")
     allocate.set_defaults(func=cmd_allocate)
+
+    validate_executor = sub.add_parser("validate-executor", help="run and validate an executor adapter command")
+    validate_executor.add_argument("--request", required=True, help="ExpansionRequest JSON file")
+    validate_executor.add_argument("--executor-command", required=True, help="adapter command that reads request JSON on stdin")
+    validate_executor.add_argument("--timeout", type=float, default=120.0, help="adapter timeout in seconds")
+    validate_executor.set_defaults(func=cmd_validate_executor)
 
     run = sub.add_parser("run", help="run the offline mandatory DTE prototype loop")
     run.add_argument("--spec", required=True, help="DTE run spec JSON")

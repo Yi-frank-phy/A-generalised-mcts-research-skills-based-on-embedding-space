@@ -5,16 +5,25 @@ from __future__ import annotations
 import numpy as np
 
 from .cache import DTECache
+from .embedding import EmbeddingProvider, HashEmbeddingProvider
 from .models import SearchNode
-from .text_features import cosine_distance_matrix, hashed_embedding, node_text_parts
+from .text_features import cosine_distance_matrix, node_text_parts
 
 
-def ensure_embeddings(nodes: list[SearchNode], dim: int = 64, cache: DTECache | None = None) -> None:
+def ensure_embeddings(
+    nodes: list[SearchNode],
+    dim: int = 64,
+    cache: DTECache | None = None,
+    provider: EmbeddingProvider | None = None,
+) -> None:
     """Fill missing local embeddings in-place.
 
     The optional cache is keyed by stable node content, not by DTE metrics.
+    The provider can be a hash fallback or a real high-quality embedding backend.
     """
 
+    provider = provider or HashEmbeddingProvider(dim=dim)
+    missing: list[tuple[SearchNode, str]] = []
     for node in nodes:
         if node.local_embedding:
             if cache is not None:
@@ -25,12 +34,21 @@ def ensure_embeddings(nodes: list[SearchNode], dim: int = 64, cache: DTECache | 
             node.local_embedding = cached
             continue
         text = node_text_parts(node.claim, node.rationale, node.assumptions, node.evidence, node.risks)
-        node.local_embedding = hashed_embedding(text, dim=dim)
-        if cache is not None:
-            cache.set_embedding(node, node.local_embedding)
+        missing.append((node, text))
+
+    if missing:
+        vectors = provider.embed_texts([text for _, text in missing])
+        for (node, _), vector in zip(missing, vectors):
+            node.local_embedding = vector
+            if cache is not None:
+                cache.set_embedding(node, vector)
 
 
-def estimate_uncertainty_from_density(nodes: list[SearchNode], cache: DTECache | None = None) -> dict[str, float]:
+def estimate_uncertainty_from_density(
+    nodes: list[SearchNode],
+    cache: DTECache | None = None,
+    provider: EmbeddingProvider | None = None,
+) -> dict[str, float]:
     """Estimate novelty-style uncertainty from local density.
 
     This is a cheap proxy: average cosine distance to other frontier nodes.
@@ -41,7 +59,7 @@ def estimate_uncertainty_from_density(nodes: list[SearchNode], cache: DTECache |
     frontier = [n for n in nodes if n.status == "frontier"]
     if not frontier:
         return {}
-    ensure_embeddings(frontier, cache=cache)
+    ensure_embeddings(frontier, cache=cache, provider=provider)
     if len(frontier) == 1:
         return {frontier[0].node_id: 1.0}
 

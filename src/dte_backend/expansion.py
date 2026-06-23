@@ -1,11 +1,16 @@
-"""Deterministic expansion operator for the prototype."""
+"""Expansion operator for the prototype.
+
+The default expansion is deterministic and offline. A real Codex/Kimi/OpenClaw
+executor can be plugged in through the adapter boundary, but it still returns
+validated SearchNode children to DTE.
+"""
 
 from __future__ import annotations
 
 import uuid
 
-from .executor_adapter import ExpansionRequest, ExecutorAdapter, validate_executor_children
-from .models import DTERunSpec, SearchNode
+from .adapter import ExecutorAdapter
+from .models import DTERunSpec, ExpansionRequest, SearchNode
 
 
 _VARIANTS = [
@@ -17,12 +22,8 @@ _VARIANTS = [
 ]
 
 
-def expand_node(parent: SearchNode, count: int, iteration: int) -> list[SearchNode]:
-    """Generate child nodes for one parent.
-
-    Real executor adapters can replace this with Codex/Kimi episodes. The output
-    contract remains SearchNode.
-    """
+def deterministic_expand_node(parent: SearchNode, count: int, iteration: int) -> list[SearchNode]:
+    """Generate child nodes for one parent without external calls."""
 
     children: list[SearchNode] = []
     for i in range(max(0, count)):
@@ -43,6 +44,28 @@ def expand_node(parent: SearchNode, count: int, iteration: int) -> list[SearchNo
     return children
 
 
+def expand_node(
+    parent: SearchNode,
+    count: int,
+    iteration: int,
+    spec: DTERunSpec | None = None,
+    executor_adapter: ExecutorAdapter | None = None,
+) -> list[SearchNode]:
+    """Generate children for one parent through DTE's expansion boundary.
+
+    If an external adapter is supplied, it receives a validated ExpansionRequest
+    and must return SearchNode children. Otherwise, deterministic local expansion
+    is used for tests and offline protocol validation.
+    """
+
+    if count <= 0:
+        return []
+    if executor_adapter is None:
+        return deterministic_expand_node(parent, count=count, iteration=iteration)
+    request = ExpansionRequest(parent=parent, child_count=count, iteration=iteration, spec=spec)
+    return executor_adapter(request)
+
+
 def expand_frontier(
     nodes: list[SearchNode],
     budgets: dict[str, int],
@@ -58,12 +81,15 @@ def expand_frontier(
         parent = by_id.get(node_id)
         if parent is None or parent.status != "frontier" or budget <= 0:
             continue
-        if executor_adapter is None:
-            children = expand_node(parent, budget, iteration=iteration)
-        else:
-            request = ExpansionRequest(parent=parent, count=budget, iteration=iteration, spec=spec)
-            children = validate_executor_children(parent, budget, executor_adapter.expand(request))
-        new_children.extend(children)
+        new_children.extend(
+            expand_node(
+                parent,
+                budget,
+                iteration=iteration,
+                spec=spec,
+                executor_adapter=executor_adapter,
+            )
+        )
         parent.status = "closed"
         parent.expansion_budget = 0
     return nodes + new_children

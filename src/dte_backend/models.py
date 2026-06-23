@@ -7,11 +7,11 @@ contract between Codex/Kimi/OpenClaw executor episodes and the DTE controller.
 from __future__ import annotations
 
 from typing import Literal
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field
+from pydantic import BaseModel, Field
 
 
 class BudgetSpec(BaseModel):
-    """Hard budget limits and auto-synthesis controls for one DTE run."""
+    """Hard budget limits for one DTE run."""
 
     max_iterations: int = Field(default=2, ge=1, le=20)
     total_child_budget: int = Field(default=3, ge=1, le=50)
@@ -36,13 +36,11 @@ class DTERunSpec(BaseModel):
     allow_self_organized_executor: bool = True
     require_final_synthesis: bool = True
     embedding_provider: Literal["hash", "gemini-embedding-2"] = "hash"
-    embedding_dimension: int = Field(default=64, ge=8, le=3072)
+    embedding_dimension: int = Field(default=3072, ge=8, le=3072)
 
 
 class SearchNode(BaseModel):
     """A node in the DTE search graph/frontier."""
-
-    model_config = ConfigDict(extra="forbid")
 
     node_id: str
     node_type: Literal[
@@ -60,12 +58,9 @@ class SearchNode(BaseModel):
     parent_ids: list[str] = Field(default_factory=list)
     confidence: float = Field(default=0.5, ge=0.0, le=1.0)
 
-    # Local/offline prototype features. Real adapters may replace this with an
-    # external embedding, but the backend can still run deterministically.
     local_embedding: list[float] | None = None
     judge_reasoning: str | None = None
 
-    # DTE metrics. These are filled by Judge/EvolutionController.
     score: float | None = Field(default=None, ge=0.0, le=1.0)
     uncertainty: float | None = Field(default=None, ge=0.0)
     ucb_score: float | None = None
@@ -86,18 +81,10 @@ class AllocationResult(BaseModel):
 class ExpansionRequest(BaseModel):
     """Request passed from DTE Expansion to an external executor adapter."""
 
-    model_config = ConfigDict(extra="forbid")
-
     parent: SearchNode
-    child_count: int = Field(ge=1, le=50, validation_alias=AliasChoices("child_count", "count"))
+    child_count: int = Field(ge=1, le=50)
     iteration: int = Field(ge=1)
     spec: DTERunSpec | None = None
-
-    @property
-    def count(self) -> int:
-        """Backward-compatible alias for older executor adapter examples."""
-
-        return self.child_count
 
 
 class MergeProposal(BaseModel):

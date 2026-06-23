@@ -11,11 +11,14 @@ from pydantic import BaseModel, Field
 
 
 class BudgetSpec(BaseModel):
-    """Hard budget limits for one DTE run."""
+    """Hard budget limits and auto-synthesis controls for one DTE run."""
 
     max_iterations: int = Field(default=2, ge=1, le=20)
     total_child_budget: int = Field(default=3, ge=1, le=50)
     max_research_iterations: int = Field(default=1, ge=0, le=5)
+    min_iterations_before_synthesis: int = Field(default=2, ge=1, le=20)
+    entropy_change_threshold: float = Field(default=0.05, ge=0.0, le=1.0)
+    t_max: float = Field(default=1.0, gt=0.0, le=10.0)
 
 
 class DTERunSpec(BaseModel):
@@ -32,6 +35,8 @@ class DTERunSpec(BaseModel):
     budget: BudgetSpec = Field(default_factory=BudgetSpec)
     allow_self_organized_executor: bool = True
     require_final_synthesis: bool = True
+    embedding_provider: Literal["hash", "gemini-embedding-2"] = "hash"
+    embedding_dimension: int = Field(default=64, ge=8, le=3072)
 
 
 class SearchNode(BaseModel):

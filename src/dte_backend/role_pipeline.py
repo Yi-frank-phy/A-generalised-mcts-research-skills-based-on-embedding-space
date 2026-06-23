@@ -1,9 +1,9 @@
 """Role-isolated deterministic seed pipeline.
 
-The old DTE backend separated decomposition, research, distillation, and strategy
-generation to reduce role-mixing bias. This module restores that backend logic in
-an offline deterministic form. A future model-backed implementation can replace
-individual functions without changing DTE's mandatory control flow.
+DTE keeps strategy generation separate from judging/execution to reduce bias.
+The old fixed Distiller role is intentionally not part of the mandatory chain:
+modern Codex-style agents can compile/summarize their own local context when it
+helps. The backend only exposes a compile hint, not a mandatory distiller step.
 """
 
 from __future__ import annotations
@@ -29,11 +29,17 @@ class ResearchContext:
 
 
 @dataclass(frozen=True)
-class DistilledContext:
-    summary: str
-    assumptions: list[str]
-    opportunities: list[str]
-    risks: list[str]
+class CompileHint:
+    """Optional prompt-level compression hint for agents.
+
+    This replaces the old mandatory Distiller role. A model/subagent may choose
+    to compile its local context before returning a SearchNode, but DTE does not
+    force a separate distiller call in the backend loop.
+    """
+
+    summary_focus: str
+    preserve: list[str]
+    drop: list[str]
 
 
 def _sentences(text: str) -> list[str]:
@@ -75,32 +81,41 @@ def research_context(spec: DTERunSpec, decomposition: TaskDecomposition) -> Rese
     return ResearchContext(background=background, unknowns=unknowns, failure_modes=failure_modes)
 
 
-def distill_context(decomposition: TaskDecomposition, context: ResearchContext) -> DistilledContext:
-    """Distiller role: compress context before strategy generation/Judge."""
+def compile_hint(decomposition: TaskDecomposition, context: ResearchContext) -> CompileHint:
+    """Return an optional compile instruction for Codex/subagents."""
 
-    assumptions = decomposition.constraints[:3]
-    summary = " / ".join([decomposition.core_question, *context.unknowns[:2]])
-    opportunities = [
-        "Direct constructive derivation.",
-        "Counterexample-first stress test.",
-        "Alternative formalism or symmetry representation.",
-        "Merge/discriminator branch for conflicting routes.",
-    ]
-    risks = list(context.failure_modes)
-    return DistilledContext(summary=summary, assumptions=assumptions, opportunities=opportunities, risks=risks)
+    return CompileHint(
+        summary_focus="Compile only the information needed to create or evaluate SearchNodes.",
+        preserve=[
+            "explicit assumptions",
+            "evidence and counterexamples",
+            "branch conflicts and merge opportunities",
+            "uncertainty / failure modes",
+        ],
+        drop=[
+            "long transcripts",
+            "irrelevant tool logs",
+            "style-only rewrites",
+            "self-justifying explanations without new evidence",
+        ],
+    )
 
 
-def generate_initial_strategies(spec: DTERunSpec, distilled: DistilledContext) -> list[SearchNode]:
+def generate_initial_strategies(
+    spec: DTERunSpec,
+    decomposition: TaskDecomposition,
+    context: ResearchContext,
+) -> list[SearchNode]:
     """StrategyGenerator role: produce distinct frontier nodes without ranking them."""
 
-    base_assumptions = list(distilled.assumptions)
+    base_assumptions = list(decomposition.constraints[:3])
     return [
         SearchNode(
             node_id="seed-direct",
             claim=f"Direct constructive route for: {spec.problem}",
-            rationale=f"Use the most direct derivation path. Context: {distilled.summary}",
+            rationale=f"Use the most direct derivation path. Unknowns to check: {context.unknowns[0]}",
             assumptions=base_assumptions,
-            risks=[distilled.risks[0]] if distilled.risks else [],
+            risks=[context.failure_modes[0]],
             confidence=0.55,
         ),
         SearchNode(
@@ -131,15 +146,16 @@ def generate_initial_strategies(spec: DTERunSpec, distilled: DistilledContext) -
 
 
 def seed_frontier_from_roles(spec: DTERunSpec) -> tuple[list[SearchNode], dict[str, object]]:
-    """Run the logical role seed pipeline and return nodes plus audit metadata."""
+    """Run the logical seed pipeline and return nodes plus audit metadata."""
 
     decomposition = decompose_task(spec)
     context = research_context(spec, decomposition)
-    distilled = distill_context(decomposition, context)
-    nodes = generate_initial_strategies(spec, distilled)
+    hint = compile_hint(decomposition, context)
+    nodes = generate_initial_strategies(spec, decomposition, context)
     audit = {
         "decomposition": decomposition.__dict__,
         "research_context": context.__dict__,
-        "distilled_context": distilled.__dict__,
+        "compile_hint": hint.__dict__,
+        "distiller_role": "removed: compile is an optional agent-local instruction, not a mandatory backend step",
     }
     return nodes, audit

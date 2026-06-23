@@ -10,19 +10,7 @@ Let the frontier at step `t` be:
 F_t = {v_i | v_i is a currently expandable leaf/search node}
 ```
 
-Each node has:
-
-- claim / hypothesis;
-- rationale;
-- assumptions;
-- evidence;
-- risks;
-- score;
-- embedding or feature representation;
-- parent IDs;
-- status.
-
-The controller evaluates frontier nodes and allocates expansion budget.
+Each node has claim/hypothesis, rationale, assumptions, evidence, risks, score, embedding representation, parent IDs, and status. The controller evaluates frontier nodes and allocates expansion budget.
 
 ## 2. UCB objective
 
@@ -32,39 +20,32 @@ Default UCB remains value/uncertainty driven:
 U_i = V_i + c * tau * uncertainty_i
 ```
 
-where:
+where `V_i` is Judge value, `tau` is normalized temperature, and `uncertainty_i` comes from embedding-space density/KDE. Cost is not part of UCB by default. Cost is controlled by hard caps: `max_iterations`, `total_child_budget`, `max_research_iterations`, backend/model policy, and synthesis triggers.
 
-- `V_i`: Judge value score;
-- `c`: exploration coefficient;
-- `tau`: normalized system temperature;
-- `uncertainty_i`: density-derived or novelty-derived uncertainty proxy.
+## 3. Geometry and embedding dimension
 
-Cost is not part of UCB by default. Cost is controlled by hard caps:
+DTE's entropy controller requires a continuous embedding geometry:
 
-- `max_iterations`;
-- `total_child_budget`;
-- `max_research_iterations`;
-- backend/model policy;
-- early synthesis.
+```text
+x_i = E(v_i)
+rho_i = KDE(x_i)
+S_t = - mean(log rho_i)
+```
 
-An experimental cost-aware profile may be added later, but must not be default.
+For real runs, geometry should be max-quality by default. `embedding_dimension` defaults to `3072`; lower dimensions are debug/fallback profiles. Hash embeddings are only for offline tests and CI.
 
-## 3. Boltzmann allocation
+## 4. Boltzmann allocation
 
 Given allocation values `A_i`, temperature `T`, and total expansion budget `C`:
-
-By default the prototype uses `A_i = U_i`, so entropy/uncertainty affects actual expansion rather than merely display ranking. Use score-only allocation only as a compatibility profile.
 
 ```text
 p_i = exp(A_i / T) / Σ_j exp(A_j / T)
 k_i = round_or_ceil(C * p_i)
 ```
 
-`k_i` is the expansion budget for node `i`.
+By default `A_i = U_i`, so entropy/uncertainty affects actual expansion rather than merely display ranking.
 
-## 4. Status model
-
-Recommended internal statuses:
+## 5. Status model
 
 ```text
 frontier       currently expandable leaf node
@@ -74,53 +55,33 @@ merged         absorbed into another node
 synthesis      graph-compression/synthesis node
 ```
 
-Legacy compatibility can map:
+Legacy compatibility can map `active -> frontier`, `expanded -> closed`, and `child_quota -> expansion_budget`.
 
-```text
-active   -> frontier
-expanded -> closed
-child_quota -> expansion_budget
-```
-
-## 5. Mandatory phases
+## 6. Mandatory phases
 
 ### Phase A: Seed
-Generate or ingest initial SearchNodes.
+Generate or ingest initial SearchNodes. The seed pipeline keeps decomposition/research/strategy generation logically separate. The old mandatory Distiller role is removed; compile is an optional prompt-level operation available to each agent/subagent.
 
-### Phase B: Judge
-Score SearchNodes. The Judge does not directly allocate budget.
+### Phase B: Judge Oracle
+Score SearchNodes. The Judge may be implemented by a strong subagent. It returns observable scores, reasons, and risk notes. It does not expose hidden vectors, allocate budget, or synthesize the final answer.
 
 ### Phase C: EvolutionController
-Compute density/uncertainty/UCB and expansion budget.
+Compute embedding/KDE density, entropy, uncertainty, temperature, UCB, and expansion budget. This is the deterministic mathematical controller.
 
 ### Phase D: Executor
-Run expansion or research episodes. External agents may be used here.
+Run expansion or research episodes. External agents may be used here but must return structured SearchNode children.
 
-### Phase E: Merge/Synthesis
-Compress graph state into a report or synthesis node.
+### Phase E: Relation/Merge Oracle
+Equivalent, complementary, and conflict merge judgments are callable oracle tasks. A model/subagent may classify relations or propose discriminator questions, but final graph mutation must pass backend validation.
 
-## 6. External agent boundary
+### Phase F: Synthesis
+Compress graph state into a report or synthesis node after DTE-controlled selection.
+
+## 7. External agent boundary
 
 Codex/Kimi/OpenClaw may run inside Executor. They cannot bypass DTE.
 
-The backend exposes this boundary as an executor adapter invoked only by the
-Expansion phase after Judge and EvolutionController have assigned an expansion
-budget. The adapter receives one parent SearchNode, the allocated child count,
-the iteration number, and optionally the validated DTERunSpec. It must not run
-Judge, allocate budget, or produce final synthesis.
-
-This input is represented as a validated `ExpansionRequest` object:
-
-```json
-{
-  "parent": {"node_id": "...", "node_type": "candidate", "claim": "..."},
-  "count": 1,
-  "iteration": 1,
-  "spec": null
-}
-```
-
-Like `SearchNode` and `DTERunSpec`, `ExpansionRequest` rejects extra fields.
+The backend exposes this boundary as an executor adapter invoked only after Judge and EvolutionController have assigned an expansion budget. The adapter receives one parent SearchNode, the allocated child count, the iteration number, and optionally the validated DTERunSpec. It must not allocate budget or produce final synthesis.
 
 Required executor output:
 
@@ -142,28 +103,30 @@ Adapter outputs are validated before being appended to the graph:
 - returned children must include the expanded parent id;
 - returned children must have `status = "frontier"`;
 - returned children cannot be `synthesis` nodes;
-- returned children cannot pre-fill `score`, `uncertainty`, `ucb_score`, or
-  `expansion_budget`;
+- returned children cannot pre-fill `score`, `uncertainty`, `ucb_score`, or `expansion_budget`;
 - returned child count cannot exceed the allocated budget.
 
-## 7. Performance requirements
+## 8. Oracle task boundary
+
+Judge and relation tasks are not hard-coded backend intelligence. They are observable oracle tasks:
+
+```text
+JudgeOracle: nodes -> scores/reasoning/risks
+RelationOracle: nodes -> equivalent|complementary|conflict|independent + rationale
+DiscriminatorOracle: conflicting nodes -> discriminator question
+```
+
+These tasks may be implemented by Codex subagents. They do not provide latent token vectors and do not replace embedding geometry.
+
+## 9. Performance requirements
 
 - Cache embeddings by stable node text hash.
 - Cache Judge scores when node content has not changed.
+- Use a persistent file cache when using Gemini Embedding 2 or other high-quality providers.
 - Batch multiple node evaluations where feasible.
 - Avoid injecting full graph context into every role.
 - Prefer node summaries and deltas.
 
-## 8. Merge skeleton
+## 10. Merge skeleton
 
-The initial backend implements conservative `equivalent_merge` only: frontier
-nodes with identical normalized claims are grouped, the highest score/confidence
-node remains frontier, and lower-ranked duplicates are marked `merged`.
-
-Future model-backed merge types should add:
-
-- `complementary_merge`: create a new synthesis/search node from mutually
-  useful partial routes;
-- `conflict_merge`: create a discriminator task when assumptions clash.
-
-Merge may compress the graph, but final conclusions still require DTE synthesis.
+The deterministic backend implements conservative `equivalent_merge` for exact normalized-claim duplicates. Complementary/conflict merge is represented as a relation oracle task and can be delegated to a strong subagent. Merge may compress the graph, but final conclusions still require DTE synthesis.

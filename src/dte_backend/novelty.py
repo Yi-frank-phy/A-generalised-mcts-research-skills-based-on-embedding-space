@@ -1,26 +1,21 @@
-"""Novelty / entropy proxy for frontier nodes."""
+"""Novelty and entropy helpers for frontier nodes."""
 
 from __future__ import annotations
 
-import numpy as np
-
 from .cache import DTECache
 from .embedding import EmbeddingProvider, HashEmbeddingProvider
+from .kde import KDEState, compute_kde_state
 from .models import SearchNode
-from .text_features import cosine_distance_matrix, node_text_parts
+from .text_features import node_text_parts
 
 
 def ensure_embeddings(
     nodes: list[SearchNode],
-    dim: int = 64,
+    dim: int = 3072,
     cache: DTECache | None = None,
     provider: EmbeddingProvider | None = None,
 ) -> None:
-    """Fill missing local embeddings in-place.
-
-    The optional cache is keyed by stable node content, not by DTE metrics.
-    The provider can be a hash fallback or a real high-quality embedding backend.
-    """
+    """Fill missing node vectors in-place."""
 
     provider = provider or HashEmbeddingProvider(dim=dim)
     missing: list[tuple[SearchNode, str]] = []
@@ -44,32 +39,27 @@ def ensure_embeddings(
                 cache.set_embedding(node, vector)
 
 
+def estimate_frontier_kde_state(
+    nodes: list[SearchNode],
+    cache: DTECache | None = None,
+    provider: EmbeddingProvider | None = None,
+) -> tuple[list[SearchNode], KDEState]:
+    """Return frontier nodes and their KDE observables."""
+
+    frontier = [n for n in nodes if n.status == "frontier"]
+    if not frontier:
+        return [], compute_kde_state([])
+    ensure_embeddings(frontier, cache=cache, provider=provider)
+    embeddings = [n.local_embedding or [] for n in frontier]
+    return frontier, compute_kde_state(embeddings)
+
+
 def estimate_uncertainty_from_density(
     nodes: list[SearchNode],
     cache: DTECache | None = None,
     provider: EmbeddingProvider | None = None,
 ) -> dict[str, float]:
-    """Estimate novelty-style uncertainty from local density.
+    """Estimate uncertainty from low-density frontier regions."""
 
-    This is a cheap proxy: average cosine distance to other frontier nodes.
-    Sparse/outlying nodes receive larger uncertainty. The value is normalized to
-    [0, 1]. A single frontier node receives uncertainty 1.0.
-    """
-
-    frontier = [n for n in nodes if n.status == "frontier"]
-    if not frontier:
-        return {}
-    ensure_embeddings(frontier, cache=cache, provider=provider)
-    if len(frontier) == 1:
-        return {frontier[0].node_id: 1.0}
-
-    dist = cosine_distance_matrix([n.local_embedding or [] for n in frontier])
-    # Exclude diagonal by using sum/(n-1). Larger mean distance = sparser region.
-    mean_dist = (dist.sum(axis=1) - np.diag(dist)) / max(1, len(frontier) - 1)
-    min_v = float(np.min(mean_dist))
-    max_v = float(np.max(mean_dist))
-    if max_v - min_v < 1e-12:
-        norm = np.full_like(mean_dist, 0.5, dtype=float)
-    else:
-        norm = (mean_dist - min_v) / (max_v - min_v)
-    return {node.node_id: float(value) for node, value in zip(frontier, norm)}
+    frontier, state = estimate_frontier_kde_state(nodes, cache=cache, provider=provider)
+    return {node.node_id: value for node, value in zip(frontier, state.uncertainty)}

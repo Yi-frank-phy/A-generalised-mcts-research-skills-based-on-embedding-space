@@ -1,5 +1,7 @@
 # AGENTS.md — DTE Codex Skill Backend
 
+> **Read first:** [`CODEX_NEXT_STEPS.md`](./CODEX_NEXT_STEPS.md) lists the current blockers and exact next steps. Fix those before doing broad cleanup or architecture work.
+
 This repository implements a fixed DTE research protocol. When acting as an agent in this repo, you must treat DTE as the controlling architecture, not as optional advice.
 
 ## Non-negotiable protocol invariants

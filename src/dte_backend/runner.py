@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 
 from .adapter import ExecutorAdapter
 from .cache import DTECache
+from .embedding import get_embedding_provider
+from .entropy import EntropyState, evaluate_entropy_state, spatial_entropy_from_embeddings
 from .expansion import expand_frontier
 from .judge import batch_judge
 from .math_engine import allocate_frontier
@@ -21,6 +23,7 @@ class IterationTrace:
     allocations: list[AllocationResult]
     notes: list[str] = field(default_factory=list)
     merges: list[MergeProposal] = field(default_factory=list)
+    entropy_state: EntropyState | None = None
 
 
 @dataclass
@@ -75,6 +78,8 @@ def run_frontier_search(
     nodes = list(initial_nodes) if initial_nodes else _seed_nodes_from_spec(spec)
     traces: list[IterationTrace] = []
     cache = cache or DTECache()
+    embedding_provider = get_embedding_provider(spec.embedding_provider, dim=spec.embedding_dimension)
+    previous_entropy: float | None = None
 
     for iteration in range(1, spec.budget.max_iterations + 1):
         frontier = [node for node in nodes if node.status == "frontier"]
@@ -104,17 +109,29 @@ def run_frontier_search(
                     node.judge_reasoning = result.reasoning
                     break
 
-        # Entropy/novelty proxy with embedding cache.
-        uncertainties = estimate_uncertainty_from_density(nodes, cache=cache)
+        # Entropy/novelty proxy with embedding cache/provider.
+        uncertainties = estimate_uncertainty_from_density(nodes, cache=cache, provider=embedding_provider)
         for node in frontier:
             node.uncertainty = uncertainties.get(node.node_id, 0.0)
+
+        frontier_embeddings = [node.local_embedding or [] for node in frontier]
+        spatial_entropy = spatial_entropy_from_embeddings(frontier_embeddings)
+        entropy_state = evaluate_entropy_state(
+            spatial_entropy=spatial_entropy,
+            previous_entropy=previous_entropy,
+            iteration=iteration,
+            min_iterations=spec.budget.min_iterations_before_synthesis,
+            entropy_change_threshold=spec.budget.entropy_change_threshold,
+            t_max=spec.budget.t_max,
+        )
+        previous_entropy = spatial_entropy
 
         allocations = allocate_frontier(
             nodes,
             total_budget=spec.budget.total_child_budget,
-            tau=1.0,
+            tau=max(entropy_state.normalized_temperature, 0.05),
             c_explore=1.0,
-            temperature=1.0,
+            temperature=max(entropy_state.effective_temperature, 0.05),
         )
         for allocation in allocations:
             for node in frontier:
@@ -133,9 +150,16 @@ def run_frontier_search(
                     f"budget={spec.budget.total_child_budget}",
                     f"judge_cache_hits={cache.stats.judge_hits}",
                     f"embedding_cache_hits={cache.stats.embedding_hits}",
+                    f"spatial_entropy={entropy_state.spatial_entropy:.4f}",
+                    f"normalized_temperature={entropy_state.normalized_temperature:.4f}",
                 ],
+                entropy_state=entropy_state,
             )
         )
+
+        if entropy_state.should_synthesize:
+            traces[-1].notes.append(f"auto_synthesis_trigger={entropy_state.stop_reason}")
+            break
 
         budget_map = {a.node_id: a.expansion_budget for a in allocations if a.expansion_budget > 0}
         nodes = expand_frontier(

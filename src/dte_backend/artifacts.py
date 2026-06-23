@@ -6,6 +6,8 @@ and summarize them instead of requiring a custom DTE dashboard.
 
 from __future__ import annotations
 
+import json
+
 from .runner import RunResult
 
 
@@ -47,6 +49,8 @@ def render_main_agent_status(result: RunResult) -> str:
     lines.append(f"Problem: {result.spec.problem}")
     lines.append(f"Goal: {result.spec.goal}")
     lines.append("")
+    lines.append(f"Embedding provider: `{result.spec.embedding_provider}`")
+    lines.append(f"Embedding dimension: `{result.spec.embedding_dimension}`")
     lines.append(f"Total nodes: {len(result.nodes)}")
     lines.append(f"Frontier nodes: {sum(1 for n in result.nodes if n.status == 'frontier')}")
     lines.append(f"Closed nodes: {sum(1 for n in result.nodes if n.status == 'closed')}")
@@ -60,6 +64,37 @@ def render_main_agent_status(result: RunResult) -> str:
         lines.append(f"- normalized temperature: {state.normalized_temperature:.4f}")
         lines.append(f"- stop reason: {state.stop_reason or 'continue'}")
     lines.append("")
-    lines.append("## Human interaction")
-    lines.append("If the controller reaches an entropy plateau with unresolved top-branch conflict, the main agent should ask the user a short branch-selection or discriminator-task question in chat.")
+    lines.append("## Main-agent role")
+    lines.append("The main agent should summarize frontier state, entropy/temperature, expansion allocation, and any human question in chat. It should not bypass DTE synthesis.")
+    return "\n".join(lines) + "\n"
+
+
+def render_human_questions_markdown(result: RunResult) -> str:
+    questions = [trace.human_question for trace in result.traces if trace.human_question is not None]
+    lines = ["# DTE Human Questions", ""]
+    if not questions:
+        lines.append("No human question was triggered in this run.")
+        return "\n".join(lines) + "\n"
+    for i, question in enumerate(questions, 1):
+        lines.append(f"## {i}. {question.question_type}")
+        lines.append(question.question)
+        lines.append("")
+        for option in question.options:
+            lines.append(f"- {option}")
+        lines.append("")
+        lines.append(f"Context: {question.context}")
+        lines.append("")
+    return "\n".join(lines) + "\n"
+
+
+def render_role_audit_markdown(result: RunResult) -> str:
+    lines = ["# DTE Role Audit", ""]
+    if not result.role_audit:
+        lines.append("Initial nodes were supplied directly; role-isolated seed pipeline was not run.")
+        return "\n".join(lines) + "\n"
+    lines.append("This records the logical old-backend seed roles: decomposition, research, distillation, and strategy generation.")
+    lines.append("")
+    lines.append("```json")
+    lines.append(json.dumps(result.role_audit, ensure_ascii=False, indent=2))
+    lines.append("```")
     return "\n".join(lines) + "\n"

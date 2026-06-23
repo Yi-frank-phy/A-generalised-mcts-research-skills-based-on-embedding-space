@@ -1,3 +1,8 @@
+---
+name: dte-extreme-research
+description: "Run the fixed Deep Think Evolving research protocol as a Codex skill/backend for high-depth mathematical, physical, academic, proof, derivation, or conceptual research. Use when Codex must enforce the mandatory DTE loop: structured DTERunSpec input, SearchNode generation, Judge/scoring, EvolutionController UCB allocation, executor adapter expansion, and final DTE synthesis with assumptions, rejected alternatives, confidence levels, unresolved risks, and reproducibility metadata. Also use when developing or validating DTE executor adapters that must return structured SearchNode objects instead of direct final answers."
+---
+
 # DTE Extreme Research Skill
 
 ## Purpose
@@ -24,6 +29,23 @@ The skill accepts a structured `DTERunSpec`:
   "allow_self_organized_executor": true,
   "require_final_synthesis": true
 }
+```
+
+## Bundled backend
+
+Use the bundled Python backend in this skill folder when a runnable local DTE
+loop is needed. From the skill/backend root:
+
+```bash
+python -m pip install -e .[dev]
+python -m dte_backend validate examples/run_spec.json
+python -m dte_backend run --spec examples/run_spec.json --nodes examples/frontier_nodes.json --out-dir artifacts/prototype
+```
+
+Use `validate-executor` before trusting a Codex/Kimi/OpenClaw executor wrapper:
+
+```bash
+python -m dte_backend validate-executor --request examples/expansion_request.json --executor-command "python examples/echo_executor_adapter.py"
 ```
 
 ## Required flow

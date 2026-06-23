@@ -1,0 +1,4 @@
+interface:
+  display_name: "DTE Extreme Research"
+  short_description: "Run mandatory DTE research loops."
+  default_prompt: "Use $dte-extreme-research to run a structured DTE research loop for this problem."

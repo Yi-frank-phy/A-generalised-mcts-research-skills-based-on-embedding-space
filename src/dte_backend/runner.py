@@ -7,13 +7,15 @@ from dataclasses import dataclass, field
 from .adapter import ExecutorAdapter
 from .cache import DTECache
 from .embedding import get_embedding_provider
-from .entropy import EntropyState, evaluate_entropy_state, spatial_entropy_from_embeddings
+from .entropy import EntropyState, evaluate_entropy_state
 from .expansion import expand_frontier
+from .human import HumanQuestion, maybe_create_human_question
 from .judge import batch_judge
 from .math_engine import allocate_frontier
 from .merge import apply_equivalent_merges
 from .models import AllocationResult, DTERunSpec, MergeProposal, SearchNode
-from .novelty import estimate_uncertainty_from_density
+from .novelty import estimate_frontier_kde_state
+from .role_pipeline import seed_frontier_from_roles
 from .synthesis import synthesize_report
 
 
@@ -24,6 +26,7 @@ class IterationTrace:
     notes: list[str] = field(default_factory=list)
     merges: list[MergeProposal] = field(default_factory=list)
     entropy_state: EntropyState | None = None
+    human_question: HumanQuestion | None = None
 
 
 @dataclass
@@ -33,34 +36,13 @@ class RunResult:
     traces: list[IterationTrace]
     report: str
     cache: DTECache
+    role_audit: dict[str, object] = field(default_factory=dict)
 
 
-def _seed_nodes_from_spec(spec: DTERunSpec) -> list[SearchNode]:
-    """Create a small initial frontier when no nodes are supplied."""
+def _seed_nodes_from_spec(spec: DTERunSpec) -> tuple[list[SearchNode], dict[str, object]]:
+    """Seed frontier through the old role-isolated backend logic."""
 
-    return [
-        SearchNode(
-            node_id="seed-direct",
-            claim=f"Direct route for: {spec.problem}",
-            rationale="Start with the most direct formulation of the problem.",
-            assumptions=list(spec.constraints[:2]),
-            confidence=0.55,
-        ),
-        SearchNode(
-            node_id="seed-counter",
-            claim=f"Counterexample-oriented route for: {spec.problem}",
-            rationale="Search for failure modes before accepting the direct route.",
-            assumptions=list(spec.constraints[:2]),
-            confidence=0.50,
-        ),
-        SearchNode(
-            node_id="seed-synthesis",
-            claim=f"Synthesis route for: {spec.problem}",
-            rationale="Look for a formulation that merges competing perspectives.",
-            assumptions=list(spec.constraints[:2]),
-            confidence=0.52,
-        ),
-    ]
+    return seed_frontier_from_roles(spec)
 
 
 def run_frontier_search(
@@ -69,13 +51,19 @@ def run_frontier_search(
     executor_adapter: ExecutorAdapter | None = None,
     cache: DTECache | None = None,
 ) -> RunResult:
-    """Run the mandatory DTE prototype loop.
+    """Run the mandatory DTE loop.
 
-    This never bypasses Judge/Evolution/Expansion. It is deterministic and
-    offline by default, so it is suitable for harness-free prototype validation.
+    This preserves the old backend structure at the logical level:
+    role-isolated seeding -> Judge -> embedding/KDE/entropy -> UCB/Boltzmann ->
+    Expansion/Executor -> merge/synthesis/HIL artifacts.
     """
 
-    nodes = list(initial_nodes) if initial_nodes else _seed_nodes_from_spec(spec)
+    role_audit: dict[str, object] = {}
+    if initial_nodes:
+        nodes = list(initial_nodes)
+    else:
+        nodes, role_audit = _seed_nodes_from_spec(spec)
+
     traces: list[IterationTrace] = []
     cache = cache or DTECache()
     embedding_provider = get_embedding_provider(spec.embedding_provider, dim=spec.embedding_dimension)
@@ -87,7 +75,6 @@ def run_frontier_search(
             traces.append(IterationTrace(iteration=iteration, allocations=[], notes=["no frontier nodes; stopped"]))
             break
 
-        # Conservative graph-search compression before scoring/expansion.
         merges = apply_equivalent_merges(nodes)
         frontier = [node for node in nodes if node.status == "frontier"]
         if not frontier:
@@ -101,7 +88,6 @@ def run_frontier_search(
             )
             break
 
-        # Batch judge with cache.
         for result in batch_judge(frontier, cache=cache):
             for node in frontier:
                 if node.node_id == result.node_id:
@@ -109,22 +95,19 @@ def run_frontier_search(
                     node.judge_reasoning = result.reasoning
                     break
 
-        # Entropy/novelty proxy with embedding cache/provider.
-        uncertainties = estimate_uncertainty_from_density(nodes, cache=cache, provider=embedding_provider)
-        for node in frontier:
-            node.uncertainty = uncertainties.get(node.node_id, 0.0)
+        frontier, kde_state = estimate_frontier_kde_state(nodes, cache=cache, provider=embedding_provider)
+        for node, uncertainty in zip(frontier, kde_state.uncertainty):
+            node.uncertainty = uncertainty
 
-        frontier_embeddings = [node.local_embedding or [] for node in frontier]
-        spatial_entropy = spatial_entropy_from_embeddings(frontier_embeddings)
         entropy_state = evaluate_entropy_state(
-            spatial_entropy=spatial_entropy,
+            spatial_entropy=kde_state.spatial_entropy,
             previous_entropy=previous_entropy,
             iteration=iteration,
             min_iterations=spec.budget.min_iterations_before_synthesis,
             entropy_change_threshold=spec.budget.entropy_change_threshold,
             t_max=spec.budget.t_max,
         )
-        previous_entropy = spatial_entropy
+        previous_entropy = kde_state.spatial_entropy
 
         allocations = allocate_frontier(
             nodes,
@@ -140,6 +123,10 @@ def run_frontier_search(
                     node.expansion_budget = allocation.expansion_budget
                     break
 
+        human_question = maybe_create_human_question(
+            frontier,
+            entropy_plateau=entropy_state.should_synthesize,
+        )
         traces.append(
             IterationTrace(
                 iteration=iteration,
@@ -152,8 +139,10 @@ def run_frontier_search(
                     f"embedding_cache_hits={cache.stats.embedding_hits}",
                     f"spatial_entropy={entropy_state.spatial_entropy:.4f}",
                     f"normalized_temperature={entropy_state.normalized_temperature:.4f}",
+                    f"kde_bandwidth2={kde_state.bandwidth2:.4f}",
                 ],
                 entropy_state=entropy_state,
+                human_question=human_question,
             )
         )
 
@@ -171,4 +160,4 @@ def run_frontier_search(
         )
 
     report = synthesize_report(spec, nodes)
-    return RunResult(spec=spec, nodes=nodes, traces=traces, report=report, cache=cache)
+    return RunResult(spec=spec, nodes=nodes, traces=traces, report=report, cache=cache, role_audit=role_audit)

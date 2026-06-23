@@ -19,6 +19,7 @@ from .file_cache import FileDTECache
 from .math_engine import allocate_frontier
 from .models import DTERunSpec, SearchNode
 from .runner import run_frontier_search
+from .subprocess_oracles import run_subprocess_judge, run_subprocess_relation
 from .validators import load_json_list, load_json_model
 
 
@@ -38,6 +39,18 @@ def cmd_allocate(args: argparse.Namespace) -> None:
         allocation_metric=args.allocation_metric,
     )
     print(json.dumps([a.model_dump() for a in allocations], ensure_ascii=False, indent=2))
+
+
+def cmd_judge_oracle(args: argparse.Namespace) -> None:
+    nodes = load_json_list(args.nodes, SearchNode)
+    results = run_subprocess_judge(shlex.split(args.judge_command), nodes, timeout=args.timeout)
+    print(json.dumps({"results": [r.__dict__ for r in results]}, ensure_ascii=False, indent=2))
+
+
+def cmd_relation_oracle(args: argparse.Namespace) -> None:
+    nodes = load_json_list(args.nodes, SearchNode)
+    result = run_subprocess_relation(shlex.split(args.relation_command), nodes, timeout=args.timeout)
+    print(json.dumps(result.__dict__, ensure_ascii=False, indent=2))
 
 
 def cmd_run(args: argparse.Namespace) -> None:
@@ -102,6 +115,18 @@ def build_parser() -> argparse.ArgumentParser:
     allocate.add_argument("--temperature", type=float, default=1.0)
     allocate.add_argument("--allocation-metric", choices=["ucb", "score"], default="ucb")
     allocate.set_defaults(func=cmd_allocate)
+
+    judge = sub.add_parser("judge-oracle", help="run and validate a Judge oracle command")
+    judge.add_argument("--nodes", required=True)
+    judge.add_argument("--judge-command", required=True)
+    judge.add_argument("--timeout", type=float, default=180.0)
+    judge.set_defaults(func=cmd_judge_oracle)
+
+    relation = sub.add_parser("relation-oracle", help="run and validate a relation oracle command")
+    relation.add_argument("--nodes", required=True)
+    relation.add_argument("--relation-command", required=True)
+    relation.add_argument("--timeout", type=float, default=180.0)
+    relation.set_defaults(func=cmd_relation_oracle)
 
     run = sub.add_parser("run", help="run the offline mandatory DTE prototype loop")
     run.add_argument("--spec", required=True, help="DTE run spec JSON")

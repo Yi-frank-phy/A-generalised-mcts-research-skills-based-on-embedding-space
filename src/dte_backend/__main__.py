@@ -8,6 +8,7 @@ import shlex
 from pathlib import Path
 
 from .adapter import build_subprocess_adapter
+from .artifacts import render_entropy_trace_markdown, render_frontier_markdown, render_main_agent_status
 from .math_engine import allocate_frontier
 from .models import DTERunSpec, SearchNode
 from .runner import run_frontier_search
@@ -55,6 +56,7 @@ def cmd_run(args: argparse.Namespace) -> None:
                     "notes": t.notes,
                     "allocations": [a.model_dump() for a in t.allocations],
                     "merges": [m.model_dump() for m in t.merges],
+                    "entropy_state": None if t.entropy_state is None else t.entropy_state.__dict__,
                 }
                 for t in result.traces
             ],
@@ -67,6 +69,9 @@ def cmd_run(args: argparse.Namespace) -> None:
         json.dumps(result.cache.stats.__dict__, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+    (out_dir / "frontier.md").write_text(render_frontier_markdown(result), encoding="utf-8")
+    (out_dir / "entropy_trace.md").write_text(render_entropy_trace_markdown(result), encoding="utf-8")
+    (out_dir / "main_agent_status.md").write_text(render_main_agent_status(result), encoding="utf-8")
     print(json.dumps({"out_dir": str(out_dir), "nodes": len(result.nodes), "traces": len(result.traces)}, ensure_ascii=False))
 
 

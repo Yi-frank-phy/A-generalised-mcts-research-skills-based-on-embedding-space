@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .cache import DTECache
 from .models import SearchNode
 from .text_features import tokenize
 
@@ -47,7 +48,30 @@ def heuristic_score(node: SearchNode) -> JudgeResult:
     return JudgeResult(node_id=node.node_id, score=score, reasoning=reasoning)
 
 
-def batch_judge(nodes: list[SearchNode]) -> list[JudgeResult]:
-    """Judge all frontier nodes in one logical batch."""
+def batch_judge(nodes: list[SearchNode], cache: DTECache | None = None) -> list[JudgeResult]:
+    """Judge all frontier nodes in one logical batch.
 
-    return [heuristic_score(node) for node in nodes if node.status == "frontier"]
+    If a DTECache is supplied, unchanged node content reuses the previous
+    deterministic Judge result. This preserves role separation while avoiding
+    repeated evaluation of identical nodes.
+    """
+
+    results: list[JudgeResult] = []
+    for node in nodes:
+        if node.status != "frontier":
+            continue
+        cached = cache.get_judge(node) if cache is not None else None
+        if cached is not None:
+            results.append(
+                JudgeResult(
+                    node_id=node.node_id,
+                    score=cached.score,
+                    reasoning=f"cache hit: {cached.reasoning}",
+                )
+            )
+            continue
+        result = heuristic_score(node)
+        if cache is not None:
+            cache.set_judge(node, result.score, result.reasoning)
+        results.append(result)
+    return results

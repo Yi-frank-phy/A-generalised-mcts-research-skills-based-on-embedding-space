@@ -1,17 +1,15 @@
 """Entropy and temperature controller for DTE frontier search.
 
-This module restores the old DTE idea that search should be controlled by the
-state of the frontier, not by a fixed iteration counter alone. The current
-calculation is a lightweight KDE-style entropy proxy over normalized embeddings;
-real runs should use a high-quality embedding provider.
+Search should be controlled by the state of the frontier, not by a fixed
+iteration counter alone. Spatial entropy is computed from the same KDE state
+that provides uncertainty.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-import math
 
-import numpy as np
+from .kde import compute_kde_state
 
 
 @dataclass(frozen=True)
@@ -26,37 +24,10 @@ class EntropyState:
     stop_reason: str | None = None
 
 
-def _logsumexp(values: np.ndarray, axis: int = 1) -> np.ndarray:
-    max_v = np.max(values, axis=axis, keepdims=True)
-    return np.squeeze(max_v, axis=axis) + np.log(np.sum(np.exp(values - max_v), axis=axis))
-
-
 def spatial_entropy_from_embeddings(embeddings: list[list[float]]) -> float:
-    """Estimate dimensionless spatial entropy from frontier embeddings.
+    """Estimate dimensionless frontier spatial entropy from embeddings."""
 
-    For N<2 there is no meaningful spatial spread, so entropy is 0. For N>=2,
-    vectors are L2-normalized, pairwise squared distances are used in a Gaussian
-    kernel, and entropy is `-mean(log density)`. This is a proxy suitable for
-    control; it is not a calibrated thermodynamic entropy.
-    """
-
-    if len(embeddings) < 2:
-        return 0.0
-    x = np.asarray(embeddings, dtype=float)
-    if x.ndim != 2 or x.shape[0] < 2:
-        return 0.0
-    norms = np.linalg.norm(x, axis=1, keepdims=True)
-    x = x / np.maximum(norms, 1e-12)
-    diff = x[:, None, :] - x[None, :, :]
-    d2 = np.sum(diff * diff, axis=2)
-    nonzero = d2[d2 > 1e-12]
-    if nonzero.size == 0:
-        return 0.0
-    bandwidth2 = float(np.median(nonzero))
-    bandwidth2 = max(bandwidth2, 1e-8)
-    log_kernel = -d2 / (2.0 * bandwidth2)
-    log_density = _logsumexp(log_kernel, axis=1) - math.log(x.shape[0])
-    return float(-np.mean(log_density))
+    return compute_kde_state(embeddings).spatial_entropy
 
 
 def evaluate_entropy_state(
@@ -80,7 +51,6 @@ def evaluate_entropy_state(
         )
 
     delta = abs(spatial_entropy - previous_entropy) / max(abs(previous_entropy), 1.0)
-    # High entropy change means high search temperature; plateau means low temp.
     normalized_temperature = min(1.0, delta / max(entropy_change_threshold, 1e-12))
     effective_temperature = float(t_max * normalized_temperature)
     should_stop = iteration >= min_iterations and delta < entropy_change_threshold

@@ -7,13 +7,11 @@ contract between Codex/Kimi/OpenClaw executor episodes and the DTE controller.
 from __future__ import annotations
 
 from typing import Literal
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, Field
 
 
 class BudgetSpec(BaseModel):
     """Hard budget limits for one DTE run."""
-
-    model_config = ConfigDict(extra="forbid")
 
     max_iterations: int = Field(default=2, ge=1, le=20)
     total_child_budget: int = Field(default=3, ge=1, le=50)
@@ -24,10 +22,8 @@ class DTERunSpec(BaseModel):
     """Top-level run specification.
 
     This is the source of truth. Free-form Markdown or prompt text cannot
-override this object after validation.
+    override this object after validation.
     """
-
-    model_config = ConfigDict(extra="forbid")
 
     problem: str = Field(min_length=1)
     goal: str = Field(min_length=1)
@@ -40,8 +36,6 @@ override this object after validation.
 
 class SearchNode(BaseModel):
     """A node in the DTE search graph/frontier."""
-
-    model_config = ConfigDict(extra="forbid")
 
     node_id: str
     node_type: Literal[
@@ -75,10 +69,28 @@ class SearchNode(BaseModel):
 class AllocationResult(BaseModel):
     """Expansion budget assignment for a frontier batch."""
 
-    model_config = ConfigDict(extra="forbid")
-
     node_id: str
     score: float
     uncertainty: float
     ucb_score: float
     expansion_budget: int
+
+
+class ExpansionRequest(BaseModel):
+    """Request passed from DTE Expansion to an external executor adapter."""
+
+    parent: SearchNode
+    child_count: int = Field(ge=1, le=50)
+    iteration: int = Field(ge=1)
+    spec: DTERunSpec | None = None
+
+
+class MergeProposal(BaseModel):
+    """Structured merge proposal for graph-search compression."""
+
+    merge_type: Literal["equivalent_merge", "complementary_merge", "conflict_merge"]
+    source_node_ids: list[str] = Field(min_length=2)
+    target_node_id: str | None = None
+    rationale: str
+    merged_node: SearchNode | None = None
+    absorbed_node_ids: list[str] = Field(default_factory=list)

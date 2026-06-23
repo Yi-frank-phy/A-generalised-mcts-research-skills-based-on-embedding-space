@@ -1,0 +1,12 @@
+{
+  "node_id": "seed-direct",
+  "node_type": "candidate",
+  "claim": "Direct route for the protocol symmetry question",
+  "rationale": "Start from the most direct constraint formulation.",
+  "assumptions": ["The symmetry constraints are stated consistently."],
+  "evidence": [],
+  "risks": [],
+  "parent_ids": [],
+  "confidence": 0.55,
+  "status": "frontier"
+}

@@ -49,7 +49,7 @@ class GeminiEmbedding2Provider:
     transcripts. Persistent caching should be enabled before high-volume use.
     """
 
-    dim: int = 1536
+    dim: int = 3072
     model: str = "gemini-embedding-2"
     api_key: str | None = None
     name: str = "gemini-embedding-2"
@@ -84,7 +84,7 @@ class GeminiEmbedding2Provider:
         return [self._embed_one(text) for text in texts]
 
 
-def get_embedding_provider(name: str = "hash", dim: int = 64) -> EmbeddingProvider:
+def get_embedding_provider(name: str = "hash", dim: int = 3072) -> EmbeddingProvider:
     """Create an embedding provider by name."""
 
     if name == "hash":

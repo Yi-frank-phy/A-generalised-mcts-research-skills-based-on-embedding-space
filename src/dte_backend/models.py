@@ -7,10 +7,16 @@ contract between Codex/Kimi/OpenClaw executor episodes and the DTE controller.
 from __future__ import annotations
 
 from typing import Literal
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 
-class BudgetSpec(BaseModel):
+class DTEBaseModel(BaseModel):
+    """Strict base model for DTE machine-facing contracts."""
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class BudgetSpec(DTEBaseModel):
     """Hard budget limits for one DTE run."""
 
     max_iterations: int = Field(default=2, ge=1, le=20)
@@ -21,7 +27,7 @@ class BudgetSpec(BaseModel):
     t_max: float = Field(default=1.0, gt=0.0, le=10.0)
 
 
-class DTERunSpec(BaseModel):
+class DTERunSpec(DTEBaseModel):
     """Top-level run specification.
 
     This is the source of truth. Free-form Markdown or prompt text cannot
@@ -39,7 +45,7 @@ class DTERunSpec(BaseModel):
     embedding_dimension: int = Field(default=3072, ge=8, le=3072)
 
 
-class SearchNode(BaseModel):
+class SearchNode(DTEBaseModel):
     """A node in the DTE search graph/frontier."""
 
     node_id: str
@@ -68,7 +74,7 @@ class SearchNode(BaseModel):
     status: Literal["frontier", "closed", "archived", "merged", "synthesis"] = "frontier"
 
 
-class AllocationResult(BaseModel):
+class AllocationResult(DTEBaseModel):
     """Expansion budget assignment for a frontier batch."""
 
     node_id: str
@@ -78,16 +84,16 @@ class AllocationResult(BaseModel):
     expansion_budget: int
 
 
-class ExpansionRequest(BaseModel):
+class ExpansionRequest(DTEBaseModel):
     """Request passed from DTE Expansion to an external executor adapter."""
 
     parent: SearchNode
-    child_count: int = Field(ge=1, le=50)
+    child_count: int = Field(ge=1, le=50, validation_alias=AliasChoices("child_count", "count"))
     iteration: int = Field(ge=1)
     spec: DTERunSpec | None = None
 
 
-class MergeProposal(BaseModel):
+class MergeProposal(DTEBaseModel):
     """Structured merge proposal for graph-search compression."""
 
     merge_type: Literal["equivalent_merge", "complementary_merge", "conflict_merge"]

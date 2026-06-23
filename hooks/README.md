@@ -1,12 +1,55 @@
 # Hooks
 
-Hooks are guardrails, not the main architecture.
+Hooks are guardrails, not the DTE engine. Use them to validate machine-facing
+artifacts at role boundaries before the main loop consumes the output.
 
-Recommended hook points:
+## When to run
 
-1. after executor episode: validate returned SearchNode / evidence / counterexample;
-2. before final answer: verify DTE synthesis was produced;
-3. before budget escalation: require explicit user approval;
-4. after run: archive run spec and synthesis report.
+Run these checks at the following points:
 
-Do not put the full DTE search engine inside a hook. Use hooks to enforce boundaries.
+1. `spec`: before starting a DTE run or accepting a user-edited run spec.
+2. `executor`: immediately after an executor episode returns child nodes.
+3. `judge`: immediately after a Judge oracle returns scores.
+4. `relation`: immediately after a relation oracle classifies frontier nodes.
+
+Do not put search, scoring, allocation, merge mutation, or synthesis inside a
+hook. The hook only validates that an artifact is allowed to cross a boundary.
+
+## Exact commands
+
+Validate a run spec:
+
+```bash
+python hooks/dte_guard.py spec examples/run_spec.json
+```
+
+Validate executor output against the parent and allocated child count:
+
+```bash
+python hooks/dte_guard.py executor \
+  --parent examples/executor_parent.json \
+  --output examples/executor_output.json \
+  --child-count 1
+```
+
+Validate Judge oracle output:
+
+```bash
+python hooks/dte_guard.py judge \
+  --nodes examples/frontier_nodes.json \
+  --output examples/judge_output.json
+```
+
+Validate relation oracle output:
+
+```bash
+python hooks/dte_guard.py relation \
+  --nodes examples/frontier_nodes.json \
+  --output examples/relation_output.json
+```
+
+Run all hook sample checks through pytest:
+
+```bash
+python -m pytest tests/test_hooks.py
+```

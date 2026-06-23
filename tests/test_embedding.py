@@ -16,6 +16,11 @@ def test_get_gemini_embedding_provider_metadata():
     assert provider.dim == 1536
 
 
+def test_gemini_embedding_provider_defaults_to_max_geometry():
+    assert GeminiEmbedding2Provider().dim == 3072
+    assert get_embedding_provider("gemini-embedding-2").dim == 3072
+
+
 def test_unknown_embedding_provider_rejected():
     with pytest.raises(ValueError):
         get_embedding_provider("tiny-random", dim=64)

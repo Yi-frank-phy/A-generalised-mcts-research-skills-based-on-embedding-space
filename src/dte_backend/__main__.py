@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shlex
 from pathlib import Path
 
-from .adapter import build_subprocess_adapter
+from .adapter import build_subprocess_adapter, run_subprocess_executor
 from .artifacts import (
     render_entropy_trace_markdown,
     render_frontier_markdown,
@@ -17,10 +18,16 @@ from .artifacts import (
 )
 from .file_cache import FileDTECache
 from .math_engine import allocate_frontier
-from .models import DTERunSpec, SearchNode
+from .models import DTERunSpec, ExpansionRequest, SearchNode
 from .runner import run_frontier_search
-from .subprocess_oracles import run_subprocess_judge, run_subprocess_relation
+from .subprocess_oracles import build_subprocess_judge_adapter, run_subprocess_judge, run_subprocess_relation
 from .validators import load_json_list, load_json_model
+
+
+def split_command(command: str) -> list[str]:
+    """Split command text without corrupting Windows absolute paths."""
+
+    return shlex.split(command, posix=(os.name != "nt"))
 
 
 def cmd_validate(args: argparse.Namespace) -> None:
@@ -43,14 +50,24 @@ def cmd_allocate(args: argparse.Namespace) -> None:
 
 def cmd_judge_oracle(args: argparse.Namespace) -> None:
     nodes = load_json_list(args.nodes, SearchNode)
-    results = run_subprocess_judge(shlex.split(args.judge_command), nodes, timeout=args.timeout)
+    results = run_subprocess_judge(split_command(args.judge_command), nodes, timeout=args.timeout)
     print(json.dumps({"results": [r.__dict__ for r in results]}, ensure_ascii=False, indent=2))
 
 
 def cmd_relation_oracle(args: argparse.Namespace) -> None:
     nodes = load_json_list(args.nodes, SearchNode)
-    result = run_subprocess_relation(shlex.split(args.relation_command), nodes, timeout=args.timeout)
+    result = run_subprocess_relation(split_command(args.relation_command), nodes, timeout=args.timeout)
     print(json.dumps(result.__dict__, ensure_ascii=False, indent=2))
+
+
+def cmd_validate_executor(args: argparse.Namespace) -> None:
+    request = load_json_model(args.request, ExpansionRequest)
+    children = run_subprocess_executor(
+        split_command(args.executor_command),
+        request,
+        timeout=args.timeout,
+    )
+    print(json.dumps({"nodes": [node.model_dump() for node in children]}, ensure_ascii=False, indent=2))
 
 
 def cmd_run(args: argparse.Namespace) -> None:
@@ -58,9 +75,18 @@ def cmd_run(args: argparse.Namespace) -> None:
     nodes = load_json_list(args.nodes, SearchNode) if args.nodes else None
     executor_adapter = None
     if args.executor_command:
-        executor_adapter = build_subprocess_adapter(shlex.split(args.executor_command), timeout=args.executor_timeout)
+        executor_adapter = build_subprocess_adapter(split_command(args.executor_command), timeout=args.executor_timeout)
+    judge_adapter = None
+    if args.judge_command:
+        judge_adapter = build_subprocess_judge_adapter(split_command(args.judge_command), timeout=args.judge_timeout)
     cache = FileDTECache(args.cache_path) if args.cache_path else None
-    result = run_frontier_search(spec, nodes, executor_adapter=executor_adapter, cache=cache)
+    result = run_frontier_search(
+        spec,
+        nodes,
+        executor_adapter=executor_adapter,
+        judge_adapter=judge_adapter,
+        cache=cache,
+    )
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -128,12 +154,20 @@ def build_parser() -> argparse.ArgumentParser:
     relation.add_argument("--timeout", type=float, default=180.0)
     relation.set_defaults(func=cmd_relation_oracle)
 
+    validate_executor = sub.add_parser("validate-executor", help="run and validate an executor adapter command")
+    validate_executor.add_argument("--request", required=True)
+    validate_executor.add_argument("--executor-command", required=True)
+    validate_executor.add_argument("--timeout", type=float, default=120.0)
+    validate_executor.set_defaults(func=cmd_validate_executor)
+
     run = sub.add_parser("run", help="run the offline mandatory DTE prototype loop")
     run.add_argument("--spec", required=True, help="DTE run spec JSON")
     run.add_argument("--nodes", help="optional initial SearchNode JSON list")
     run.add_argument("--out-dir", default="artifacts/run", help="directory for report/nodes/traces")
     run.add_argument("--executor-command", help="optional subprocess executor adapter command")
     run.add_argument("--executor-timeout", type=float, default=120.0)
+    run.add_argument("--judge-command", help="optional subprocess Judge oracle command")
+    run.add_argument("--judge-timeout", type=float, default=180.0)
     run.add_argument("--cache-path", help="optional JSON cache path for embeddings and scores")
     run.set_defaults(func=cmd_run)
 

@@ -1,0 +1,16 @@
+{
+  "results": [
+    {
+      "node_id": "n1",
+      "score": 0.6,
+      "reasoning": "The group-action framing is coherent but depends on a faithful representation assumption.",
+      "risks": ["Faithfulness may fail in higher dimensions."]
+    },
+    {
+      "node_id": "n2",
+      "score": 0.5,
+      "reasoning": "The rank-first route is a useful constraint check but may miss constructive structure.",
+      "risks": ["May underweight group-theoretic constructions."]
+    }
+  ]
+}

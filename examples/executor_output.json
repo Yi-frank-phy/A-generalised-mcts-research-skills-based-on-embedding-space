@@ -1,0 +1,16 @@
+{
+  "nodes": [
+    {
+      "node_id": "child-direct-1",
+      "node_type": "candidate",
+      "claim": "The direct route should first isolate the symmetry constraint before adding representation assumptions.",
+      "rationale": "This child preserves the parent route while making the first executable research step explicit.",
+      "assumptions": ["The symmetry constraints are stated consistently."],
+      "evidence": [],
+      "risks": ["The isolated constraint may still be underdetermined."],
+      "parent_ids": ["seed-direct"],
+      "confidence": 0.56,
+      "status": "frontier"
+    }
+  ]
+}

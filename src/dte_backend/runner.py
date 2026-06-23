@@ -15,6 +15,8 @@ from .math_engine import allocate_frontier
 from .merge import apply_equivalent_merges
 from .models import AllocationResult, DTERunSpec, MergeProposal, SearchNode
 from .novelty import estimate_frontier_kde_state
+from .oracle_validation import validate_judge_output
+from .subprocess_oracles import JudgeAdapter
 from .role_pipeline import seed_frontier_from_roles
 from .synthesis import synthesize_report
 
@@ -45,10 +47,31 @@ def _seed_nodes_from_spec(spec: DTERunSpec) -> tuple[list[SearchNode], dict[str,
     return seed_frontier_from_roles(spec)
 
 
+def _validated_judge_results(frontier: list[SearchNode], judge_adapter: JudgeAdapter | None, cache: DTECache):
+    """Return Judge results after enforcing the observable oracle contract."""
+
+    raw_results = judge_adapter(frontier) if judge_adapter else batch_judge(frontier, cache=cache)
+    normalized = []
+    for result in raw_results:
+        if isinstance(result, dict):
+            normalized.append(result)
+        else:
+            normalized.append(
+                {
+                    "node_id": result.node_id,
+                    "score": result.score,
+                    "reasoning": result.reasoning,
+                    "risks": getattr(result, "risks", []),
+                }
+            )
+    return validate_judge_output(frontier, {"results": normalized})
+
+
 def run_frontier_search(
     spec: DTERunSpec,
     initial_nodes: list[SearchNode] | None = None,
     executor_adapter: ExecutorAdapter | None = None,
+    judge_adapter: JudgeAdapter | None = None,
     cache: DTECache | None = None,
 ) -> RunResult:
     """Run the mandatory DTE loop.
@@ -88,7 +111,8 @@ def run_frontier_search(
             )
             break
 
-        for result in batch_judge(frontier, cache=cache):
+        judge_results = _validated_judge_results(frontier, judge_adapter, cache)
+        for result in judge_results:
             for node in frontier:
                 if node.node_id == result.node_id:
                     node.score = result.score

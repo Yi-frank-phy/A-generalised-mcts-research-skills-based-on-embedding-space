@@ -1,0 +1,6 @@
+{
+  "relation": "independent",
+  "source_node_ids": ["n1", "n2"],
+  "rationale": "The two nodes prioritize different analysis routes and neither currently absorbs or contradicts the other.",
+  "discriminator_question": null
+}

@@ -52,9 +52,17 @@ python -m dte_backend run --spec examples/run_spec.json --out-dir artifacts/prot
 5. Expand selected frontier nodes.
 6. Optionally run Codex/Kimi executor episodes through the executor adapter, but only inside the Executor role.
 7. Validate returned node/evidence/counterexample objects.
-8. Optionally call relation-oracle subagents for equivalent/complementary/conflict merge classification.
+8. Call relation-oracle subagents when frontier nodes are semantically close, branches conflict, complementary routes should be compressed, or entropy plateaus.
 9. Repeat within budget.
 10. Produce final synthesis through DTE synthesis.
+
+## Relation oracle workflow
+
+After expansion, send only the relevant frontier nodes to the relation oracle.
+Validate its result before graph effects. A validated `equivalent`,
+`complementary`, or `conflict` result may become a `MergeProposal` or a
+discriminator task; raw subagent output must not mutate the graph directly. An
+`independent` result keeps both branches in the frontier.
 
 ## Compile behavior
 
@@ -81,3 +89,4 @@ The final output must include:
 - Do not rely on free-form Markdown as machine truth.
 - Do not let executor adapters return synthesis nodes or pre-filled Judge/Evolution metrics.
 - Do not treat Judge as an embedding model; Judge is a closed oracle that returns observable judgments only.
+- Do not let relation-oracle output directly rewrite graph state before validation.

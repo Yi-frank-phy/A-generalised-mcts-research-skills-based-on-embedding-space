@@ -130,3 +130,11 @@ These tasks may be implemented by Codex subagents. They do not provide latent to
 ## 10. Merge skeleton
 
 The deterministic backend implements conservative `equivalent_merge` for exact normalized-claim duplicates. Complementary/conflict merge is represented as a relation oracle task and can be delegated to a strong subagent. Merge may compress the graph, but final conclusions still require DTE synthesis.
+
+Relation oracle workflow:
+
+1. Call the relation oracle after expansion when new frontier nodes are close in embedding space, when branches appear to conflict, when complementary claims should be compressed, or when entropy plateaus without a clear synthesis path.
+2. Pass only the relevant candidate nodes and the relation task contract. The oracle returns `equivalent`, `complementary`, `conflict`, or `independent`, plus rationale and an optional discriminator question.
+3. Validate the returned object with `validate_relation_output()` or `python hooks/dte_guard.py relation ...` before any graph effect.
+4. Convert a validated `equivalent`, `complementary`, or `conflict` result into a `MergeProposal` or a discriminator task. Do not let raw oracle output mutate graph state directly.
+5. For `independent`, preserve both branches and continue normal Judge/EvolutionController allocation.

@@ -63,6 +63,8 @@ def expand_node(
     if executor_adapter is None:
         return deterministic_expand_node(parent, count=count, iteration=iteration)
     request = ExpansionRequest(parent=parent, child_count=count, iteration=iteration, spec=spec)
+    if hasattr(executor_adapter, "expand"):
+        return executor_adapter.expand(request)  # type: ignore[union-attr]
     return executor_adapter(request)
 
 

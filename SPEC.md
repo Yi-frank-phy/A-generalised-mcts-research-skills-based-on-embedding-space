@@ -109,6 +109,19 @@ budget. The adapter receives one parent SearchNode, the allocated child count,
 the iteration number, and optionally the validated DTERunSpec. It must not run
 Judge, allocate budget, or produce final synthesis.
 
+This input is represented as a validated `ExpansionRequest` object:
+
+```json
+{
+  "parent": {"node_id": "...", "node_type": "candidate", "claim": "..."},
+  "count": 1,
+  "iteration": 1,
+  "spec": null
+}
+```
+
+Like `SearchNode` and `DTERunSpec`, `ExpansionRequest` rejects extra fields.
+
 Required executor output:
 
 ```json

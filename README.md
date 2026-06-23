@@ -69,6 +69,7 @@ python -m pip install -e .[dev]
 pytest
 python -m dte_backend validate examples/run_spec.json
 python -m dte_backend allocate examples/frontier_nodes.json --budget 4
+python -m dte_backend validate-executor --request examples/expansion_request.json --executor-command "python examples/echo_executor_adapter.py"
 python -m dte_backend run --spec examples/run_spec.json --nodes examples/frontier_nodes.json --out-dir artifacts/prototype
 ```
 

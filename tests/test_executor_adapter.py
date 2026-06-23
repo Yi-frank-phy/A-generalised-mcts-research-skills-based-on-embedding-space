@@ -1,4 +1,6 @@
+import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
@@ -118,6 +120,20 @@ def test_search_node_rejects_extra_free_form_fields():
         )
 
 
+def test_expansion_request_rejects_extra_free_form_fields():
+    parent = SearchNode(node_id="p", claim="parent")
+
+    with pytest.raises(ValidationError):
+        ExpansionRequest.model_validate(
+            {
+                "parent": parent.model_dump(),
+                "count": 1,
+                "iteration": 1,
+                "final_answer": "request tries to smuggle a conclusion",
+            }
+        )
+
+
 def test_subprocess_executor_adapter_reads_structured_json(tmp_path):
     script = tmp_path / "adapter.py"
     script.write_text(
@@ -168,3 +184,26 @@ def test_subprocess_executor_adapter_requires_node_list(tmp_path):
 
     with pytest.raises(ValueError, match="nodes list"):
         adapter.expand(request)
+
+
+def test_validate_executor_cli_runs_example_adapter():
+    root = Path(__file__).resolve().parents[1]
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "dte_backend",
+            "validate-executor",
+            "--request",
+            "examples/expansion_request.json",
+            "--executor-command",
+            f"{sys.executable} examples/echo_executor_adapter.py",
+        ],
+        cwd=root,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert "seed-direct-executor-1" in completed.stdout

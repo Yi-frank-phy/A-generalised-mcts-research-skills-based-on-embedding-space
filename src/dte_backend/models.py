@@ -7,7 +7,7 @@ contract between Codex/Kimi/OpenClaw executor episodes and the DTE controller.
 from __future__ import annotations
 
 from typing import Literal
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 
 class BudgetSpec(BaseModel):
@@ -41,6 +41,8 @@ class DTERunSpec(BaseModel):
 
 class SearchNode(BaseModel):
     """A node in the DTE search graph/frontier."""
+
+    model_config = ConfigDict(extra="forbid")
 
     node_id: str
     node_type: Literal[
@@ -84,10 +86,18 @@ class AllocationResult(BaseModel):
 class ExpansionRequest(BaseModel):
     """Request passed from DTE Expansion to an external executor adapter."""
 
+    model_config = ConfigDict(extra="forbid")
+
     parent: SearchNode
-    child_count: int = Field(ge=1, le=50)
+    child_count: int = Field(ge=1, le=50, validation_alias=AliasChoices("child_count", "count"))
     iteration: int = Field(ge=1)
     spec: DTERunSpec | None = None
+
+    @property
+    def count(self) -> int:
+        """Backward-compatible alias for older executor adapter examples."""
+
+        return self.child_count
 
 
 class MergeProposal(BaseModel):

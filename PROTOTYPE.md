@@ -24,6 +24,21 @@ U_i = V_i + c * tau * uncertainty_i
 - CLI commands for validate, allocate, and run.
 - Tests for schema, math engine, runner, cache, adapter boundary, and merge skeleton.
 
+## Executor adapter boundary
+
+The prototype now exposes the Executor role as an adapter boundary inside the
+Expansion phase. A subprocess adapter may read an ExpansionRequest JSON object
+from stdin and return either a SearchNode JSON list or `{"nodes": [...]}` on
+stdout. Returned nodes are validated as frontier children and cannot pre-fill
+Judge/Evolution metrics or produce synthesis nodes.
+
+Example:
+
+```bash
+python -m dte_backend validate-executor --request examples/expansion_request.json --executor-command "python examples/echo_executor_adapter.py"
+python -m dte_backend run --spec examples/run_spec.json --nodes examples/frontier_nodes.json --executor-command "python path/to/adapter.py"
+```
+
 ## Not implemented yet
 
 - Real LLM Judge.

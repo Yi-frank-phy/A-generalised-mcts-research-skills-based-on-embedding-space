@@ -14,7 +14,7 @@ import sys
 def main() -> None:
     request = json.loads(sys.stdin.read())
     parent = request["parent"]
-    count = int(request["count"])
+    count = int(request.get("child_count", request.get("count", 0)))
 
     nodes = []
     for index in range(count):

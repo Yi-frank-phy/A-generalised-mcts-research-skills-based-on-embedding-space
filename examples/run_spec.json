@@ -7,10 +7,15 @@
     "Do not bypass the DTE Judge/Evolution/Synthesis protocol."
   ],
   "mode": "mandatory_frontier",
+  "embedding_provider": "hash",
+  "embedding_dimension": 3072,
   "budget": {
     "max_iterations": 2,
     "total_child_budget": 3,
-    "max_research_iterations": 1
+    "max_research_iterations": 1,
+    "min_iterations_before_synthesis": 2,
+    "entropy_change_threshold": 0.05,
+    "t_max": 1.0
   },
   "allow_self_organized_executor": true,
   "require_final_synthesis": true

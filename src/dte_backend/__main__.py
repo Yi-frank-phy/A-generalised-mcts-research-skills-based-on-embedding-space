@@ -7,7 +7,7 @@ import json
 import shlex
 from pathlib import Path
 
-from .executor_adapter import SubprocessExecutorAdapter
+from .adapter import build_subprocess_adapter
 from .math_engine import allocate_frontier
 from .models import DTERunSpec, SearchNode
 from .runner import run_frontier_search
@@ -35,7 +35,9 @@ def cmd_allocate(args: argparse.Namespace) -> None:
 def cmd_run(args: argparse.Namespace) -> None:
     spec = load_json_model(args.spec, DTERunSpec)
     nodes = load_json_list(args.nodes, SearchNode) if args.nodes else None
-    executor_adapter = SubprocessExecutorAdapter(shlex.split(args.executor_command)) if args.executor_command else None
+    executor_adapter = None
+    if args.executor_command:
+        executor_adapter = build_subprocess_adapter(shlex.split(args.executor_command), timeout=args.executor_timeout)
     result = run_frontier_search(spec, nodes, executor_adapter=executor_adapter)
 
     out_dir = Path(args.out_dir)
@@ -52,12 +54,17 @@ def cmd_run(args: argparse.Namespace) -> None:
                     "iteration": t.iteration,
                     "notes": t.notes,
                     "allocations": [a.model_dump() for a in t.allocations],
+                    "merges": [m.model_dump() for m in t.merges],
                 }
                 for t in result.traces
             ],
             ensure_ascii=False,
             indent=2,
         ),
+        encoding="utf-8",
+    )
+    (out_dir / "cache_stats.json").write_text(
+        json.dumps(result.cache.stats.__dict__, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
     print(json.dumps({"out_dir": str(out_dir), "nodes": len(result.nodes), "traces": len(result.traces)}, ensure_ascii=False))
@@ -84,7 +91,8 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--spec", required=True, help="DTE run spec JSON")
     run.add_argument("--nodes", help="optional initial SearchNode JSON list")
     run.add_argument("--out-dir", default="artifacts/run", help="directory for report/nodes/traces")
-    run.add_argument("--executor-command", help="external executor adapter command that reads request JSON on stdin")
+    run.add_argument("--executor-command", help="optional subprocess executor adapter command")
+    run.add_argument("--executor-timeout", type=float, default=120.0)
     run.set_defaults(func=cmd_run)
 
     return parser

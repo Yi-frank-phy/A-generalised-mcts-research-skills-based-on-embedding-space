@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from .executor_adapter import ExecutorAdapter
+from .adapter import ExecutorAdapter
+from .cache import DTECache
 from .expansion import expand_frontier
 from .judge import batch_judge
 from .math_engine import allocate_frontier
-from .models import AllocationResult, DTERunSpec, SearchNode
+from .merge import apply_equivalent_merges
+from .models import AllocationResult, DTERunSpec, MergeProposal, SearchNode
 from .novelty import estimate_uncertainty_from_density
 from .synthesis import synthesize_report
 
@@ -18,6 +20,7 @@ class IterationTrace:
     iteration: int
     allocations: list[AllocationResult]
     notes: list[str] = field(default_factory=list)
+    merges: list[MergeProposal] = field(default_factory=list)
 
 
 @dataclass
@@ -26,6 +29,7 @@ class RunResult:
     nodes: list[SearchNode]
     traces: list[IterationTrace]
     report: str
+    cache: DTECache
 
 
 def _seed_nodes_from_spec(spec: DTERunSpec) -> list[SearchNode]:
@@ -60,15 +64,17 @@ def run_frontier_search(
     spec: DTERunSpec,
     initial_nodes: list[SearchNode] | None = None,
     executor_adapter: ExecutorAdapter | None = None,
+    cache: DTECache | None = None,
 ) -> RunResult:
     """Run the mandatory DTE prototype loop.
 
     This never bypasses Judge/Evolution/Expansion. It is deterministic and
-    offline, so it is suitable for harness-free prototype validation.
+    offline by default, so it is suitable for harness-free prototype validation.
     """
 
     nodes = list(initial_nodes) if initial_nodes else _seed_nodes_from_spec(spec)
     traces: list[IterationTrace] = []
+    cache = cache or DTECache()
 
     for iteration in range(1, spec.budget.max_iterations + 1):
         frontier = [node for node in nodes if node.status == "frontier"]
@@ -76,16 +82,30 @@ def run_frontier_search(
             traces.append(IterationTrace(iteration=iteration, allocations=[], notes=["no frontier nodes; stopped"]))
             break
 
-        # Batch judge.
-        for result in batch_judge(frontier):
+        # Conservative graph-search compression before scoring/expansion.
+        merges = apply_equivalent_merges(nodes)
+        frontier = [node for node in nodes if node.status == "frontier"]
+        if not frontier:
+            traces.append(
+                IterationTrace(
+                    iteration=iteration,
+                    allocations=[],
+                    notes=["all frontier nodes merged; stopped"],
+                    merges=merges,
+                )
+            )
+            break
+
+        # Batch judge with cache.
+        for result in batch_judge(frontier, cache=cache):
             for node in frontier:
                 if node.node_id == result.node_id:
                     node.score = result.score
                     node.judge_reasoning = result.reasoning
                     break
 
-        # Entropy/novelty proxy.
-        uncertainties = estimate_uncertainty_from_density(nodes)
+        # Entropy/novelty proxy with embedding cache.
+        uncertainties = estimate_uncertainty_from_density(nodes, cache=cache)
         for node in frontier:
             node.uncertainty = uncertainties.get(node.node_id, 0.0)
 
@@ -107,7 +127,13 @@ def run_frontier_search(
             IterationTrace(
                 iteration=iteration,
                 allocations=allocations,
-                notes=[f"frontier={len(frontier)}", f"budget={spec.budget.total_child_budget}"],
+                merges=merges,
+                notes=[
+                    f"frontier={len(frontier)}",
+                    f"budget={spec.budget.total_child_budget}",
+                    f"judge_cache_hits={cache.stats.judge_hits}",
+                    f"embedding_cache_hits={cache.stats.embedding_hits}",
+                ],
             )
         )
 
@@ -121,4 +147,4 @@ def run_frontier_search(
         )
 
     report = synthesize_report(spec, nodes)
-    return RunResult(spec=spec, nodes=nodes, traces=traces, report=report)
+    return RunResult(spec=spec, nodes=nodes, traces=traces, report=report, cache=cache)

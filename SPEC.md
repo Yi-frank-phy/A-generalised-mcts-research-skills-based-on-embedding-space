@@ -136,7 +136,21 @@ Adapter outputs are validated before being appended to the graph:
 ## 7. Performance requirements
 
 - Cache embeddings by stable node text hash.
-- Cache Judge scores when node content and trajectory have not changed.
+- Cache Judge scores when node content has not changed.
 - Batch multiple node evaluations where feasible.
 - Avoid injecting full graph context into every role.
 - Prefer node summaries and deltas.
+
+## 8. Merge skeleton
+
+The initial backend implements conservative `equivalent_merge` only: frontier
+nodes with identical normalized claims are grouped, the highest score/confidence
+node remains frontier, and lower-ranked duplicates are marked `merged`.
+
+Future model-backed merge types should add:
+
+- `complementary_merge`: create a new synthesis/search node from mutually
+  useful partial routes;
+- `conflict_merge`: create a discriminator task when assumptions clash.
+
+Merge may compress the graph, but final conclusions still require DTE synthesis.

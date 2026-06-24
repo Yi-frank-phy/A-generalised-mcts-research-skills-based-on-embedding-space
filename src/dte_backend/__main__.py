@@ -20,6 +20,8 @@ from .artifacts import (
 from .file_cache import FileDTECache
 from .math_engine import allocate_frontier
 from .models import DTERunSpec, ExpansionRequest, SearchNode
+from .oracle_validation import validate_relation_output
+from .relation_workflow import relation_result_to_outputs
 from .runner import run_frontier_search
 from .subprocess_oracles import build_subprocess_judge_adapter, run_subprocess_judge, run_subprocess_relation
 from .validators import load_json_list, load_json_model
@@ -59,6 +61,24 @@ def cmd_relation_oracle(args: argparse.Namespace) -> None:
     nodes = load_json_list(args.nodes, SearchNode)
     result = run_subprocess_relation(split_command(args.relation_command), nodes, timeout=args.timeout)
     print(json.dumps(result.__dict__, ensure_ascii=False, indent=2))
+
+
+def cmd_relation_artifacts(args: argparse.Namespace) -> None:
+    nodes = load_json_list(args.nodes, SearchNode)
+    raw = json.loads(Path(args.relation_output).read_text(encoding="utf-8"))
+    relation = validate_relation_output(nodes, raw)
+    proposal, discriminator = relation_result_to_outputs(relation, nodes)
+    out_dir = Path(args.out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    proposals = [] if proposal is None else [proposal.model_dump()]
+    tasks = [] if discriminator is None else [discriminator.model_dump()]
+    (out_dir / "relation_proposals.json").write_text(
+        json.dumps(proposals, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    (out_dir / "discriminator_tasks.json").write_text(
+        json.dumps(tasks, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    print(json.dumps({"relation_proposals": len(proposals), "discriminator_tasks": len(tasks)}, ensure_ascii=False))
 
 
 def cmd_validate_executor(args: argparse.Namespace) -> None:
@@ -155,6 +175,12 @@ def build_parser() -> argparse.ArgumentParser:
     relation.add_argument("--relation-command", required=True)
     relation.add_argument("--timeout", type=float, default=180.0)
     relation.set_defaults(func=cmd_relation_oracle)
+
+    relation_artifacts = sub.add_parser("relation-artifacts", help="convert a relation oracle result into machine artifacts")
+    relation_artifacts.add_argument("--nodes", required=True)
+    relation_artifacts.add_argument("--relation-output", required=True)
+    relation_artifacts.add_argument("--out-dir", required=True)
+    relation_artifacts.set_defaults(func=cmd_relation_artifacts)
 
     validate_executor = sub.add_parser("validate-executor", help="run and validate an executor adapter command")
     validate_executor.add_argument("--request", required=True)

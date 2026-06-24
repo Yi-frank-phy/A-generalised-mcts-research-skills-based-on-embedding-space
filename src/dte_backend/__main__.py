@@ -14,6 +14,7 @@ from .artifacts import (
     render_frontier_markdown,
     render_human_questions_markdown,
     render_main_agent_status,
+    render_relation_candidates_markdown,
     render_role_audit_markdown,
 )
 from .file_cache import FileDTECache
@@ -122,6 +123,7 @@ def cmd_run(args: argparse.Namespace) -> None:
     (out_dir / "main_agent_status.md").write_text(render_main_agent_status(result), encoding="utf-8")
     (out_dir / "human_questions.md").write_text(render_human_questions_markdown(result), encoding="utf-8")
     (out_dir / "role_audit.md").write_text(render_role_audit_markdown(result), encoding="utf-8")
+    (out_dir / "relation_candidates.md").write_text(render_relation_candidates_markdown(result), encoding="utf-8")
     print(json.dumps({"out_dir": str(out_dir), "nodes": len(result.nodes), "traces": len(result.traces)}, ensure_ascii=False))
 
 

@@ -1,6 +1,6 @@
 # CODEX_NEXT_STEPS.md — read this first
 
-This file is intentionally placed at the repository root so Codex can find the current state quickly. Do **not** redesign the architecture. Continue by wiring the remaining oracle workflow while preserving the DTE protocol.
+This file is intentionally placed at the repository root so Codex can find the current state quickly. Do **not** redesign the architecture. Continue by hardening the remaining workflow edges while preserving the DTE protocol.
 
 ## Current status
 
@@ -14,9 +14,12 @@ The repo now has a runnable DTE backend with:
 - Judge and Relation oracle task contracts;
 - subprocess oracle runners and mock adapters;
 - `run --judge-command ...` wired into the main loop;
+- relation-oracle result conversion into `MergeProposal` or discriminator task;
 - file-backed cache;
 - Codex-app-facing artifacts;
-- `hooks/dte_guard.py`, `hooks/README.md`, and hook tests for boundary checks.
+- `hooks/dte_guard.py`, `hooks/README.md`, and hook tests for boundary checks;
+- subagent prompt templates in `prompts/`;
+- workflow smoke script at `scripts/smoke_workflow.py`.
 
 ## Done — do not redo
 
@@ -26,67 +29,63 @@ These items were previous blockers and are now complete:
 2. Gemini Embedding 2 provider defaults to `3072`, and the run spec/schema/example also default to or explicitly use `3072`.
 3. Hook documentation exists in `hooks/README.md`, and `tests/test_hooks.py` exercises sample guard commands.
 4. The mandatory Distiller role has been removed. `CompileHint` is only an optional agent-local compression hint.
+5. Relation oracle outputs can be converted to typed merge proposals or discriminator task nodes.
+6. Prompt templates exist for Judge, Relation, and Executor subagents.
 
 ## Highest-priority remaining blockers
 
-### 1. Complete Relation oracle graph workflow
+### 1. Integrate relation workflow into artifacts or runner policy
 
 Current state:
 
-- Relation oracle task contract exists.
-- `relation-oracle` CLI can run a subprocess and validate the result.
-- `hooks/dte_guard.py relation ...` can validate relation outputs.
-- Deterministic merge still only performs conservative exact normalized-claim merging.
+- `src/dte_backend/relation_workflow.py` can convert a validated relation result into a proposal/task.
+- `relation-oracle` CLI can run and validate a relation oracle.
+- The main `run` loop still only applies deterministic exact equivalent-claim merge automatically.
 
 Required change:
 
-- Add a relation workflow module that turns a validated `RelationOracleResult` into one of:
-  - an `equivalent_merge` proposal;
-  - a `complementary_merge` proposal;
-  - a `conflict_merge` proposal;
-  - a discriminator SearchNode/task for unresolved conflict;
-  - no-op for `independent`.
-- Do not let relation oracle output mutate the graph directly.
-- Backend must validate first, then create a typed proposal/task.
+- Decide whether relation-oracle should be invoked inside `run` or remain a main-agent step between runs.
+- If inside `run`, add an optional `--relation-command` and only call it at safe trigger points:
+  - after expansion;
+  - when frontier nodes are semantically close;
+  - when branches conflict;
+  - when entropy plateaus.
+- If outside `run`, document the main-agent workflow and emit an artifact listing candidate node pairs for relation-oracle calls.
 
-### 2. Add Codex subagent prompt templates
+Recommended default: keep relation oracle as a main-agent step first, not automatic inside every run, to avoid extra subagent calls.
+
+### 2. Add candidate-pair selection for relation oracle
+
+Required change:
+
+- Add a small deterministic function that selects node pairs/sets likely worth relation classification:
+  - semantically close in embedding/KDE space;
+  - near-tied UCB branches;
+  - entropy plateau branches;
+  - exact duplicate fallback.
+- Output candidates to a markdown/json artifact so the main agent knows when to call `relation-oracle`.
+
+### 3. Make real Codex subagent usage explicit
 
 Current state:
 
-- Oracle contracts exist in Python.
+- Prompt templates exist.
 - Mock adapters exist.
-- There are not yet clear prompt templates for a real Codex Judge subagent or Relation subagent.
+- There is not yet a documented Codex-app procedure for launching subagents with those prompts and feeding validated JSON back to the backend.
 
 Required change:
 
-- Add `prompts/judge_oracle.md`.
-- Add `prompts/relation_oracle.md`.
-- Add `prompts/executor_subagent.md` if missing or stale.
-- Each prompt must require JSON-only machine output and explicitly forbid final synthesis.
+- Add `docs/CODEX_APP_WORKFLOW.md` describing how the main agent should:
+  - run DTE;
+  - launch Judge subagent;
+  - launch Executor subagent;
+  - launch Relation subagent;
+  - ask human in chat when `human_questions.md` requests it;
+  - summarize `main_agent_status.md` instead of inventing a separate frontend.
 
-### 3. Add relation workflow tests
+### 4. Add optional real Gemini smoke test guard
 
-Required tests:
-
-- equivalent relation result -> equivalent merge proposal;
-- complementary relation result -> complementary merge proposal;
-- conflict relation result with discriminator question -> discriminator SearchNode or conflict proposal;
-- independent relation result -> no graph mutation.
-
-### 4. Add a single smoke command that exercises the complete current workflow
-
-Current validation requires several manual commands.
-
-Required change:
-
-- Add either a script or documented command sequence that runs:
-  - spec guard;
-  - judge oracle;
-  - relation oracle;
-  - DTE run with `--judge-command`;
-  - output artifact check.
-
-Do not add a web UI. The Codex app plus markdown artifacts remain the frontend.
+Do not run Gemini API in CI by default. Add a manual command that only runs when `GEMINI_API_KEY` is set, and explain the free-tier rate-limit discipline.
 
 ## Important constraints
 
@@ -105,11 +104,16 @@ Run:
 ```bash
 python -m pip install -e .[dev]
 pytest
+python scripts/smoke_workflow.py
+```
+
+Manual individual checks:
+
+```bash
 python -m dte_backend validate examples/run_spec.json
 python hooks/dte_guard.py spec examples/run_spec.json
 python -m dte_backend judge-oracle --nodes examples/frontier_nodes.json --judge-command "python examples/mock_judge_adapter.py"
 python -m dte_backend relation-oracle --nodes examples/frontier_nodes.json --relation-command "python examples/mock_relation_adapter.py"
-python -m dte_backend run --spec examples/run_spec.json --out-dir artifacts/smoke --cache-path .dte_cache/cache.json
 python -m dte_backend run --spec examples/run_spec.json --out-dir artifacts/judge-smoke --cache-path .dte_cache/cache.json --judge-command "python examples/mock_judge_adapter.py"
 ```
 

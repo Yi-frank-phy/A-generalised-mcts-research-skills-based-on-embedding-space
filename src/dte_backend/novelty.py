@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from .cache import DTECache
+from .context_envelope import semantic_embedding_text
 from .embedding import EmbeddingProvider, HashEmbeddingProvider
 from .kde import KDEState, compute_kde_state
 from .models import SearchNode
-from .text_features import node_text_parts
 
 
 def ensure_embeddings(
@@ -15,7 +15,12 @@ def ensure_embeddings(
     cache: DTECache | None = None,
     provider: EmbeddingProvider | None = None,
 ) -> None:
-    """Fill missing node vectors in-place."""
+    """Fill missing node vectors in-place.
+
+    Embedding input is a canonical context envelope. This improves cache hit
+    rate across Codex/subagent compile variations while preserving semantic
+    changes in claim/evidence/risk.
+    """
 
     provider = provider or HashEmbeddingProvider(dim=dim)
     missing: list[tuple[SearchNode, str]] = []
@@ -28,8 +33,7 @@ def ensure_embeddings(
         if cached is not None:
             node.local_embedding = cached
             continue
-        text = node_text_parts(node.claim, node.rationale, node.assumptions, node.evidence, node.risks)
-        missing.append((node, text))
+        missing.append((node, semantic_embedding_text(node)))
 
     if missing:
         vectors = provider.embed_texts([text for _, text in missing])

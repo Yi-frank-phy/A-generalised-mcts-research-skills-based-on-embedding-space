@@ -6,6 +6,7 @@ should care about before doing broader work.
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -23,8 +24,10 @@ def run(command: list[str]) -> None:
 
 def main() -> None:
     out_dir = ROOT / "artifacts" / "smoke-workflow"
+    relation_out_dir = out_dir / "relation"
     cache_path = ROOT / ".dte_cache" / "smoke_cache.json"
     out_dir.mkdir(parents=True, exist_ok=True)
+    relation_out_dir.mkdir(parents=True, exist_ok=True)
     cache_path.parent.mkdir(parents=True, exist_ok=True)
 
     run([sys.executable, "hooks/dte_guard.py", "spec", "examples/run_spec.json"])
@@ -47,6 +50,18 @@ def main() -> None:
         "examples/frontier_nodes.json",
         "--relation-command",
         f"{sys.executable} examples/mock_relation_adapter.py",
+    ])
+    run([
+        sys.executable,
+        "-m",
+        "dte_backend",
+        "relation-artifacts",
+        "--nodes",
+        "examples/frontier_nodes.json",
+        "--relation-output",
+        "examples/relation_result.json",
+        "--out-dir",
+        str(relation_out_dir),
     ])
     run([
         sys.executable,
@@ -75,8 +90,16 @@ def main() -> None:
         "relation_candidates.md",
     ]
     missing = [name for name in required if not (out_dir / name).exists()]
+    relation_required = ["relation_proposals.json", "discriminator_tasks.json"]
+    missing.extend([f"relation/{name}" for name in relation_required if not (relation_out_dir / name).exists()])
     if missing:
         raise SystemExit(f"missing smoke artifacts: {missing}")
+
+    # Verify relation artifacts are valid JSON arrays.
+    for name in relation_required:
+        value = json.loads((relation_out_dir / name).read_text(encoding="utf-8"))
+        if not isinstance(value, list):
+            raise SystemExit(f"relation/{name} must be a JSON array")
     print("DTE smoke workflow ok")
 
 

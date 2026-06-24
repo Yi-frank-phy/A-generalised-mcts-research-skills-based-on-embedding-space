@@ -1,8 +1,14 @@
 """Small in-memory caches for one DTE run.
 
-The cache is intentionally simple: it is not a database and it does not change
-DTE semantics. It only avoids recomputing deterministic node features and judge
-scores for unchanged node content during one process run.
+DTE uses two different cache identities:
+
+- embedding key: stable semantic geometry; ignores parent ids, confidence, status,
+  scores, and run-local logs;
+- judge key: semantic content plus stated confidence; still ignores controller
+  outputs and parent ids.
+
+This improves hit rate for Codex/subagent workflows where context is compiled or
+reformatted between runs.
 """
 
 from __future__ import annotations
@@ -11,35 +17,37 @@ from dataclasses import dataclass, field
 import hashlib
 import json
 
+from .context_envelope import evaluation_payload, semantic_embedding_payload
 from .models import SearchNode
 
 
+def _hash_payload(payload: dict[str, object]) -> str:
+    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def embedding_cache_key(node: SearchNode) -> str:
+    """Hash only the stable semantic geometry payload."""
+
+    return _hash_payload(semantic_embedding_payload(node))
+
+
+def judge_cache_key(node: SearchNode) -> str:
+    """Hash the evaluation payload used for Judge caching."""
+
+    return _hash_payload(evaluation_payload(node))
+
+
 def stable_node_payload(node: SearchNode) -> dict[str, object]:
-    """Return the content fields that define a node's current meaning.
+    """Backward-compatible alias for the Judge/evaluation payload."""
 
-    Judge and embedding caches must not depend on mutable DTE metrics such as
-    score, uncertainty, UCB, status, or expansion budget. Those are controller
-    outputs, not semantic node content.
-    """
-
-    return {
-        "node_type": node.node_type,
-        "claim": node.claim,
-        "rationale": node.rationale,
-        "assumptions": list(node.assumptions),
-        "evidence": list(node.evidence),
-        "risks": list(node.risks),
-        "parent_ids": list(node.parent_ids),
-        "confidence": node.confidence,
-    }
+    return evaluation_payload(node)
 
 
 def stable_node_hash(node: SearchNode) -> str:
-    """Compute a deterministic content hash for cache keys."""
+    """Backward-compatible alias for the Judge cache key."""
 
-    payload = stable_node_payload(node)
-    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+    return judge_cache_key(node)
 
 
 @dataclass
@@ -62,18 +70,14 @@ class CacheStats:
 
 @dataclass
 class DTECache:
-    """Per-run in-memory cache.
-
-    The keys are stable semantic hashes. If a node changes its claim/evidence/
-    risks, it automatically misses the cache and is re-evaluated.
-    """
+    """Per-run in-memory cache."""
 
     embeddings: dict[str, list[float]] = field(default_factory=dict)
     judge_scores: dict[str, JudgeCacheEntry] = field(default_factory=dict)
     stats: CacheStats = field(default_factory=CacheStats)
 
     def get_embedding(self, node: SearchNode) -> list[float] | None:
-        key = stable_node_hash(node)
+        key = embedding_cache_key(node)
         value = self.embeddings.get(key)
         if value is None:
             self.stats.embedding_misses += 1
@@ -82,10 +86,10 @@ class DTECache:
         return list(value)
 
     def set_embedding(self, node: SearchNode, embedding: list[float]) -> None:
-        self.embeddings[stable_node_hash(node)] = list(embedding)
+        self.embeddings[embedding_cache_key(node)] = list(embedding)
 
     def get_judge(self, node: SearchNode) -> JudgeCacheEntry | None:
-        key = stable_node_hash(node)
+        key = judge_cache_key(node)
         value = self.judge_scores.get(key)
         if value is None:
             self.stats.judge_misses += 1
@@ -94,4 +98,4 @@ class DTECache:
         return value
 
     def set_judge(self, node: SearchNode, score: float, reasoning: str) -> None:
-        self.judge_scores[stable_node_hash(node)] = JudgeCacheEntry(score=score, reasoning=reasoning)
+        self.judge_scores[judge_cache_key(node)] = JudgeCacheEntry(score=score, reasoning=reasoning)

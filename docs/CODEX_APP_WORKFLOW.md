@@ -9,6 +9,7 @@ Point Codex at this repository/skill and ask it to run DTE, not to redesign DTE:
 ```text
 Use the dte-extreme-research skill/backend in this repository.
 Read AGENTS.md, SKILL.md, CODEX_NEXT_STEPS.md, and this workflow document.
+For subagent prompts, place prompts/DTE_STATIC_PREFIX.md first, then the role prompt, then dynamic JSON last.
 Run the smoke workflow first.
 Then run the requested research task through DTE with cache enabled.
 Summarize main_agent_status.md, frontier.md, entropy_trace.md, relation_candidates.md, human_questions.md, and report.md after each run.
@@ -37,9 +38,26 @@ For real geometry, set `GEMINI_API_KEY` or `GOOGLE_API_KEY` and use `embedding_p
 - **Relation Oracle subagent**: classifies selected node pairs/sets as equivalent, complementary, conflict, or independent.
 - **EvolutionController**: Python backend that computes embedding/KDE/entropy/temperature/UCB/Boltzmann allocation.
 
-## Cache-friendly context policy
+## Two different caches
 
-Do not optimize context by making every subagent invent a fresh shortest possible summary. That was useful in older context-engineering workflows, but it causes high cache miss rates.
+There are two cache layers. Do not confuse them.
+
+### 1. LLM prefix cache / Codex backend context cache
+
+This is the model-serving cache. It depends on exact shared prompt prefixes. To maximize hits:
+
+- put `prompts/DTE_STATIC_PREFIX.md` first, byte-for-byte;
+- put role-specific prompt second;
+- put dynamic task JSON, node content, logs, and user request last;
+- keep schemas and tool descriptions stable;
+- avoid putting repo status, timestamps, git SHAs, paths, or human messages before the static prefix;
+- reuse the same role prompt family across Judge, Executor, and Relation calls.
+
+The helper `build_cached_subagent_prompt()` in `src/dte_backend/prompt_builder.py` builds prompts in this order.
+
+### 2. DTE backend semantic cache
+
+This is the project-owned cache for embeddings and Judge scores. It is keyed by canonical node envelopes, not raw prompt prefixes.
 
 Use stable context envelopes:
 
@@ -49,7 +67,7 @@ Use stable context envelopes:
 - use the same `--cache-path` across runs for one project/session;
 - embed node summaries, not full transcripts.
 
-The backend implements this through `context_envelope.py`, split embedding/Judge cache keys, and canonical embedding input.
+The backend implements this through `context_envelope.py`, split embedding/Judge cache keys, canonical embedding input, and file-backed cache.
 
 ## Start a run
 
@@ -78,7 +96,7 @@ For real Gemini geometry, set `GEMINI_API_KEY` in the environment and use:
 
 ## Judge Oracle subagent
 
-Use `prompts/judge_oracle.md`. The subagent must return JSON only.
+Use `prompts/DTE_STATIC_PREFIX.md` first, then `prompts/judge_oracle.md`, then dynamic input JSON. The subagent must return JSON only.
 
 Smoke command:
 
@@ -102,7 +120,7 @@ A real Codex Judge subagent should follow the same JSON contract as the mock ada
 
 ## Executor subagent
 
-Use `prompts/executor_subagent.md`. The executor receives an `ExpansionRequest` and returns child `SearchNode` objects.
+Use `prompts/DTE_STATIC_PREFIX.md` first, then `prompts/executor_subagent.md`, then dynamic ExpansionRequest JSON. The executor receives an `ExpansionRequest` and returns child `SearchNode` objects.
 
 After a subagent returns output, validate it before consumption:
 
@@ -115,7 +133,7 @@ python hooks/dte_guard.py executor \
 
 ## Relation Oracle subagent
 
-Use `prompts/relation_oracle.md`. Do not call relation oracle for every pair. First select candidates using deterministic signals:
+Use `prompts/DTE_STATIC_PREFIX.md` first, then `prompts/relation_oracle.md`, then dynamic relation-task JSON. Do not call relation oracle for every pair. First select candidates using deterministic signals:
 
 - exact normalized-claim duplicates;
 - semantically close embeddings;
@@ -132,7 +150,16 @@ python -m dte_backend relation-oracle \
   --relation-command "python examples/mock_relation_adapter.py"
 ```
 
-After validation, convert the result through `relation_result_to_outputs()` in `src/dte_backend/relation_workflow.py`. The relation oracle itself must not mutate the graph.
+After validation, convert the result through `relation_result_to_outputs()` in `src/dte_backend/relation_workflow.py`, or write machine artifacts with:
+
+```bash
+python -m dte_backend relation-artifacts \
+  --nodes examples/frontier_nodes.json \
+  --relation-output examples/relation_result.json \
+  --out-dir artifacts/relation
+```
+
+The relation oracle itself must not mutate the graph.
 
 ## Human questions
 
@@ -157,4 +184,4 @@ The main agent should summarize what happened, why the controller continued or s
 python scripts/smoke_workflow.py
 ```
 
-This checks spec guard, Judge oracle, Relation oracle, DTE run with Judge command, and required artifact generation.
+This checks spec guard, Judge oracle, Relation oracle, DTE run with Judge command, relation artifact conversion, and required artifact generation.

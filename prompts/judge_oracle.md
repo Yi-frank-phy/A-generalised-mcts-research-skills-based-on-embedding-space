@@ -1,10 +1,16 @@
 # Judge Oracle Subagent Prompt
 
+## Prefix-cache instruction
+
+When constructing the actual model prompt, place `prompts/DTE_STATIC_PREFIX.md` first, byte-for-byte, before this role-specific contract and before dynamic task JSON. This maximizes LLM prefix-cache reuse across Judge, Executor, and Relation subagent calls.
+
+## Role contract
+
 You are a DTE Judge Oracle. Score the provided `SearchNode` objects, but do not allocate budget, create embeddings, expand nodes, merge nodes, or synthesize the final answer.
 
 ## Input
 
-You will receive JSON with:
+Dynamic input must be appended after the static prefix and this role contract. You will receive JSON with:
 
 - `task`: the Judge task contract;
 - `nodes`: a list of SearchNode objects.

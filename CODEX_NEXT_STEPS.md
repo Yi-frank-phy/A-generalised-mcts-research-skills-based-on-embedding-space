@@ -9,6 +9,8 @@ The repo now has a runnable DTE backend with:
 - fixed DTE protocol and AGENTS/SKILL instructions;
 - role-isolated seeding with optional compile hints instead of a mandatory Distiller role;
 - max-dimensional embedding geometry by default (`embedding_dimension=3072`);
+- LLM prefix-cache-friendly shared static prompt prefix in `prompts/DTE_STATIC_PREFIX.md`;
+- prompt builder that places shared prefix first, role contract second, dynamic JSON last;
 - cache-friendly canonical context envelopes for embeddings/Judge evaluation;
 - split embedding/Judge cache keys and file-backed persistent cache;
 - embedding/KDE/entropy/temperature/UCB/Boltzmann controller;
@@ -39,8 +41,9 @@ These items were previous blockers and are now complete:
 7. Relation candidate pairs can be selected deterministically and rendered to `relation_candidates.md`.
 8. Codex app workflow documentation exists.
 9. Optional Gemini smoke script exists and should only run when `GEMINI_API_KEY` or `GOOGLE_API_KEY` is set.
-10. Context cache identity has been upgraded from unstable shortest-context hashes to canonical semantic envelopes.
+10. DTE backend context cache identity has been upgraded from unstable shortest-context hashes to canonical semantic envelopes.
 11. Relation oracle results can be persisted as `relation_proposals.json` and `discriminator_tasks.json`.
+12. LLM prefix-cache prompt layout has been added: static prefix first, role-specific contract second, dynamic input last.
 
 ## Highest-priority remaining blockers
 
@@ -49,6 +52,8 @@ These items were previous blockers and are now complete:
 Current state:
 
 - Prompt templates exist.
+- `prompts/DTE_STATIC_PREFIX.md` exists and should be placed first.
+- `build_cached_subagent_prompt()` exists for prefix-cache-friendly prompt construction.
 - Mock subprocess adapters exist.
 - `docs/CODEX_APP_WORKFLOW.md` explains the main-agent workflow.
 
@@ -56,6 +61,7 @@ Required change:
 
 - Add example JSON transcripts for Judge, Executor, and Relation subagent calls.
 - Add one end-to-end documented example using mock adapters and artifacts.
+- If Codex exposes prompt/cache metrics, record cached-token behavior in an example note.
 
 ### 2. Decide relation-oracle execution policy
 
@@ -90,6 +96,7 @@ Only run when `GEMINI_API_KEY` or `GOOGLE_API_KEY` is set. Respect free-tier rat
 - Do not let executor or oracle subagents produce the final answer directly.
 - Do not restore mandatory Distiller. Compile remains optional and agent-local.
 - Do not reintroduce shortest-context cache keys that depend on logs, parent ids, controller metrics, or transient summaries.
+- Do not put dynamic task/user/repo/log content before `prompts/DTE_STATIC_PREFIX.md` in subagent prompts.
 
 ## Minimum validation after changes
 
@@ -116,6 +123,7 @@ python -m dte_backend run --spec examples/run_spec.json --out-dir artifacts/judg
 
 ```text
 main agent / Codex app
+  -> stable shared static prompt prefix for LLM cache reuse
   -> DTERunSpec
   -> DTE backend validates spec
   -> optional role-isolated seeding

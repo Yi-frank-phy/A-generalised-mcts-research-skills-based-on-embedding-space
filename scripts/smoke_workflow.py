@@ -72,6 +72,7 @@ def main() -> None:
         "main_agent_status.md",
         "human_questions.md",
         "role_audit.md",
+        "relation_candidates.md",
     ]
     missing = [name for name in required if not (out_dir / name).exists()]
     if missing:

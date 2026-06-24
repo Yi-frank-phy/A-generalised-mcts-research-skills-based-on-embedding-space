@@ -1,7 +1,7 @@
 """File-backed DTE cache.
 
 Stores vectors and scalar evaluations across runs so high-quality geometry calls
-are not repeated for unchanged nodes.
+are not repeated for unchanged semantic nodes.
 """
 
 from __future__ import annotations
@@ -9,12 +9,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from .cache import DTECache, JudgeCacheEntry, stable_node_hash
+from .cache import DTECache, JudgeCacheEntry, embedding_cache_key, judge_cache_key
 from .models import SearchNode
 
 
 class FileDTECache(DTECache):
-    """Simple JSON-backed cache with the same interface as DTECache."""
+    """Simple JSON-backed cache with split embedding/Judge identities."""
 
     def __init__(self, path: str | Path):
         super().__init__()
@@ -30,7 +30,7 @@ class FileDTECache(DTECache):
         self.path.write_text(json.dumps(self.data, ensure_ascii=False, indent=2), encoding="utf-8")
 
     def get_embedding(self, node: SearchNode) -> list[float] | None:
-        key = stable_node_hash(node)
+        key = embedding_cache_key(node)
         value = self.data["vectors"].get(key)
         if value is None:
             self.stats.embedding_misses += 1
@@ -39,11 +39,11 @@ class FileDTECache(DTECache):
         return [float(v) for v in value]
 
     def set_embedding(self, node: SearchNode, embedding: list[float]) -> None:
-        self.data["vectors"][stable_node_hash(node)] = list(embedding)
+        self.data["vectors"][embedding_cache_key(node)] = list(embedding)
         self.save()
 
     def get_judge(self, node: SearchNode) -> JudgeCacheEntry | None:
-        key = stable_node_hash(node)
+        key = judge_cache_key(node)
         value = self.data["scores"].get(key)
         if value is None:
             self.stats.judge_misses += 1
@@ -52,5 +52,5 @@ class FileDTECache(DTECache):
         return JudgeCacheEntry(score=float(value["score"]), reasoning=str(value["reasoning"]))
 
     def set_judge(self, node: SearchNode, score: float, reasoning: str) -> None:
-        self.data["scores"][stable_node_hash(node)] = {"score": float(score), "reasoning": reasoning}
+        self.data["scores"][judge_cache_key(node)] = {"score": float(score), "reasoning": reasoning}
         self.save()

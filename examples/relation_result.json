@@ -1,0 +1,6 @@
+{
+  "relation": "conflict",
+  "source_node_ids": ["node-direct", "node-counter"],
+  "rationale": "The direct route assumes the symmetry constraints are satisfiable, while the counterexample route searches for a boundary case that violates that assumption.",
+  "discriminator_question": "Which minimal symmetry constraint is necessary for the direct construction to hold?"
+}

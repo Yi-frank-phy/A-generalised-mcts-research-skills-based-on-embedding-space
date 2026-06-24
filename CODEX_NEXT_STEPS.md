@@ -9,6 +9,8 @@ The repo now has a runnable DTE backend with:
 - fixed DTE protocol and AGENTS/SKILL instructions;
 - role-isolated seeding with optional compile hints instead of a mandatory Distiller role;
 - max-dimensional embedding geometry by default (`embedding_dimension=3072`);
+- cache-friendly canonical context envelopes for embeddings/Judge evaluation;
+- split embedding/Judge cache keys and file-backed persistent cache;
 - embedding/KDE/entropy/temperature/UCB/Boltzmann controller;
 - executor adapter validation;
 - Judge and Relation oracle task contracts;
@@ -16,7 +18,7 @@ The repo now has a runnable DTE backend with:
 - `run --judge-command ...` wired into the main loop;
 - relation-oracle result conversion into `MergeProposal` or discriminator task;
 - deterministic relation candidate-pair selection;
-- file-backed cache;
+- relation proposal/discriminator machine artifacts via `relation-artifacts`;
 - Codex-app-facing artifacts, including `relation_candidates.md`;
 - `hooks/dte_guard.py`, `hooks/README.md`, and hook tests for boundary checks;
 - subagent prompt templates in `prompts/`;
@@ -37,10 +39,25 @@ These items were previous blockers and are now complete:
 7. Relation candidate pairs can be selected deterministically and rendered to `relation_candidates.md`.
 8. Codex app workflow documentation exists.
 9. Optional Gemini smoke script exists and should only run when `GEMINI_API_KEY` or `GOOGLE_API_KEY` is set.
+10. Context cache identity has been upgraded from unstable shortest-context hashes to canonical semantic envelopes.
+11. Relation oracle results can be persisted as `relation_proposals.json` and `discriminator_tasks.json`.
 
 ## Highest-priority remaining blockers
 
-### 1. Decide relation-oracle execution policy
+### 1. Real Codex subagent integration examples
+
+Current state:
+
+- Prompt templates exist.
+- Mock subprocess adapters exist.
+- `docs/CODEX_APP_WORKFLOW.md` explains the main-agent workflow.
+
+Required change:
+
+- Add example JSON transcripts for Judge, Executor, and Relation subagent calls.
+- Add one end-to-end documented example using mock adapters and artifacts.
+
+### 2. Decide relation-oracle execution policy
 
 Current recommendation: keep relation oracle as a main-agent step first, not automatic inside every `run`, to avoid extra subagent calls and latency.
 
@@ -53,34 +70,7 @@ If the user later wants automatic invocation, add an optional `--relation-comman
 
 Do not call relation oracle on every pair.
 
-### 2. Persist relation proposals/tasks as machine artifacts
-
-Current state:
-
-- `relation_result_to_outputs()` returns a `MergeProposal` and optional discriminator SearchNode.
-- The CLI can print relation oracle results.
-
-Required change:
-
-- Add a command or helper that reads a relation-oracle JSON result and writes:
-  - `relation_proposals.json`;
-  - optional `discriminator_tasks.json`.
-- Validate before writing.
-
-### 3. Improve real Codex subagent integration examples
-
-Current state:
-
-- Prompt templates exist.
-- Mock subprocess adapters exist.
-- `docs/CODEX_APP_WORKFLOW.md` explains the human/main-agent workflow.
-
-Required change:
-
-- Add example JSON transcripts for Judge, Executor, and Relation subagent calls.
-- Add one end-to-end documented example using mock adapters and artifacts.
-
-### 4. Optional Gemini real smoke
+### 3. Optional Gemini real smoke
 
 Do not run Gemini API in CI by default. Manual check:
 
@@ -99,6 +89,7 @@ Only run when `GEMINI_API_KEY` or `GOOGLE_API_KEY` is set. Respect free-tier rat
 - Do not treat Judge as an embedding model; closed Judge only returns observable judgments.
 - Do not let executor or oracle subagents produce the final answer directly.
 - Do not restore mandatory Distiller. Compile remains optional and agent-local.
+- Do not reintroduce shortest-context cache keys that depend on logs, parent ids, controller metrics, or transient summaries.
 
 ## Minimum validation after changes
 
@@ -117,6 +108,7 @@ python -m dte_backend validate examples/run_spec.json
 python hooks/dte_guard.py spec examples/run_spec.json
 python -m dte_backend judge-oracle --nodes examples/frontier_nodes.json --judge-command "python examples/mock_judge_adapter.py"
 python -m dte_backend relation-oracle --nodes examples/frontier_nodes.json --relation-command "python examples/mock_relation_adapter.py"
+python -m dte_backend relation-artifacts --nodes examples/frontier_nodes.json --relation-output examples/relation_result.json --out-dir artifacts/relation
 python -m dte_backend run --spec examples/run_spec.json --out-dir artifacts/judge-smoke --cache-path .dte_cache/cache.json --judge-command "python examples/mock_judge_adapter.py"
 ```
 

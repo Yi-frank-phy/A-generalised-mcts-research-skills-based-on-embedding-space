@@ -15,11 +15,14 @@ The repo now has a runnable DTE backend with:
 - subprocess oracle runners and mock adapters;
 - `run --judge-command ...` wired into the main loop;
 - relation-oracle result conversion into `MergeProposal` or discriminator task;
+- deterministic relation candidate-pair selection;
 - file-backed cache;
-- Codex-app-facing artifacts;
+- Codex-app-facing artifacts, including `relation_candidates.md`;
 - `hooks/dte_guard.py`, `hooks/README.md`, and hook tests for boundary checks;
 - subagent prompt templates in `prompts/`;
-- workflow smoke script at `scripts/smoke_workflow.py`.
+- Codex app workflow guide in `docs/CODEX_APP_WORKFLOW.md`;
+- workflow smoke script at `scripts/smoke_workflow.py`;
+- optional Gemini smoke script at `scripts/gemini_smoke.py`.
 
 ## Done — do not redo
 
@@ -31,61 +34,61 @@ These items were previous blockers and are now complete:
 4. The mandatory Distiller role has been removed. `CompileHint` is only an optional agent-local compression hint.
 5. Relation oracle outputs can be converted to typed merge proposals or discriminator task nodes.
 6. Prompt templates exist for Judge, Relation, and Executor subagents.
+7. Relation candidate pairs can be selected deterministically and rendered to `relation_candidates.md`.
+8. Codex app workflow documentation exists.
+9. Optional Gemini smoke script exists and should only run when `GEMINI_API_KEY` or `GOOGLE_API_KEY` is set.
 
 ## Highest-priority remaining blockers
 
-### 1. Integrate relation workflow into artifacts or runner policy
+### 1. Decide relation-oracle execution policy
+
+Current recommendation: keep relation oracle as a main-agent step first, not automatic inside every `run`, to avoid extra subagent calls and latency.
+
+If the user later wants automatic invocation, add an optional `--relation-command` but only call it at safe trigger points:
+
+- when `relation_candidates.md` is non-empty;
+- when entropy plateaus;
+- when top branches are near-tied;
+- when exact duplicates are detected.
+
+Do not call relation oracle on every pair.
+
+### 2. Persist relation proposals/tasks as machine artifacts
 
 Current state:
 
-- `src/dte_backend/relation_workflow.py` can convert a validated relation result into a proposal/task.
-- `relation-oracle` CLI can run and validate a relation oracle.
-- The main `run` loop still only applies deterministic exact equivalent-claim merge automatically.
+- `relation_result_to_outputs()` returns a `MergeProposal` and optional discriminator SearchNode.
+- The CLI can print relation oracle results.
 
 Required change:
 
-- Decide whether relation-oracle should be invoked inside `run` or remain a main-agent step between runs.
-- If inside `run`, add an optional `--relation-command` and only call it at safe trigger points:
-  - after expansion;
-  - when frontier nodes are semantically close;
-  - when branches conflict;
-  - when entropy plateaus.
-- If outside `run`, document the main-agent workflow and emit an artifact listing candidate node pairs for relation-oracle calls.
+- Add a command or helper that reads a relation-oracle JSON result and writes:
+  - `relation_proposals.json`;
+  - optional `discriminator_tasks.json`.
+- Validate before writing.
 
-Recommended default: keep relation oracle as a main-agent step first, not automatic inside every run, to avoid extra subagent calls.
-
-### 2. Add candidate-pair selection for relation oracle
-
-Required change:
-
-- Add a small deterministic function that selects node pairs/sets likely worth relation classification:
-  - semantically close in embedding/KDE space;
-  - near-tied UCB branches;
-  - entropy plateau branches;
-  - exact duplicate fallback.
-- Output candidates to a markdown/json artifact so the main agent knows when to call `relation-oracle`.
-
-### 3. Make real Codex subagent usage explicit
+### 3. Improve real Codex subagent integration examples
 
 Current state:
 
 - Prompt templates exist.
-- Mock adapters exist.
-- There is not yet a documented Codex-app procedure for launching subagents with those prompts and feeding validated JSON back to the backend.
+- Mock subprocess adapters exist.
+- `docs/CODEX_APP_WORKFLOW.md` explains the human/main-agent workflow.
 
 Required change:
 
-- Add `docs/CODEX_APP_WORKFLOW.md` describing how the main agent should:
-  - run DTE;
-  - launch Judge subagent;
-  - launch Executor subagent;
-  - launch Relation subagent;
-  - ask human in chat when `human_questions.md` requests it;
-  - summarize `main_agent_status.md` instead of inventing a separate frontend.
+- Add example JSON transcripts for Judge, Executor, and Relation subagent calls.
+- Add one end-to-end documented example using mock adapters and artifacts.
 
-### 4. Add optional real Gemini smoke test guard
+### 4. Optional Gemini real smoke
 
-Do not run Gemini API in CI by default. Add a manual command that only runs when `GEMINI_API_KEY` is set, and explain the free-tier rate-limit discipline.
+Do not run Gemini API in CI by default. Manual check:
+
+```bash
+python scripts/gemini_smoke.py
+```
+
+Only run when `GEMINI_API_KEY` or `GOOGLE_API_KEY` is set. Respect free-tier rate limits by embedding only node summaries and using `--cache-path` in real runs.
 
 ## Important constraints
 
@@ -127,6 +130,7 @@ main agent / Codex app
   -> Judge oracle subagent returns observable scores
   -> EvolutionController computes embedding/KDE/entropy/UCB/Boltzmann
   -> Executor subagent returns SearchNode children
+  -> Relation candidate artifact tells main agent which pairs to classify
   -> Relation oracle subagent classifies merge/conflict/complementarity
   -> backend validates all outputs
   -> backend converts relation results into proposals/tasks

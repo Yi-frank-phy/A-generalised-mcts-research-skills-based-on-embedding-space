@@ -1,15 +1,15 @@
-# DTE Codex Skill Backend
+# Evolving Frontier Research Skill
 
-> **Public alpha note:** this is a local Codex/agent skill backend, not a hosted service. Before making the repository public, read [`PUBLIC_RELEASE_CHECKLIST.md`](./PUBLIC_RELEASE_CHECKLIST.md). The DTE architecture is frozen; continue by hardening workflow edges and oracle integrations, not redesigning the system.
+> **Public alpha note:** this is a local Codex/agent skill backend, not a hosted service. Before making the repository public, read [`PUBLIC_RELEASE_CHECKLIST.md`](./PUBLIC_RELEASE_CHECKLIST.md). The research protocol is frozen; continue by hardening workflow edges and oracle integrations, not redesigning the system.
 
-**DTE Codex Skill Backend** packages Deep Think Evolving as a fixed research backend that can be driven by Codex/Kimi/OpenClaw-style agents while preserving the DTE controller.
+**Evolving Frontier Research Skill** packages a fixed frontier-search research protocol for Codex-style agents. It turns open-ended mathematical, physical, academic, or conceptual research into a controlled loop of structured hypotheses, external judgment, geometric exploration, bounded expansion, relation checks, and final synthesis.
 
 Core idea:
 
 ```text
-Codex / Kimi / OpenClaw executor
+Codex / agent executor
         ↓
-DTE Skill Protocol
+Skill protocol
         ↓
 Fixed role-isolated research flow
         ↓
@@ -17,16 +17,18 @@ Python math backend: Judge scores → entropy/novelty → UCB → Boltzmann expa
         ↓
 structured SearchNode outputs
         ↓
-DTE synthesis protocol
+validated synthesis report
 ```
 
-This repository is intentionally **not** a new architecture. It is a packaging layer around an existing architecture:
+This repository is intentionally **not** a new general agent architecture. It is a packaging layer around a fixed research workflow:
 
 - Role separation is preserved as anti-bias isolation.
-- The DTE math engine remains mandatory for research runs.
+- The math controller remains mandatory for research runs.
 - Subagents can execute local episodes but cannot directly produce final conclusions.
 - Skills and hooks enforce structured outputs and phase boundaries.
 - UCB remains value/uncertainty driven; cost is handled by hard budgets and run profiles, not by changing the UCB objective by default.
+
+The internal Python package still uses `dte_backend` for backward compatibility. Public-facing docs use the clearer name **Evolving Frontier Research Skill**.
 
 ## Status
 
@@ -43,19 +45,33 @@ python -m dte_backend strict-run \
 
 `examples/mock_*_adapter.py` are smoke-test tools only. Hash embedding is a debug/dry-run fallback, not real geometry.
 
+## Suggested public repository metadata
+
+Recommended repository name:
+
+```text
+evolving-frontier-research-skill
+```
+
+Recommended GitHub description:
+
+```text
+A local Codex/agent skill for structured deep research using frontier search, Judge oracles, entropy/UCB exploration, and validated synthesis.
+```
+
 ## Repository layout
 
 ```text
 PUBLIC_RELEASE_CHECKLIST.md              public release checklist
 CODEX_NEXT_STEPS.md                      current top-priority next steps
-READ_THIS_FIRST_REAL_ORACLE_BLOCKER.md   historical real-oracle note, now points to implemented Judge bridge
+READ_THIS_FIRST_REAL_ORACLE_BLOCKER.md   real Judge bridge status
 HOOK_WIRING_TODO.md                      hook and real-oracle wiring notes
 AGENTS.md                               Codex/Kimi/OpenClaw operating instructions
-SKILL.md                                DTE slash-command skill contract
+SKILL.md                                slash-command skill contract
 PRD.md                                  product requirements
 SPEC.md                                 technical specification
 ARCHITECTURE.md                         architecture decision record
-src/dte_backend/                        Python backend skeleton
+src/dte_backend/                        Python backend implementation
 schemas/                                JSON schemas
 hooks/                                  validation hook examples
 examples/                               example run specs and node outputs
@@ -81,7 +97,7 @@ python -m dte_backend strict-run \
   --judge-command "python scripts/codex_judge_adapter.py"
 ```
 
-`code scripts/codex_judge_adapter.py` calls `codex exec` by default. Set `DTE_CODEX_JUDGE_COMMAND` only when you need to override the Codex command used by that adapter.
+`scripts/codex_judge_adapter.py` calls `codex exec` by default. Set `DTE_CODEX_JUDGE_COMMAND` only when you need to override the Codex command used by that adapter.
 
 ## License
 
@@ -89,4 +105,4 @@ Apache-2.0. See [`LICENSE`](./LICENSE).
 
 ## Design stance
 
-Freeze the DTE architecture. Package it as a skill-backed research backend. The user should provide task parameters, not rewrite the architecture for each run.
+Freeze the research workflow. Package it as a skill-backed research backend. The user should provide task parameters, not rewrite the architecture for each run.

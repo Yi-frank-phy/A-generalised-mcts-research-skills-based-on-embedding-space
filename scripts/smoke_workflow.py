@@ -1,23 +1,21 @@
-"""Run the current DTE workflow smoke checks.
-
-This is intentionally simple and cross-platform. It exercises the pieces Codex
-should care about before doing broader work.
-"""
+"""Run the current DTE workflow smoke checks."""
 
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+SMOKE_ENV = {**os.environ, "DTE_ALLOW_MOCK_ADAPTER": "1"}
 
 
 def run(command: list[str]) -> None:
     print("$", " ".join(command))
-    completed = subprocess.run(command, cwd=ROOT, text=True)
+    completed = subprocess.run(command, cwd=ROOT, text=True, env=SMOKE_ENV)
     if completed.returncode != 0:
         raise SystemExit(completed.returncode)
 
@@ -95,7 +93,6 @@ def main() -> None:
     if missing:
         raise SystemExit(f"missing smoke artifacts: {missing}")
 
-    # Verify relation artifacts are valid JSON arrays.
     for name in relation_required:
         value = json.loads((relation_out_dir / name).read_text(encoding="utf-8"))
         if not isinstance(value, list):

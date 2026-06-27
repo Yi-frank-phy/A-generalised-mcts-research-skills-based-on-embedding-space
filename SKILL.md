@@ -1,20 +1,22 @@
 ---
-name: dte-extreme-research
-description: "Run the fixed Deep Think Evolving research protocol as a Codex skill/backend for high-depth mathematical, physical, academic, proof, derivation, or conceptual research. Invoke directly for slash-command style research tasks. The skill must use the strict-run entrypoint: DTERunSpec input, SearchNode frontier, real Judge oracle or explicit dry-run, EvolutionController embedding/KDE/entropy/UCB allocation, executor expansion, relation-oracle classification, validated artifacts, and final DTE synthesis."
+name: evolving-frontier-research
+description: "Run a structured frontier-search research skill for deep mathematical, physical, academic, proof, derivation, or conceptual research. The skill uses the strict-run entrypoint: run specification input, SearchNode frontier, real Judge oracle or explicit dry-run, entropy/UCB exploration, executor expansion, relation checks, validated artifacts, and final synthesis."
 ---
 
-# DTE Extreme Research Skill
+# Evolving Frontier Research Skill
 
 This file is the primary runtime instruction for slash-command usage. A Codex agent invoking this skill should not require the user to read separate docs before the first run.
 
+The old internal shorthand may appear in Python module names such as `dte_backend`, but the public skill name is **Evolving Frontier Research Skill**.
+
 ## Slash-command intent
 
-Use this skill when the user invokes a DTE-style research command, asks for extreme-depth research, wants a Codex-backed research agent, or wants a structured mathematical/physical/academic exploration rather than a direct one-shot answer.
+Use this skill when the user invokes a structured deep-research command, asks for extreme-depth research, wants a Codex-backed research agent, or wants a structured mathematical/physical/academic exploration rather than a direct one-shot answer.
 
 Typical invocation:
 
 ```text
-/dte-extreme-research <research task>
+/evolving-frontier-research <research task>
 ```
 
 On invocation, Codex should run `python -m dte_backend strict-run`, not the flexible `run` helper, unless the user explicitly asks only for explanation or planning.
@@ -42,7 +44,7 @@ It must not present mock-oracle output as research judgment.
 1. Read this `SKILL.md`, then `AGENTS.md`, then `HOOK_WIRING_TODO.md` only for current hook work.
 2. If not installed, run `python -m pip install -e .[dev]`.
 3. Run `python scripts/smoke_workflow.py` once before serious use or after repo changes. This is the only default place where mock adapters are allowed.
-4. Convert the user task into a `DTERunSpec`.
+4. Convert the user task into a run specification.
 5. Use `embedding_provider=gemini-embedding-2` and `embedding_dimension=3072` for real mode. Hash embedding is allowed only in `--mode smoke` or `--mode dry-run`.
 6. Always provide `--cache-path .dte_cache/cache.json` outside smoke mode.
 7. For a real research run, call `strict-run --mode real` with `--judge-command "python scripts/codex_judge_adapter.py"`. Do not use the mock Judge.
@@ -55,7 +57,7 @@ It must not present mock-oracle output as research judgment.
    - `report.md`
    - `strict_run_status.json`
 9. If `human_questions.md` asks the user a branch question, ask it in chat instead of guessing.
-10. Final answer must come from DTE synthesis, not directly from any subagent.
+10. Final answer must come from validated synthesis, not directly from any subagent.
 
 ## Strict run modes
 
@@ -175,18 +177,18 @@ Do not include volatile material in semantic identity:
 - paths;
 - transient summaries.
 
-## Required DTE flow
+## Required research flow
 
 1. Generate or ingest initial SearchNodes.
 2. Validate all SearchNodes against schema.
 3. Score frontier nodes through a real Judge Oracle, or explicitly declare dry-run mode.
-4. EvolutionController computes embedding/KDE density, entropy, uncertainty, UCB, temperature, and expansion budgets.
+4. The controller computes embedding/KDE density, entropy, uncertainty, UCB, temperature, and expansion budgets.
 5. Executor expands selected frontier nodes into structured child SearchNodes.
 6. Validate executor output before adding it to the graph.
 7. Render `relation_candidates.md`.
 8. Relation Oracle classifies only selected candidate pairs, not every pair.
 9. Convert validated relation output into `MergeProposal` or discriminator task through backend helpers.
-10. Produce final synthesis through DTE synthesis.
+10. Produce final synthesis through validated synthesis.
 
 ## Oracle definitions
 
@@ -264,7 +266,7 @@ The final answer/report must include:
 - Do not use the flexible `run` helper as the slash-command entrypoint; use `strict-run`.
 - Do not use mock adapters for real research judgment.
 - Do not return a final answer directly from an executor episode.
-- Do not silently skip Judge or EvolutionController.
+- Do not silently skip Judge or controller stages.
 - Do not replace role isolation with a single all-in-one agent.
 - Do not modify UCB to be cost-aware by default.
 - Do not rely on free-form Markdown as machine truth.

@@ -3,9 +3,9 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "dte-codex-skill-backend"
+name = "evolving-frontier-research-skill"
 version = "0.1.0"
-description = "DTE fixed research protocol packaged as a Codex-compatible skill/backend."
+description = "Local skill backend for structured frontier-search research."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "Apache-2.0" }

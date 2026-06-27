@@ -1,6 +1,6 @@
 # DTE Codex Skill Backend
 
-> **Codex / maintainer note:** read [`CODEX_NEXT_STEPS.md`](./CODEX_NEXT_STEPS.md) before making changes. It contains the current blockers, known mismatches, and exact next implementation steps. Do not redesign the architecture.
+> **Read this first:** [`READ_THIS_FIRST_REAL_ORACLE_BLOCKER.md`](./READ_THIS_FIRST_REAL_ORACLE_BLOCKER.md). The remaining blocker is real Codex oracle integration for `strict-run --mode real`, not DTE architecture. Do not redesign the architecture.
 
 **DTE Codex Skill Backend** packages Deep Think Evolving as a fixed research backend that can be driven by Codex/Kimi/OpenClaw-style agents while preserving the DTE controller.
 
@@ -31,17 +31,19 @@ This repository is intentionally **not** a new architecture. It is a packaging l
 ## Repository layout
 
 ```text
-CODEX_NEXT_STEPS.md        current blockers and exact next steps for Codex
-AGENTS.md                  Codex/Kimi/OpenClaw operating instructions
-SKILL.md                   DTE skill contract
-PRD.md                     product requirements
-SPEC.md                    technical specification
-ARCHITECTURE.md            architecture decision record
-src/dte_backend/           Python backend skeleton
-schemas/                   JSON schemas
-hooks/                     validation hook examples
-examples/                  example run specs and node outputs
-tests/                     tests
+READ_THIS_FIRST_REAL_ORACLE_BLOCKER.md   current top-priority blocker
+HOOK_WIRING_TODO.md                      hook and real-oracle wiring notes
+CODEX_NEXT_STEPS.md                      historical/current next steps
+AGENTS.md                               Codex/Kimi/OpenClaw operating instructions
+SKILL.md                                DTE slash-command skill contract
+PRD.md                                  product requirements
+SPEC.md                                 technical specification
+ARCHITECTURE.md                         architecture decision record
+src/dte_backend/                        Python backend skeleton
+schemas/                                JSON schemas
+hooks/                                  validation hook examples
+examples/                               example run specs and node outputs
+tests/                                  tests
 ```
 
 ## Minimal local check
@@ -49,11 +51,13 @@ tests/                     tests
 ```bash
 python -m pip install -e .[dev]
 pytest
-python -m dte_backend validate examples/run_spec.json
-python hooks/dte_guard.py spec examples/run_spec.json
-python -m dte_backend judge-oracle --nodes examples/frontier_nodes.json --judge-command "python examples/mock_judge_adapter.py"
-python -m dte_backend relation-oracle --nodes examples/frontier_nodes.json --relation-command "python examples/mock_relation_adapter.py"
-python -m dte_backend run --spec examples/run_spec.json --out-dir artifacts/prototype --cache-path .dte_cache/cache.json
+python scripts/smoke_workflow.py
+```
+
+Smoke checks may use mock adapters. Real research must use:
+
+```bash
+python -m dte_backend strict-run --mode real --judge-command "<real Codex Judge Oracle command>" ...
 ```
 
 ## Design stance

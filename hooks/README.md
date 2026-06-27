@@ -53,3 +53,34 @@ Run all hook sample checks through pytest:
 ```bash
 python -m pytest tests/test_hooks.py
 ```
+
+## Codex UserPromptSubmit install
+
+The Codex app hook layer can inject workflow reminders before the agent starts a
+DTE task. Install `hooks/dte_prompt_guard.py` into the user hook directory and
+add it to `C:\Users\zhaoy\.codex\hooks.json` under `UserPromptSubmit`.
+
+Example command entry:
+
+```json
+{
+  "type": "command",
+  "command": "python C:\\Users\\zhaoy\\.codex\\hooks\\dte_prompt_guard.py"
+}
+```
+
+This prompt hook is only a workflow reminder. The hard artifact checks still
+come from `hooks/dte_guard.py` at the exact spec, Judge, Relation, and Executor
+boundaries listed above. If any guard command fails, the agent must stop before
+consuming that artifact.
+
+## Backend entrypoint hardening
+
+The backend CLI also enforces the spec guard in `python -m dte_backend validate`
+and `python -m dte_backend run`. This prevents a non-compliant run spec from
+reaching embedding provider setup or the DTE loop when an agent forgets the
+manual `hooks/dte_guard.py spec ...` command.
+
+Judge, Relation, and Executor outputs are already validated by their subprocess
+entrypoints. Codex platform hooks are still useful as an additional runtime
+boundary when those outputs are produced outside the backend CLI.

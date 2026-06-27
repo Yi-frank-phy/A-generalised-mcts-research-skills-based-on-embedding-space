@@ -18,6 +18,7 @@ from .artifacts import (
     render_role_audit_markdown,
 )
 from .file_cache import FileDTECache
+from .guards import enforce_run_spec_guard
 from .math_engine import allocate_frontier
 from .models import DTERunSpec, ExpansionRequest, SearchNode
 from .oracle_validation import validate_relation_output
@@ -35,6 +36,7 @@ def split_command(command: str) -> list[str]:
 
 def cmd_validate(args: argparse.Namespace) -> None:
     spec = load_json_model(args.path, DTERunSpec)
+    enforce_run_spec_guard(spec)
     print(spec.model_dump_json(indent=2))
 
 
@@ -93,6 +95,7 @@ def cmd_validate_executor(args: argparse.Namespace) -> None:
 
 def cmd_run(args: argparse.Namespace) -> None:
     spec = load_json_model(args.spec, DTERunSpec)
+    enforce_run_spec_guard(spec)
     nodes = load_json_list(args.nodes, SearchNode) if args.nodes else None
     executor_adapter = None
     if args.executor_command:

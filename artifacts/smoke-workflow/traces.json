@@ -1,0 +1,114 @@
+[
+  {
+    "iteration": 1,
+    "notes": [
+      "frontier=4",
+      "budget=3",
+      "judge_cache_hits=0",
+      "embedding_cache_hits=0",
+      "spatial_entropy=0.3515",
+      "normalized_temperature=1.0000",
+      "kde_bandwidth2=0.6551"
+    ],
+    "allocations": [
+      {
+        "node_id": "seed-direct",
+        "score": 0.5,
+        "uncertainty": 0.24517212602642738,
+        "ucb_score": 0.7451721260264274,
+        "expansion_budget": 1
+      },
+      {
+        "node_id": "seed-counter",
+        "score": 0.45,
+        "uncertainty": 0.4662525141694907,
+        "ucb_score": 0.9162525141694907,
+        "expansion_budget": 1
+      },
+      {
+        "node_id": "seed-formalism",
+        "score": 0.47000000000000003,
+        "uncertainty": 0.0,
+        "ucb_score": 0.47000000000000003,
+        "expansion_budget": 0
+      },
+      {
+        "node_id": "seed-merge",
+        "score": 0.46,
+        "uncertainty": 1.0,
+        "ucb_score": 1.46,
+        "expansion_budget": 2
+      }
+    ],
+    "merges": [],
+    "entropy_state": {
+      "spatial_entropy": 0.3514562109384111,
+      "entropy_delta": null,
+      "effective_temperature": 1.0,
+      "normalized_temperature": 1.0,
+      "should_synthesize": false,
+      "stop_reason": null
+    },
+    "human_question": null
+  },
+  {
+    "iteration": 2,
+    "notes": [
+      "frontier=5",
+      "budget=3",
+      "judge_cache_hits=0",
+      "embedding_cache_hits=0",
+      "spatial_entropy=0.3329",
+      "normalized_temperature=0.3703",
+      "kde_bandwidth2=0.7255",
+      "auto_synthesis_trigger=entropy_plateau"
+    ],
+    "allocations": [
+      {
+        "node_id": "seed-formalism",
+        "score": 0.47000000000000003,
+        "uncertainty": 1.0,
+        "ucb_score": 0.8402753067176245,
+        "expansion_budget": 2
+      },
+      {
+        "node_id": "d8de808b-24c0-4f9f-bce1-07f6ad22d2c5",
+        "score": 0.42000000000000004,
+        "uncertainty": 0.3117657665151377,
+        "ucb_score": 0.535439164820448,
+        "expansion_budget": 0
+      },
+      {
+        "node_id": "7fbc775f-6e9e-4a23-a0c2-9f08317ec61d",
+        "score": 0.37,
+        "uncertainty": 0.42897300484655965,
+        "ucb_score": 0.5288381109431409,
+        "expansion_budget": 0
+      },
+      {
+        "node_id": "46a0bece-b93f-4f22-9023-ba1981d557fc",
+        "score": 0.38,
+        "uncertainty": 0.0,
+        "ucb_score": 0.38,
+        "expansion_budget": 0
+      },
+      {
+        "node_id": "b4a5b608-1a5f-4198-a90c-dc1c7b332fe7",
+        "score": 0.45,
+        "uncertainty": 0.37225080881365874,
+        "ucb_score": 0.5878352824093613,
+        "expansion_budget": 1
+      }
+    ],
+    "merges": [],
+    "entropy_state": {
+      "spatial_entropy": 0.3329424456025299,
+      "entropy_delta": 0.018513765335881227,
+      "effective_temperature": 0.37027530671762454,
+      "normalized_temperature": 0.37027530671762454,
+      "should_synthesize": true,
+      "stop_reason": "entropy_plateau"
+    },
+    "human_question": null
+  }
+]

@@ -32,6 +32,18 @@ class RecordingAdapter:
         ]
 
 
+class BadObjectAdapter:
+    def expand(self, request: ExpansionRequest) -> list[SearchNode]:
+        return [
+            SearchNode(
+                node_id=f"{request.parent.node_id}-bad-child",
+                claim="bad child",
+                parent_ids=[request.parent.node_id],
+                score=0.9,
+            )
+        ]
+
+
 def test_expand_frontier_uses_executor_adapter_and_closes_parent():
     parent = SearchNode(node_id="p", claim="parent")
     adapter = RecordingAdapter()
@@ -43,6 +55,13 @@ def test_expand_frontier_uses_executor_adapter_and_closes_parent():
     assert adapter.requests[0].parent.node_id == "p"
     assert nodes[-1].parent_ids == ["p"]
     assert nodes[-1].status == "frontier"
+
+
+def test_expand_frontier_validates_object_adapter_output_before_consuming():
+    parent = SearchNode(node_id="p", claim="parent")
+
+    with pytest.raises(ValueError, match="DTE metric"):
+        expand_frontier([parent], {"p": 1}, iteration=2, executor_adapter=BadObjectAdapter())
 
 
 def test_run_frontier_search_keeps_adapter_inside_mandatory_loop():

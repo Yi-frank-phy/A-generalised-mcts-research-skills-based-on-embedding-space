@@ -97,6 +97,13 @@ For real Gemini geometry, set `GEMINI_API_KEY` in the environment and use:
 ## Judge Oracle subagent
 
 Use `prompts/DTE_STATIC_PREFIX.md` first, then `prompts/judge_oracle.md`, then dynamic input JSON. The subagent must return JSON only.
+Validate Judge output before consuming scores. The `judge-oracle` CLI command runs the same validator; for outputs produced outside the CLI, run the guard explicitly:
+
+```bash
+python hooks/dte_guard.py judge \
+  --nodes examples/frontier_nodes.json \
+  --output examples/judge_output.json
+```
 
 Smoke command:
 
@@ -141,6 +148,13 @@ Use `prompts/DTE_STATIC_PREFIX.md` first, then `prompts/relation_oracle.md`, the
 - entropy plateau branches.
 
 Read `relation_candidates.md` after each run. The backend helper is `select_relation_candidate_pairs()` in `src/dte_backend/relation_candidates.py`.
+Validate Relation output before converting it into merge proposals or discriminator tasks. The `relation-oracle` CLI command runs the same validator; for outputs produced outside the CLI, run the guard explicitly:
+
+```bash
+python hooks/dte_guard.py relation \
+  --nodes examples/frontier_nodes.json \
+  --output examples/relation_output.json
+```
 
 Smoke command:
 

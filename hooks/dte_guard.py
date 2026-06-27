@@ -12,6 +12,7 @@ import json
 from pathlib import Path
 
 from dte_backend.adapter import validate_adapter_output
+from dte_backend.guards import enforce_run_spec_guard
 from dte_backend.models import DTERunSpec, SearchNode
 from dte_backend.oracle_validation import validate_judge_output, validate_relation_output
 
@@ -22,10 +23,7 @@ def load_json(path: str):
 
 def cmd_spec(args: argparse.Namespace) -> None:
     spec = DTERunSpec.model_validate(load_json(args.path))
-    if spec.mode != "mandatory_frontier":
-        raise SystemExit("DTE guard failed: mode must be mandatory_frontier")
-    if spec.embedding_provider == "gemini-embedding-2" and spec.embedding_dimension != 3072:
-        raise SystemExit("DTE guard failed: Gemini geometry must use embedding_dimension=3072")
+    enforce_run_spec_guard(spec)
     print("DTE guard ok: run spec")
 
 

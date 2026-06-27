@@ -59,7 +59,7 @@ def main() -> None:
         "--nodes",
         "examples/frontier_nodes.json",
         "--relation-output",
-        "examples/relation_result.json",
+        "examples/relation_output.json",
         "--out-dir",
         str(relation_out_dir),
     ])

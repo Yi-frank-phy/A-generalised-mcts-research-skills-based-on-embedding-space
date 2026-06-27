@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import uuid
 
-from .adapter import ExecutorAdapter
+from .adapter import ExecutorAdapter, validate_adapter_output
 from .models import DTERunSpec, ExpansionRequest, SearchNode
 
 
@@ -64,8 +64,10 @@ def expand_node(
         return deterministic_expand_node(parent, count=count, iteration=iteration)
     request = ExpansionRequest(parent=parent, child_count=count, iteration=iteration, spec=spec)
     if hasattr(executor_adapter, "expand"):
-        return executor_adapter.expand(request)  # type: ignore[union-attr]
-    return executor_adapter(request)
+        children = executor_adapter.expand(request)  # type: ignore[union-attr]
+    else:
+        children = executor_adapter(request)
+    return validate_adapter_output(parent, count, {"nodes": [child.model_dump() for child in children]})
 
 
 def expand_frontier(

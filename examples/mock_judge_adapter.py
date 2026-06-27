@@ -1,17 +1,27 @@
-"""Mock Judge oracle adapter.
+"""Mock Judge oracle adapter for smoke tests only.
 
-Reads a Judge task JSON from stdin and writes observable scores to stdout.
-A real Codex subagent can replace this command as long as it returns the same
-shape.
+This adapter is deliberately blocked by default so it cannot be mistaken for a
+real research Judge. Set `DTE_ALLOW_MOCK_ADAPTER=1` only in smoke tests or local
+protocol checks.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import sys
 
 
+def require_smoke_mode() -> None:
+    if os.getenv("DTE_ALLOW_MOCK_ADAPTER") != "1":
+        raise SystemExit(
+            "mock_judge_adapter.py is smoke-only. Set DTE_ALLOW_MOCK_ADAPTER=1 "
+            "only for tests, or replace it with a real Codex Judge subagent."
+        )
+
+
 def main() -> None:
+    require_smoke_mode()
     payload = json.loads(sys.stdin.read())
     results = []
     for node in payload.get("nodes", []):
@@ -23,8 +33,8 @@ def main() -> None:
             {
                 "node_id": node["node_id"],
                 "score": score,
-                "reasoning": "mock judge oracle score; replace with a strong subagent",
-                "risks": [],
+                "reasoning": "SMOKE-ONLY mock judge score; not a research judgment",
+                "risks": ["mock adapter used; replace with real Judge subagent for research"],
             }
         )
     print(json.dumps({"results": results}, ensure_ascii=False))

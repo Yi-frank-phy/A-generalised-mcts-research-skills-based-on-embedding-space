@@ -1,6 +1,6 @@
+import json
 import subprocess
 import sys
-import json
 
 
 def test_dte_guard_accepts_sample_artifacts():

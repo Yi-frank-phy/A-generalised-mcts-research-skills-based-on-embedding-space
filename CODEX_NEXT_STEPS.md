@@ -121,7 +121,7 @@ python -m dte_backend validate examples/run_spec.json
 python hooks/dte_guard.py spec examples/run_spec.json
 python -m dte_backend judge-oracle --nodes examples/frontier_nodes.json --judge-command "python examples/mock_judge_adapter.py"
 python -m dte_backend relation-oracle --nodes examples/frontier_nodes.json --relation-command "python examples/mock_relation_adapter.py"
-python -m dte_backend relation-artifacts --nodes examples/frontier_nodes.json --relation-output examples/relation_result.json --out-dir artifacts/relation
+python -m dte_backend relation-artifacts --nodes examples/frontier_nodes.json --relation-output examples/relation_output.json --out-dir artifacts/relation
 python -m dte_backend run --spec examples/run_spec.json --out-dir artifacts/judge-smoke --cache-path .dte_cache/cache.json --judge-command "python examples/mock_judge_adapter.py"
 ```
 

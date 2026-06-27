@@ -84,7 +84,12 @@ def _is_mock_command(command: str | None) -> bool:
     if not command:
         return False
     lowered = command.replace("\\", "/").casefold()
-    return "examples/mock_judge_adapter.py" in lowered or "examples/mock_relation_adapter.py" in lowered
+    mock_adapters = [
+        "examples/mock_executor_adapter.py",
+        "examples/mock_judge_adapter.py",
+        "examples/mock_relation_adapter.py",
+    ]
+    return any(adapter in lowered for adapter in mock_adapters)
 
 
 def _has_gemini_key() -> bool:

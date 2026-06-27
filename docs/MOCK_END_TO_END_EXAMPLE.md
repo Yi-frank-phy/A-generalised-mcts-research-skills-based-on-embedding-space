@@ -18,6 +18,8 @@ dynamic_json_payload
 
 The dynamic payload is intentionally last so Codex backend prefix caching can reuse the static role contract. The subagent response is JSON only and can be passed to the existing guard validators before the backend consumes it.
 
+The transcript files are documentation wrappers. When validating a transcript manually, extract the nested `subagent_response` object and write it as the guard output file; do not pass the full transcript wrapper to `hooks/dte_guard.py --output`.
+
 ## Command Sequence
 
 ```bash

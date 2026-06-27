@@ -39,6 +39,19 @@ def test_real_mode_rejects_mock_judge(monkeypatch):
         )
 
 
+def test_real_mode_rejects_mock_executor(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    spec = DTERunSpec(problem="p", goal="g", embedding_provider="gemini-embedding-2", embedding_dimension=3072)
+    with pytest.raises(StrictRunError, match="mock Executor"):
+        enforce_strict_policy(
+            spec,
+            policy=policy_for_mode("real"),
+            cache_path=".dte_cache/cache.json",
+            judge_command="python real_judge.py",
+            executor_command="python examples/mock_executor_adapter.py",
+        )
+
+
 def test_real_mode_requires_cache_path(monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", "test-key")
     spec = DTERunSpec(problem="p", goal="g", embedding_provider="gemini-embedding-2", embedding_dimension=3072)

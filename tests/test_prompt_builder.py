@@ -1,4 +1,4 @@
-from dte_backend.prompt_builder import build_cached_subagent_prompt, load_static_prefix
+from dte_backend.prompt_builder import build_cached_subagent_prompt, load_static_prefix, prompts_dir
 
 
 def test_prompt_builder_places_static_prefix_first():
@@ -19,3 +19,13 @@ def test_prompt_builder_shares_prefix_across_roles():
     executor = build_cached_subagent_prompt("executor", {"task": "e"})
     prefix = load_static_prefix()
     assert judge[: len(prefix)] == executor[: len(prefix)]
+
+
+def test_prompt_builder_uses_env_repo_root(tmp_path, monkeypatch):
+    prompts = tmp_path / "prompts"
+    prompts.mkdir()
+    (prompts / "DTE_STATIC_PREFIX.md").write_text("STATIC", encoding="utf-8")
+    (prompts / "judge_oracle.md").write_text("JUDGE", encoding="utf-8")
+    monkeypatch.setenv("DTE_REPO_ROOT", str(tmp_path))
+    assert prompts_dir() == prompts
+    assert build_cached_subagent_prompt("judge", {"x": 1}).startswith("STATIC\n\nJUDGE")

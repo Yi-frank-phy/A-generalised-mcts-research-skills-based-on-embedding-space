@@ -1,6 +1,6 @@
 ---
 name: dte-extreme-research
-description: "Run the fixed Deep Think Evolving research protocol as a Codex skill/backend for high-depth mathematical, physical, academic, proof, derivation, or conceptual research. Invoke directly for slash-command style research tasks. The skill must enforce the DTE loop: DTERunSpec input, SearchNode frontier, real Judge oracle or explicit dry-run, EvolutionController embedding/KDE/entropy/UCB allocation, executor expansion, relation-oracle classification, validated artifacts, and final DTE synthesis."
+description: "Run the fixed Deep Think Evolving research protocol as a Codex skill/backend for high-depth mathematical, physical, academic, proof, derivation, or conceptual research. Invoke directly for slash-command style research tasks. The skill must use the strict-run entrypoint: DTERunSpec input, SearchNode frontier, real Judge oracle or explicit dry-run, EvolutionController embedding/KDE/entropy/UCB allocation, executor expansion, relation-oracle classification, validated artifacts, and final DTE synthesis."
 ---
 
 # DTE Extreme Research Skill
@@ -17,7 +17,7 @@ Typical invocation:
 /dte-extreme-research <research task>
 ```
 
-On invocation, Codex should immediately run the DTE workflow below unless the user explicitly asks only for explanation or planning.
+On invocation, Codex should run `python -m dte_backend strict-run`, not the flexible `run` helper, unless the user explicitly asks only for explanation or planning.
 
 ## Critical real-run rule
 
@@ -32,20 +32,20 @@ Forbidden in real research runs:
 
 The mock adapters are blocked by default and only run when `DTE_ALLOW_MOCK_ADAPTER=1` is set by smoke tests. If a real Codex Judge/Relation/Executor subagent is unavailable, Codex must either:
 
-1. run only a clearly labelled dry-run/smoke check; or
+1. run only a clearly labelled `--mode smoke` or `--mode dry-run`; or
 2. stop and tell the user that the real oracle layer is not available.
 
 It must not present mock-oracle output as research judgment.
 
 ## One-screen execution protocol
 
-1. Read this `SKILL.md`, then `AGENTS.md`, then `CODEX_NEXT_STEPS.md` only for current blockers.
+1. Read this `SKILL.md`, then `AGENTS.md`, then `HOOK_WIRING_TODO.md` only for current hook work.
 2. If not installed, run `python -m pip install -e .[dev]`.
 3. Run `python scripts/smoke_workflow.py` once before serious use or after repo changes. This is the only default place where mock adapters are allowed.
 4. Convert the user task into a `DTERunSpec`.
-5. Use `embedding_provider=gemini-embedding-2` and `embedding_dimension=3072` if `GEMINI_API_KEY` or `GOOGLE_API_KEY` is available. Otherwise use hash fallback only for dry-run/debug and label it as such.
-6. Always provide `--cache-path .dte_cache/cache.json`.
-7. For a real research run, use a real Codex Judge subagent command that follows `prompts/judge_oracle.md`. Do not use the mock Judge.
+5. Use `embedding_provider=gemini-embedding-2` and `embedding_dimension=3072` for real mode. Hash embedding is allowed only in `--mode smoke` or `--mode dry-run`.
+6. Always provide `--cache-path .dte_cache/cache.json` outside smoke mode.
+7. For a real research run, call `strict-run --mode real` with a real Codex Judge subagent command. Do not use the mock Judge.
 8. Summarize these artifacts after each run:
    - `main_agent_status.md`
    - `frontier.md`
@@ -53,16 +53,52 @@ It must not present mock-oracle output as research judgment.
    - `relation_candidates.md`
    - `human_questions.md`
    - `report.md`
+   - `strict_run_status.json`
 9. If `human_questions.md` asks the user a branch question, ask it in chat instead of guessing.
 10. Final answer must come from DTE synthesis, not directly from any subagent.
 
-## Smoke command
+## Strict run modes
+
+### Smoke mode
+
+Use only to verify machinery:
 
 ```bash
-python scripts/smoke_workflow.py
+python -m dte_backend strict-run \
+  --mode smoke \
+  --spec examples/run_spec.json \
+  --out-dir artifacts/smoke-strict \
+  --judge-command "python examples/mock_judge_adapter.py"
 ```
 
-This validates the protocol machinery. Smoke results are not research judgments.
+Smoke results are not research judgments.
+
+### Dry-run mode
+
+Use when the real oracle or Gemini geometry is unavailable. Dry-run output must be labelled as degraded:
+
+```bash
+python -m dte_backend strict-run \
+  --mode dry-run \
+  --spec examples/run_spec.json \
+  --out-dir artifacts/dry-run \
+  --cache-path .dte_cache/cache.json
+```
+
+### Real mode
+
+Use for actual slash-command research:
+
+```bash
+python -m dte_backend strict-run \
+  --mode real \
+  --spec <run_spec.json> \
+  --out-dir artifacts/session \
+  --cache-path .dte_cache/cache.json \
+  --judge-command "<real Codex Judge oracle command>"
+```
+
+Real mode refuses mock adapters, missing Judge oracle, hash geometry, missing cache path, or missing Gemini key when Gemini geometry is selected.
 
 ## Real Gemini geometry
 
@@ -192,6 +228,8 @@ hooks/README.md
 HOOK_WIRING_TODO.md
 ```
 
+`strict-run` now performs the core pre-run policy checks even before hook wiring. If the Codex environment supports hooks, still wire these guards into the hook system for subagent boundary checks.
+
 Available guard modes:
 
 ```bash
@@ -200,8 +238,6 @@ python hooks/dte_guard.py judge --nodes examples/frontier_nodes.json --output <j
 python hooks/dte_guard.py relation --nodes examples/frontier_nodes.json --output <relation_output.json>
 python hooks/dte_guard.py executor --parent <parent.json> --output <executor_output.json> --child-count <n>
 ```
-
-If the Codex environment supports hooks, wire these guards into the hook system. Until hook wiring exists, the main agent must run guard commands manually at the same boundaries.
 
 ## Compile behavior
 
@@ -219,10 +255,11 @@ The final answer/report must include:
 - assumptions;
 - confidence levels;
 - unresolved risks;
-- reproducibility metadata: run spec, budget, embedding provider, Judge/Executor/Relation backends, cache path, and whether any dry-run fallback was used.
+- reproducibility metadata: run spec, budget, strict mode, embedding provider, Judge/Executor/Relation backends, cache path, and whether any dry-run fallback was used.
 
 ## Prohibited behavior
 
+- Do not use the flexible `run` helper as the slash-command entrypoint; use `strict-run`.
 - Do not use mock adapters for real research judgment.
 - Do not return a final answer directly from an executor episode.
 - Do not silently skip Judge or EvolutionController.

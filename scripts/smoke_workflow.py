@@ -1,4 +1,8 @@
-"""Run the current DTE workflow smoke checks."""
+"""Run the current DTE workflow smoke checks.
+
+Smoke mode is the only workflow that enables mock adapters. It uses the same
+`strict-run` entrypoint as slash-command usage, but with `--mode smoke`.
+"""
 
 from __future__ import annotations
 
@@ -65,7 +69,9 @@ def main() -> None:
         sys.executable,
         "-m",
         "dte_backend",
-        "run",
+        "strict-run",
+        "--mode",
+        "smoke",
         "--spec",
         "examples/run_spec.json",
         "--out-dir",
@@ -86,6 +92,7 @@ def main() -> None:
         "human_questions.md",
         "role_audit.md",
         "relation_candidates.md",
+        "strict_run_status.json",
     ]
     missing = [name for name in required if not (out_dir / name).exists()]
     relation_required = ["relation_proposals.json", "discriminator_tasks.json"]

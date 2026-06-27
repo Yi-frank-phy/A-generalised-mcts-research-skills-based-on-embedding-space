@@ -31,7 +31,7 @@ python -m dte_backend strict-run \
   --spec examples/run_spec.json \
   --out-dir artifacts/session \
   --cache-path .dte_cache/cache.json \
-  --judge-command "<real Codex Judge Oracle command>"
+  --judge-command "python scripts/codex_judge_adapter.py"
 ```
 
 Direct mock-adapter commands require `DTE_ALLOW_MOCK_ADAPTER=1`; the wrapper `python scripts/smoke_workflow.py` sets it for smoke checks. Do not set it for real research, and do not use mock adapters with `strict-run --mode real`.
@@ -133,7 +133,9 @@ python -m dte_backend run \
   --judge-command "python examples/mock_judge_adapter.py"
 ```
 
-A real Codex Judge subagent should follow the same JSON contract as the mock adapter. See `examples/subagent_transcripts/judge_call.json` for a concrete Codex-style transcript with the shared static prefix first and dynamic node JSON last. The full transcript is documentation; pass its nested `subagent_response` object, not the transcript wrapper, to the guard/output validator.
+Use `scripts/codex_judge_adapter.py` as the real Judge command for Codex CLI-backed runs. It reads the backend Judge payload from stdin, builds the prompt through `build_cached_subagent_prompt("judge", ...)`, calls `codex exec` by default, validates the returned JSON, and prints normalized Judge results. Set `DTE_CODEX_JUDGE_COMMAND` only when you need to override the Codex command; the override command must read the prompt from stdin and print JSON.
+
+See `examples/subagent_transcripts/judge_call.json` for a concrete Codex-style transcript with the shared static prefix first and dynamic node JSON last. The full transcript is documentation; pass its nested `subagent_response` object, not the transcript wrapper, to the guard/output validator.
 
 ## Executor subagent
 

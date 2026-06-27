@@ -61,13 +61,19 @@ The `UserPromptSubmit` hook is only a reminder and cannot replace these artifact
 
 ## Next real-integration task
 
-Provide or wire a real Codex Judge Oracle command for:
+The real Codex Judge Oracle command is now:
 
 ```bash
-python -m dte_backend strict-run --mode real --judge-command "<real Judge oracle command>" ...
+python scripts/codex_judge_adapter.py
 ```
 
-The command must follow `prompts/DTE_STATIC_PREFIX.md -> prompts/judge_oracle.md -> dynamic JSON` and return the validated Judge JSON shape.
+Use it through strict-run:
+
+```bash
+python -m dte_backend strict-run --mode real --judge-command "python scripts/codex_judge_adapter.py" ...
+```
+
+The remaining integration task is to wire artifact-boundary hooks in any Codex runtime that can trigger them automatically. Decide separately whether real Executor and Relation adapter commands are needed, or whether those remain main-agent mediated steps.
 
 ## Required validation
 

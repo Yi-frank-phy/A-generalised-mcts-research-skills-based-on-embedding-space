@@ -17,6 +17,7 @@ The repo now has a runnable DTE backend with:
 - executor adapter validation;
 - Judge and Relation oracle task contracts;
 - subprocess oracle runners and mock adapters;
+- real Codex Judge adapter at `scripts/codex_judge_adapter.py`;
 - `run --judge-command ...` wired into the main loop;
 - relation-oracle result conversion into `MergeProposal` or discriminator task;
 - deterministic relation candidate-pair selection;
@@ -48,6 +49,7 @@ These items were previous blockers and are now complete:
 12. LLM prefix-cache prompt layout has been added: static prefix first, role-specific contract second, dynamic input last.
 13. Codex subagent transcript examples have been added for Judge, Executor, and Relation.
 14. A documented mock end-to-end example has been added for smoke-mode artifacts.
+15. A real Codex CLI-backed Judge adapter exists at `scripts/codex_judge_adapter.py`.
 
 ## Highest-priority remaining blockers
 
@@ -59,13 +61,14 @@ Current state:
 - `prompts/DTE_STATIC_PREFIX.md` exists and should be placed first.
 - `build_cached_subagent_prompt()` exists for prefix-cache-friendly prompt construction.
 - Mock subprocess adapters exist.
+- `scripts/codex_judge_adapter.py` provides the real Codex Judge command for `strict-run --mode real`.
 - `docs/CODEX_APP_WORKFLOW.md` explains the main-agent workflow.
 - Example JSON transcripts now exist for Judge, Executor, and Relation subagent calls.
 - A mock end-to-end example now documents the safe smoke-mode workflow and expected artifacts.
 
 Required change:
 
-- Replace mock subprocess adapters with real Codex subagent commands for `strict-run --mode real`.
+- Decide whether to add matching real Codex Executor and Relation adapter commands, or keep those as main-agent mediated steps.
 - If Codex exposes prompt/cache metrics, record cached-token behavior in an example note. No such metric is currently written by this repository's CLI artifacts.
 
 ### 2. Decide relation-oracle execution policy

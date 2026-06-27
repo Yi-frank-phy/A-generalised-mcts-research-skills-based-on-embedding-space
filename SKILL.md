@@ -45,7 +45,7 @@ It must not present mock-oracle output as research judgment.
 4. Convert the user task into a `DTERunSpec`.
 5. Use `embedding_provider=gemini-embedding-2` and `embedding_dimension=3072` for real mode. Hash embedding is allowed only in `--mode smoke` or `--mode dry-run`.
 6. Always provide `--cache-path .dte_cache/cache.json` outside smoke mode.
-7. For a real research run, call `strict-run --mode real` with a real Codex Judge subagent command. Do not use the mock Judge.
+7. For a real research run, call `strict-run --mode real` with `--judge-command "python scripts/codex_judge_adapter.py"`. Do not use the mock Judge.
 8. Summarize these artifacts after each run:
    - `main_agent_status.md`
    - `frontier.md`
@@ -95,10 +95,12 @@ python -m dte_backend strict-run \
   --spec <run_spec.json> \
   --out-dir artifacts/session \
   --cache-path .dte_cache/cache.json \
-  --judge-command "<real Codex Judge oracle command>"
+  --judge-command "python scripts/codex_judge_adapter.py"
 ```
 
 Real mode refuses mock adapters, missing Judge oracle, hash geometry, missing cache path, or missing Gemini key when Gemini geometry is selected.
+
+The adapter calls `codex exec` by default and asks the model to return Judge JSON only. Set `DTE_CODEX_JUDGE_COMMAND` only to override the Codex command; the override must read the prompt from stdin and print JSON that passes the Judge output validator.
 
 ## Real Gemini geometry
 

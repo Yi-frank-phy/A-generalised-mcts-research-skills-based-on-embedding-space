@@ -1,6 +1,6 @@
 # DTE Codex Skill Backend
 
-> **Read this first:** [`READ_THIS_FIRST_REAL_ORACLE_BLOCKER.md`](./READ_THIS_FIRST_REAL_ORACLE_BLOCKER.md). The remaining blocker is real Codex oracle integration for `strict-run --mode real`, not DTE architecture. Do not redesign the architecture.
+> **Read this first:** [`CODEX_NEXT_STEPS.md`](./CODEX_NEXT_STEPS.md). The DTE architecture is frozen; continue by hardening workflow edges and oracle integrations, not redesigning the system.
 
 **DTE Codex Skill Backend** packages Deep Think Evolving as a fixed research backend that can be driven by Codex/Kimi/OpenClaw-style agents while preserving the DTE controller.
 
@@ -31,9 +31,9 @@ This repository is intentionally **not** a new architecture. It is a packaging l
 ## Repository layout
 
 ```text
-READ_THIS_FIRST_REAL_ORACLE_BLOCKER.md   current top-priority blocker
+CODEX_NEXT_STEPS.md                      current top-priority next steps
+READ_THIS_FIRST_REAL_ORACLE_BLOCKER.md   historical real-oracle note, now points to implemented Judge bridge
 HOOK_WIRING_TODO.md                      hook and real-oracle wiring notes
-CODEX_NEXT_STEPS.md                      historical/current next steps
 AGENTS.md                               Codex/Kimi/OpenClaw operating instructions
 SKILL.md                                DTE slash-command skill contract
 PRD.md                                  product requirements
@@ -54,11 +54,18 @@ pytest
 python scripts/smoke_workflow.py
 ```
 
-Smoke checks may use mock adapters. Real research must use:
+Smoke checks may use mock adapters. Real research can use the Codex Judge adapter:
 
 ```bash
-python -m dte_backend strict-run --mode real --judge-command "<real Codex Judge Oracle command>" ...
+python -m dte_backend strict-run \
+  --mode real \
+  --spec <run_spec.json> \
+  --out-dir artifacts/session \
+  --cache-path .dte_cache/cache.json \
+  --judge-command "python scripts/codex_judge_adapter.py"
 ```
+
+`scripts/codex_judge_adapter.py` calls `codex exec` by default. Set `DTE_CODEX_JUDGE_COMMAND` only when you need to override the Codex command used by that adapter.
 
 ## Design stance
 

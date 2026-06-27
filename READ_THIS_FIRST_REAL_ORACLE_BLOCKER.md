@@ -1,6 +1,6 @@
-# READ THIS FIRST: real-oracle blocker
+# READ THIS FIRST: real-oracle bridge status
 
-The repository now has a locked slash-command entrypoint:
+The repository has a locked slash-command entrypoint:
 
 ```bash
 python -m dte_backend strict-run --mode smoke|dry-run|real ...
@@ -8,11 +8,15 @@ python -m dte_backend strict-run --mode smoke|dry-run|real ...
 
 `strict-run` is the correct entrypoint for `/dte-extreme-research`. The older `run` command is a flexible backend helper and must not be used as the slash-command entrypoint.
 
-## Current blocker
+## Current status
 
-The remaining blocker is not DTE architecture. The blocker is real Codex oracle integration.
+The real Codex Judge command now exists:
 
-`strict-run --mode real` requires a real Judge Oracle command:
+```bash
+python scripts/codex_judge_adapter.py
+```
+
+Use it with real mode:
 
 ```bash
 python -m dte_backend strict-run \
@@ -20,30 +24,26 @@ python -m dte_backend strict-run \
   --spec <run_spec.json> \
   --out-dir artifacts/session \
   --cache-path .dte_cache/cache.json \
-  --judge-command "<real Codex Judge Oracle command>"
+  --judge-command "python scripts/codex_judge_adapter.py"
 ```
 
-The command must:
+The adapter:
 
-1. receive the Judge task payload on stdin;
-2. use the prompt order `prompts/DTE_STATIC_PREFIX.md -> prompts/judge_oracle.md -> dynamic JSON`;
-3. call a real Codex/LLM Judge subagent or equivalent real oracle;
-4. return valid Judge JSON only:
+1. receives the Judge task payload on stdin;
+2. builds the prompt in this order: `prompts/DTE_STATIC_PREFIX.md -> prompts/judge_oracle.md -> dynamic JSON`;
+3. calls `codex exec` by default;
+4. accepts only valid Judge JSON;
+5. normalizes and prints `{"results": [...]}` for the backend validator.
 
-```json
-{
-  "results": [
-    {
-      "node_id": "...",
-      "score": 0.0,
-      "reasoning": "...",
-      "risks": []
-    }
-  ]
-}
-```
+Set `DTE_CODEX_JUDGE_COMMAND` only if the local Codex command must be overridden. The override command must read the prompt from stdin and print valid Judge JSON.
 
-5. pass `hooks/dte_guard.py judge --nodes <nodes.json> --output <judge_output.json>` or the equivalent backend validator.
+## Remaining work
+
+The remaining work is not DTE architecture. Continue by hardening workflow edges:
+
+- decide whether to add matching real Codex Executor and Relation adapter commands, or keep those as main-agent mediated steps;
+- wire artifact-boundary guards where the Codex runtime supports them;
+- record Codex cached-token behavior if the runtime exposes prompt/cache metrics.
 
 ## Do not do these
 
@@ -57,15 +57,9 @@ The command must:
 - Do not put dynamic task/user/repo/log content before `prompts/DTE_STATIC_PREFIX.md`.
 - Do not produce a final report directly from a subagent.
 
-## What Codex should implement next
+## Boundary guards
 
-Implement the smallest repo-local real-oracle bridge supported by the Codex runtime. Acceptable forms include:
-
-- a script under `scripts/` that launches a real Codex Judge subagent and prints validated Judge JSON;
-- a hook/config integration that turns a Judge task payload into a real Codex subagent call;
-- a documented runtime command that can be passed to `strict-run --mode real --judge-command`.
-
-After that, wire artifact-boundary guards:
+Run artifact-boundary guards before consuming machine-facing outputs:
 
 ```bash
 python hooks/dte_guard.py spec <run_spec.json>
@@ -74,7 +68,7 @@ python hooks/dte_guard.py relation --nodes <nodes.json> --output <relation_outpu
 python hooks/dte_guard.py executor --parent <parent.json> --output <executor_output.json> --child-count <n>
 ```
 
-## Validation after implementation
+## Validation
 
 ```bash
 python -m pip install -e .[dev]
@@ -82,15 +76,4 @@ pytest
 python scripts/smoke_workflow.py
 ```
 
-Then run a real-mode check with a real Judge command:
-
-```bash
-python -m dte_backend strict-run \
-  --mode real \
-  --spec <run_spec.json> \
-  --out-dir artifacts/real-check \
-  --cache-path .dte_cache/cache.json \
-  --judge-command "<real Codex Judge Oracle command>"
-```
-
-If this cannot be done in the current Codex environment, stop and report the missing runtime capability. Do not fall back to mock output while calling it real research.
+Then run real mode with the Judge command above when `GEMINI_API_KEY` or `GOOGLE_API_KEY` and Codex CLI auth are available.

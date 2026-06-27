@@ -7,12 +7,14 @@ initial prefix. This helper builds prompts in the required order:
 2. role-specific static contract;
 3. dynamic JSON payload at the end.
 
-It is intentionally small and file-based so Codex can inspect and reuse it.
+The prompts live at the repository/skill root, not inside the Python package.
+For public use, callers may set `DTE_REPO_ROOT` or pass `repo_root` explicitly.
 """
 
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any, Literal
 
@@ -27,10 +29,38 @@ PROMPT_FILES: dict[RoleName, str] = {
 }
 
 
-def prompts_dir(repo_root: str | Path | None = None) -> Path:
+def _candidate_roots(repo_root: str | Path | None = None) -> list[Path]:
+    candidates: list[Path] = []
     if repo_root is not None:
-        return Path(repo_root) / "prompts"
-    return Path(__file__).resolve().parents[2] / "prompts"
+        candidates.append(Path(repo_root))
+    env_root = os.getenv("DTE_REPO_ROOT")
+    if env_root:
+        candidates.append(Path(env_root))
+    candidates.append(Path.cwd())
+    # Editable installs from this repository resolve to <repo>/src/dte_backend.
+    candidates.append(Path(__file__).resolve().parents[2])
+    return candidates
+
+
+def prompts_dir(repo_root: str | Path | None = None) -> Path:
+    """Return the prompts directory.
+
+    Resolution order:
+    1. explicit `repo_root`;
+    2. `DTE_REPO_ROOT`;
+    3. current working directory;
+    4. editable-source repository root.
+    """
+
+    for root in _candidate_roots(repo_root):
+        prompt_path = root / "prompts"
+        if (prompt_path / "DTE_STATIC_PREFIX.md").exists():
+            return prompt_path
+    roots = ", ".join(str(path) for path in _candidate_roots(repo_root))
+    raise FileNotFoundError(
+        "Could not locate prompts/DTE_STATIC_PREFIX.md. Run from the skill repository root, "
+        "set DTE_REPO_ROOT, or pass repo_root explicitly. Searched: " + roots
+    )
 
 
 def load_static_prefix(repo_root: str | Path | None = None) -> str:

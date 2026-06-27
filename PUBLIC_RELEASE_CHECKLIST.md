@@ -12,15 +12,15 @@ python scripts/smoke_workflow.py
 
 ## Repository hygiene
 
-- [ ] `LICENSE` exists and matches the intended license.
-- [ ] `.gitignore` excludes `.env`, `.dte_cache/`, `artifacts/`, local logs, and virtual environments.
-- [ ] No API keys, tokens, local cache files, private transcripts, or personal research artifacts are committed.
-- [ ] README explains that `strict-run` is the slash-command entrypoint.
-- [ ] README explains that mock adapters are smoke-only.
-- [ ] `SKILL.md` is the primary runtime contract for skill invocation.
-- [ ] `scripts/smoke_workflow.py` passes without external API keys.
-- [ ] `scripts/gemini_smoke.py` is manual only and runs only when `GEMINI_API_KEY` or `GOOGLE_API_KEY` is set.
-- [ ] Real research mode uses `scripts/codex_judge_adapter.py` or another real Judge command, not mock adapters.
+- [x] `LICENSE` exists and matches the intended license.
+- [x] `.gitignore` excludes `.env`, `.dte_cache/`, `artifacts/`, local logs, and virtual environments.
+- [x] No API keys, tokens, local cache files, private transcripts, or personal research artifacts are committed.
+- [x] README explains that `strict-run` is the slash-command entrypoint.
+- [x] README explains that mock adapters are smoke-only.
+- [x] `SKILL.md` is the primary runtime contract for skill invocation.
+- [x] `scripts/smoke_workflow.py` passes without external API keys.
+- [x] `scripts/gemini_smoke.py` is manual only and runs only when `GEMINI_API_KEY` or `GOOGLE_API_KEY` is set.
+- [x] Real research mode uses `scripts/codex_judge_adapter.py` or another real Judge command, not mock adapters.
 
 ## Public-safety notes
 

@@ -1,0 +1,67 @@
+{
+  "role": "executor",
+  "purpose": "Example Codex Executor subagent call. The Executor expands one parent into child SearchNodes and does not judge, allocate, or synthesize.",
+  "prompt_order": [
+    "prompts/DTE_STATIC_PREFIX.md",
+    "prompts/executor_subagent.md",
+    "dynamic_json_payload"
+  ],
+  "dynamic_payload_position": "last",
+  "subagent_response_format": "json_only",
+  "dynamic_payload": {
+    "parent": {
+      "node_id": "seed-direct",
+      "node_type": "candidate",
+      "claim": "Direct route for the protocol symmetry question",
+      "rationale": "Start from the most direct constraint formulation.",
+      "assumptions": [
+        "The symmetry constraints are stated consistently."
+      ],
+      "evidence": [],
+      "risks": [],
+      "parent_ids": [],
+      "confidence": 0.55,
+      "status": "frontier"
+    },
+    "child_count": 1,
+    "iteration": 1,
+    "spec": {
+      "problem": "Explore whether a proposed high-dimensional quantum protocol can satisfy the required symmetry constraints.",
+      "goal": "Produce structured executor candidate nodes, not a final answer.",
+      "constraints": [
+        "Do not bypass DTE synthesis."
+      ],
+      "mode": "mandatory_frontier",
+      "budget": {
+        "max_iterations": 2,
+        "total_child_budget": 3,
+        "max_research_iterations": 1
+      },
+      "allow_self_organized_executor": true,
+      "require_final_synthesis": true
+    }
+  },
+  "subagent_response": {
+    "nodes": [
+      {
+        "node_id": "child-direct-1",
+        "node_type": "candidate",
+        "claim": "The direct route should first isolate the symmetry constraint before adding representation assumptions.",
+        "rationale": "This child preserves the parent route while making the first executable research step explicit.",
+        "assumptions": [
+          "The symmetry constraints are stated consistently."
+        ],
+        "evidence": [],
+        "risks": [
+          "The isolated constraint may still be underdetermined."
+        ],
+        "parent_ids": [
+          "seed-direct"
+        ],
+        "confidence": 0.56,
+        "status": "frontier"
+      }
+    ]
+  },
+  "guard_command": "python hooks/dte_guard.py executor --parent examples/executor_parent.json --output examples/executor_output.json --child-count 1"
+}

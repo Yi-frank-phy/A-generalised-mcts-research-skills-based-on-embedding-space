@@ -1,10 +1,12 @@
 import json
+import os
 import subprocess
 import sys
 
 
 def test_run_command_accepts_judge_adapter(tmp_path):
     out_dir = tmp_path / "judge-run"
+    env = {**os.environ, "DTE_ALLOW_MOCK_ADAPTER": "1"}
     completed = subprocess.run(
         [
             sys.executable,
@@ -20,6 +22,7 @@ def test_run_command_accepts_judge_adapter(tmp_path):
             "--judge-command",
             f"{sys.executable} examples/mock_judge_adapter.py",
         ],
+        env=env,
         capture_output=True,
         text=True,
     )
@@ -28,7 +31,7 @@ def test_run_command_accepts_judge_adapter(tmp_path):
     nodes = json.loads((out_dir / "nodes.json").read_text(encoding="utf-8"))
     judged = [node for node in nodes if node["node_id"] in {"n1", "n2"}]
     assert judged
-    assert all(node["judge_reasoning"].startswith("mock judge") for node in judged)
+    assert all(node["judge_reasoning"].startswith("SMOKE-ONLY mock judge") for node in judged)
 
 
 def test_run_command_rejects_spec_that_fails_dte_guard(tmp_path):

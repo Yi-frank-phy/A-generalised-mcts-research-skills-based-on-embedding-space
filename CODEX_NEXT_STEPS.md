@@ -26,7 +26,9 @@ The repo now has a runnable DTE backend with:
 - subagent prompt templates in `prompts/`;
 - Codex app workflow guide in `docs/CODEX_APP_WORKFLOW.md`;
 - workflow smoke script at `scripts/smoke_workflow.py`;
-- optional Gemini smoke script at `scripts/gemini_smoke.py`.
+- optional Gemini smoke script at `scripts/gemini_smoke.py`;
+- example JSON transcripts for Judge, Executor, and Relation Codex subagent calls in `examples/subagent_transcripts/`;
+- documented mock end-to-end workflow in `docs/MOCK_END_TO_END_EXAMPLE.md`.
 
 ## Done — do not redo
 
@@ -44,6 +46,8 @@ These items were previous blockers and are now complete:
 10. DTE backend context cache identity has been upgraded from unstable shortest-context hashes to canonical semantic envelopes.
 11. Relation oracle results can be persisted as `relation_proposals.json` and `discriminator_tasks.json`.
 12. LLM prefix-cache prompt layout has been added: static prefix first, role-specific contract second, dynamic input last.
+13. Codex subagent transcript examples have been added for Judge, Executor, and Relation.
+14. A documented mock end-to-end example has been added for smoke-mode artifacts.
 
 ## Highest-priority remaining blockers
 
@@ -56,12 +60,13 @@ Current state:
 - `build_cached_subagent_prompt()` exists for prefix-cache-friendly prompt construction.
 - Mock subprocess adapters exist.
 - `docs/CODEX_APP_WORKFLOW.md` explains the main-agent workflow.
+- Example JSON transcripts now exist for Judge, Executor, and Relation subagent calls.
+- A mock end-to-end example now documents the safe smoke-mode workflow and expected artifacts.
 
 Required change:
 
-- Add example JSON transcripts for Judge, Executor, and Relation subagent calls.
-- Add one end-to-end documented example using mock adapters and artifacts.
-- If Codex exposes prompt/cache metrics, record cached-token behavior in an example note.
+- Replace mock subprocess adapters with real Codex subagent commands for `strict-run --mode real`.
+- If Codex exposes prompt/cache metrics, record cached-token behavior in an example note. No such metric is currently written by this repository's CLI artifacts.
 
 ### 2. Decide relation-oracle execution policy
 
@@ -111,6 +116,7 @@ python scripts/smoke_workflow.py
 Manual individual checks:
 
 ```bash
+export DTE_ALLOW_MOCK_ADAPTER=1
 python -m dte_backend validate examples/run_spec.json
 python hooks/dte_guard.py spec examples/run_spec.json
 python -m dte_backend judge-oracle --nodes examples/frontier_nodes.json --judge-command "python examples/mock_judge_adapter.py"

@@ -21,12 +21,15 @@ Minimum command sequence:
 ```bash
 python -m pip install -e .[dev]
 python scripts/smoke_workflow.py
+DTE_ALLOW_MOCK_ADAPTER=1 \
 python -m dte_backend run \
   --spec examples/run_spec.json \
   --out-dir artifacts/session \
   --cache-path .dte_cache/cache.json \
   --judge-command "python examples/mock_judge_adapter.py"
 ```
+
+Direct mock-adapter commands require `DTE_ALLOW_MOCK_ADAPTER=1`; the wrapper `python scripts/smoke_workflow.py` sets it for smoke checks. Do not set it for real research.
 
 For real geometry, set `GEMINI_API_KEY` or `GOOGLE_API_KEY` and use `embedding_provider=gemini-embedding-2`, `embedding_dimension=3072`.
 
@@ -108,6 +111,7 @@ python hooks/dte_guard.py judge \
 Smoke command:
 
 ```bash
+DTE_ALLOW_MOCK_ADAPTER=1 \
 python -m dte_backend judge-oracle \
   --nodes examples/frontier_nodes.json \
   --judge-command "python examples/mock_judge_adapter.py"
@@ -116,6 +120,7 @@ python -m dte_backend judge-oracle \
 Integrated run command:
 
 ```bash
+DTE_ALLOW_MOCK_ADAPTER=1 \
 python -m dte_backend run \
   --spec examples/run_spec.json \
   --out-dir artifacts/judge-session \
@@ -123,7 +128,7 @@ python -m dte_backend run \
   --judge-command "python examples/mock_judge_adapter.py"
 ```
 
-A real Codex Judge subagent should follow the same JSON contract as the mock adapter.
+A real Codex Judge subagent should follow the same JSON contract as the mock adapter. See `examples/subagent_transcripts/judge_call.json` for a concrete Codex-style transcript with the shared static prefix first and dynamic node JSON last.
 
 ## Executor subagent
 
@@ -137,6 +142,8 @@ python hooks/dte_guard.py executor \
   --output examples/executor_output.json \
   --child-count 1
 ```
+
+See `examples/subagent_transcripts/executor_call.json` for a concrete Codex-style transcript. The response contains child `SearchNode` objects only and does not include Judge or controller metrics.
 
 ## Relation Oracle subagent
 
@@ -173,7 +180,7 @@ python -m dte_backend relation-artifacts \
   --out-dir artifacts/relation
 ```
 
-The relation oracle itself must not mutate the graph.
+The relation oracle itself must not mutate the graph. See `examples/subagent_transcripts/relation_call.json` for a concrete Codex-style transcript.
 
 ## Human questions
 
@@ -199,3 +206,5 @@ python scripts/smoke_workflow.py
 ```
 
 This checks spec guard, Judge oracle, Relation oracle, DTE run with Judge command, relation artifact conversion, and required artifact generation.
+
+For a documented end-to-end mock example, see `docs/MOCK_END_TO_END_EXAMPLE.md`. It references the transcript fixtures and the standard smoke artifacts that the main agent should inspect.

@@ -41,7 +41,7 @@ It must not present mock-oracle output as research judgment.
 
 ## One-screen execution protocol
 
-1. Read this `SKILL.md`, then `AGENTS.md`, then `HOOK_WIRING_TODO.md` only for current hook work.
+1. Read this `SKILL.md`, then `AGENTS.md` when repository-specific operating rules are needed.
 2. If not installed, run `python -m pip install -e .[dev]`.
 3. Run `python scripts/smoke_workflow.py` once before serious use or after repo changes. This is the only default place where mock adapters are allowed.
 4. Convert the user task into a run specification.
@@ -222,19 +222,9 @@ discriminator_tasks.json
 
 Relation Oracle output must not directly mutate the graph.
 
-## Hook status and what Codex must implement next
+## Validation hooks
 
-The repository already has guard logic:
-
-```text
-hooks/dte_guard.py
-hooks/README.md
-HOOK_WIRING_TODO.md
-```
-
-`strict-run` now performs the core pre-run policy checks even before hook wiring. If the Codex environment supports hooks, still wire these guards into the hook system for subagent boundary checks.
-
-Available guard modes:
+The repository includes guard commands for machine-facing outputs:
 
 ```bash
 python hooks/dte_guard.py spec examples/run_spec.json
@@ -242,6 +232,8 @@ python hooks/dte_guard.py judge --nodes examples/frontier_nodes.json --output <j
 python hooks/dte_guard.py relation --nodes examples/frontier_nodes.json --output <relation_output.json>
 python hooks/dte_guard.py executor --parent <parent.json> --output <executor_output.json> --child-count <n>
 ```
+
+`strict-run` performs the core pre-run policy checks. Environments with hook support may additionally wire these guards at subagent artifact boundaries.
 
 ## Compile behavior
 

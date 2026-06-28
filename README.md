@@ -1,6 +1,6 @@
 # Evolving Frontier Research Skill
 
-> **Public alpha note:** this is a local Codex/agent skill backend, not a hosted service. Before making the repository public, read [`PUBLIC_RELEASE_CHECKLIST.md`](./PUBLIC_RELEASE_CHECKLIST.md). The research protocol is frozen; continue by hardening workflow edges and oracle integrations, not redesigning the system.
+> **Public alpha note:** this is a local Codex/agent skill backend, not a hosted service. The research workflow is frozen; continue by hardening workflow edges and oracle integrations, not redesigning the system.
 
 **Evolving Frontier Research Skill** packages a fixed frontier-search research protocol for Codex-style agents. It turns open-ended mathematical, physical, academic, or conceptual research into a controlled loop of structured hypotheses, external judgment, geometric exploration, bounded expansion, relation checks, and final synthesis.
 
@@ -45,37 +45,19 @@ python -m dte_backend strict-run \
 
 `examples/mock_*_adapter.py` are smoke-test tools only. Hash embedding is a debug/dry-run fallback, not real geometry.
 
-## Suggested public repository metadata
-
-Recommended repository name:
-
-```text
-evolving-frontier-research-skill
-```
-
-Recommended GitHub description:
-
-```text
-A local Codex/agent skill for structured deep research using frontier search, Judge oracles, entropy/UCB exploration, and validated synthesis.
-```
-
 ## Repository layout
 
 ```text
-PUBLIC_RELEASE_CHECKLIST.md              public release checklist
-CODEX_NEXT_STEPS.md                      current top-priority next steps
-READ_THIS_FIRST_REAL_ORACLE_BLOCKER.md   real Judge bridge status
-HOOK_WIRING_TODO.md                      hook and real-oracle wiring notes
-AGENTS.md                               Codex/Kimi/OpenClaw operating instructions
-SKILL.md                                slash-command skill contract
-PRD.md                                  product requirements
-SPEC.md                                 technical specification
-ARCHITECTURE.md                         architecture decision record
-src/dte_backend/                        Python backend implementation
-schemas/                                JSON schemas
-hooks/                                  validation hook examples
-examples/                               example run specs and node outputs
-tests/                                  tests
+AGENTS.md             Codex/Kimi/OpenClaw operating instructions
+SKILL.md              slash-command skill contract
+PRD.md                product requirements
+SPEC.md               technical specification
+ARCHITECTURE.md       architecture decision record
+src/dte_backend/      Python backend implementation
+schemas/              JSON schemas
+hooks/                validation hook examples
+examples/             example run specs and node outputs
+tests/                tests
 ```
 
 ## Minimal local check

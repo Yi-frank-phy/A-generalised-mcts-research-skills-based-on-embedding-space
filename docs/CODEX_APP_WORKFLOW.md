@@ -1,266 +1,128 @@
 # Codex App Workflow for DTE
 
-This document describes how the Codex main agent should use this repository as a DTE skill/backend. The Codex app and markdown artifacts are the frontend; do not build a separate web dashboard.
+This document describes how Codex should expose the DTE backend without becoming its outer controller. The Codex app and Markdown artifacts are an observation surface; the Python backend owns the state machine.
 
-## Recommended invocation when Codex Skills are available
+## Production boundary
 
-Point Codex at this repository/skill and ask it to run DTE, not to redesign DTE:
+The only production entrypoint that may be described as a DTE real run is:
 
-```text
-Use the dte-extreme-research skill/backend in this repository.
-Read AGENTS.md, SPEC.md, ARCHITECTURE.md, SKILL.md, and this workflow document; use issue #2 for the current implementation plan.
-For subagent prompts, place prompts/DTE_STATIC_PREFIX.md first, then the role prompt, then dynamic JSON last.
-Run the smoke workflow first.
-Then run the requested research task through DTE with cache enabled.
-Summarize main_agent_status.md, frontier.md, entropy_trace.md, relation_candidates.md, human_questions.md, and report.md after each run.
-Do not bypass DTE synthesis.
+```bash
+python -m dte_backend strict-run \
+  --mode real \
+  --spec <run_spec.json> \
+  --out-dir artifacts/session \
+  --cache-path .dte_cache/cache.json \
+  --judge-command "python scripts/codex_judge_adapter.py"
 ```
 
-Minimum smoke check:
+Equivalently, the production command is `python -m dte_backend strict-run --mode real` with the required arguments.
+
+The model-facing main agent must not manually replay Judge → controller → Executor → Relation, hand-compute controller fields, decide stopping, mutate the graph, or commit synthesis. Standalone role commands and guards are development interfaces, not a second production mode.
+
+The future transport-neutral `AgentEpisodeAdapter: EpisodeRequest -> EpisodeResult` direction remains defined in `SPEC.md` and `ARCHITECTURE.md`. Until that backend-enforced boundary exists, a manual model-orchestrated harness is not a production DTE mode, has no hard anti-bypass guarantee, and must not be selected by default or emit `strict-run --mode real` truth labels.
+
+## Control ownership
+
+| Component | May do | Must not do |
+|---|---|---|
+| DTE backend | validate the RunSpec; own graph state; invoke bounded adapters; compute Judge/controller state, entropy, UCB, and allocation; apply accepted mutations; stop; select and commit synthesis | delegate outer-control decisions to a model-facing agent |
+| Main agent | start the user-selected backend command; display and summarize artifacts; ask user questions; recommend continuation or interruption | advance the state machine outside the backend; allocate; stop; write a control request; commit synthesis |
+| Judge adapter | return validated observable scores, reasoning, and risks | allocate, mutate, expand, or stop |
+| Executor adapter | return validated child SearchNodes for a granted expansion | pre-fill controller fields, mutate graph storage, or synthesize |
+| Relation adapter | return a validated semantic classification or discriminator proposal | apply a merge or delete graph state |
+| User | explicitly request interruption after reviewing observable state | impersonate controller convergence; an interruption remains distinct from entropy convergence |
+
+## Smoke and dry-run checks
+
+Install the project and run the local smoke workflow before serious use or after code changes:
 
 ```bash
 python -m pip install -e .[dev]
 python scripts/smoke_workflow.py
 ```
 
-Minimum real-run shape:
+Mock adapters and hash geometry are allowed only for smoke or explicitly degraded dry-run checks. They are not research judgments.
 
 ```bash
 python -m dte_backend strict-run \
-  --mode real \
+  --mode smoke \
   --spec examples/run_spec.json \
-  --out-dir artifacts/session \
-  --cache-path .dte_cache/cache.json \
-  --judge-command "python scripts/codex_judge_adapter.py"
+  --out-dir artifacts/smoke-strict \
+  --judge-command "python examples/mock_judge_adapter.py"
 ```
 
-Direct mock-adapter commands require `DTE_ALLOW_MOCK_ADAPTER=1`; the wrapper `python scripts/smoke_workflow.py` sets it for smoke checks. Do not set it for real research, and do not use mock adapters with `strict-run --mode real`.
+Real mode requires a real Judge command, a cache path, Gemini geometry at dimension 3072, and `GEMINI_API_KEY` or `GOOGLE_API_KEY`.
 
-For real geometry, set `GEMINI_API_KEY` or `GOOGLE_API_KEY` and use `embedding_provider=gemini-embedding-2`, `embedding_dimension=3072`.
+## Observation surface
 
-`strict-run` watches `<out-dir>/strict_run_control.json` by default. The main agent or user may create that file to request synthesis after the current safe task finishes.
+During a run, Codex may read and summarize:
 
-## Roles
+- `checkpoint_summary.md`;
+- `main_agent_status.md`;
+- `frontier.md`;
+- `entropy_trace.md`;
+- `strict_run_status.json`;
+- `relation_candidates.md`;
+- `human_questions.md`.
 
-- **Main agent**: owns the DTE session, summarizes current state, launches subagents, asks the user short questions when needed, and never bypasses DTE synthesis.
-- **Judge Oracle subagent**: scores SearchNodes and returns observable JSON scores/reasoning/risks.
-- **Executor subagent**: expands one assigned SearchNode into child SearchNodes.
-- **Relation Oracle subagent**: classifies selected node pairs/sets as equivalent, complementary, conflict, or independent.
-- **EvolutionController**: Python backend that computes embedding/KDE/entropy/temperature/UCB/Boltzmann allocation.
+```text
+observation != authority
+```
 
-## Two different caches
+Reading these files does not let the main agent continue, allocate, stop, or synthesize. It may recommend that the user continue or interrupt, but only the user may submit an interruption request.
 
-There are two cache layers. Do not confuse them.
+## Explicit user interruption
 
-### 1. LLM prefix cache / Codex backend context cache
+`strict-run` watches `<out-dir>/strict_run_control.json` by default; `--control-path` may select another path. After the user explicitly requests synthesis, the user-authored object is:
 
-This is the model-serving cache. It depends on exact shared prompt prefixes. To maximize hits:
+```json
+{
+  "action": "force_synthesis_after_current_task",
+  "requested_by": "user",
+  "reason": "user reviewed the latest checkpoint and requested synthesis",
+  "scope": "all"
+}
+```
 
-- put `prompts/DTE_STATIC_PREFIX.md` first, byte-for-byte;
-- put role-specific prompt second;
-- put dynamic task JSON, node content, logs, and user request last;
-- keep schemas and tool descriptions stable;
-- avoid putting repo status, timestamps, git SHAs, paths, or human messages before the static prefix;
-- reuse the same role prompt family across Judge, Executor, and Relation calls.
+Targeted synthesis uses `"scope": "node_ids"` and a non-empty `"node_ids"` list. The checked-in contract is `schemas/synthesis_control_request.schema.json`, with `examples/synthesis_control_request.json` as the canonical example.
 
-The helper `build_cached_subagent_prompt()` in `src/dte_backend/prompt_builder.py` builds prompts in this order.
+The backend polls only at safe points:
 
-### 2. DTE backend semantic cache
+1. after a complete Judge/EvolutionController/allocation checkpoint; or
+2. after an already-started node expansion has returned complete Executor output, passed validation, and committed that node-level result.
 
-This is the project-owned cache for embeddings and Judge scores. It is keyed by canonical node envelopes, not raw prompt prefixes.
+It does not kill an in-flight oracle, consume partial output, skip an Executor guard, or interpret the interruption as convergence. The stop reason is `user_interrupted_for_synthesis`, never `entropy_plateau`. Legacy model-root requests are invalid and fail closed; they are not remapped to `user`.
 
-Use stable context envelopes:
+## Cache discipline
 
-- preserve `claim`, explicit assumptions, evidence, counterexamples, and risks;
-- drop temporary logs, timestamps, stdout/stderr, ids, paths, tool chatter, and style-only rewrites;
-- do not include parent ids, score, UCB, status, or expansion budget in semantic cache identity;
-- use the same `--cache-path` across runs for one project/session;
-- embed node summaries, not full transcripts.
+There are two separate cache layers:
 
-The backend implements this through `context_envelope.py`, split embedding/Judge cache keys, canonical embedding input, and file-backed cache.
+- Model-serving prefix cache: keep `prompts/DTE_STATIC_PREFIX.md` first, the role prompt second, and dynamic JSON last.
+- DTE semantic cache: key embeddings and Judge results by canonical node content plus provider/model/dimension/rubric/prompt/schema namespaces.
 
-## Start a run
+Do not put volatile logs, timestamps, paths, git state, controller metrics, or transient summaries into semantic identity. Real runs should use one explicit `--cache-path` for the project/session.
 
-1. Create or edit a `DTERunSpec`.
-2. Validate it:
+## Adapter and guard development
+
+These commands validate individual boundaries for development, fixtures, and smoke checks:
 
 ```bash
 python hooks/dte_guard.py spec examples/run_spec.json
+python hooks/dte_guard.py judge --nodes examples/frontier_nodes.json --output examples/judge_output.json
+python hooks/dte_guard.py relation --nodes examples/frontier_nodes.json --output examples/relation_output.json
+python hooks/dte_guard.py executor --parent examples/executor_parent.json --output examples/executor_output.json --child-count 1
 ```
 
-3. Run the backend with a cache:
+The standalone `judge-oracle`, `relation-oracle`, `validate-executor`, and flexible `run` helpers are not production outer controllers. A main agent must not compose them into a manual real-run state machine.
 
-```bash
-python -m dte_backend run \
-  --spec examples/run_spec.json \
-  --out-dir artifacts/session \
-  --cache-path .dte_cache/cache.json
-```
+## Handoff after completion
 
-For real Gemini geometry, set `GEMINI_API_KEY` in the environment and use:
+After the backend stops and commits synthesis, summarize:
 
-```json
-"embedding_provider": "gemini-embedding-2",
-"embedding_dimension": 3072
-```
+- why the DTE controller stopped, or that the user interrupted;
+- the selected and rejected branches;
+- unresolved risks and human questions;
+- run mode, budget, geometry, adapters, cache path, and any degraded fallback;
+- `report.md` as the backend-committed synthesis.
 
-## Judge Oracle subagent
-
-Use `prompts/DTE_STATIC_PREFIX.md` first, then `prompts/judge_oracle.md`, then dynamic input JSON. The subagent must return JSON only.
-Validate Judge output before consuming scores. The `judge-oracle` CLI command runs the same validator; for outputs produced outside the CLI, run the guard explicitly:
-
-```bash
-python hooks/dte_guard.py judge \
-  --nodes examples/frontier_nodes.json \
-  --output examples/judge_output.json
-```
-
-Smoke command:
-
-```bash
-DTE_ALLOW_MOCK_ADAPTER=1 \
-python -m dte_backend judge-oracle \
-  --nodes examples/frontier_nodes.json \
-  --judge-command "python examples/mock_judge_adapter.py"
-```
-
-Integrated run command:
-
-```bash
-DTE_ALLOW_MOCK_ADAPTER=1 \
-python -m dte_backend run \
-  --spec examples/run_spec.json \
-  --out-dir artifacts/judge-session \
-  --cache-path .dte_cache/cache.json \
-  --judge-command "python examples/mock_judge_adapter.py"
-```
-
-Use `scripts/codex_judge_adapter.py` as the real Judge command for Codex CLI-backed runs. It reads the backend Judge payload from stdin, builds the prompt through `build_cached_subagent_prompt("judge", ...)`, calls `codex exec` by default, validates the returned JSON, and prints normalized Judge results. Set `DTE_CODEX_JUDGE_COMMAND` only when you need to override the Codex command; the override command must read the prompt from stdin and print JSON.
-
-See `examples/subagent_transcripts/judge_call.json` for a concrete Codex-style transcript with the shared static prefix first and dynamic node JSON last. The full transcript is documentation; pass its nested `subagent_response` object, not the transcript wrapper, to the guard/output validator.
-
-## Executor subagent
-
-Use `prompts/DTE_STATIC_PREFIX.md` first, then `prompts/executor_subagent.md`, then dynamic ExpansionRequest JSON. The executor receives an `ExpansionRequest` and returns child `SearchNode` objects.
-
-After a subagent returns output, validate it before consumption:
-
-```bash
-python hooks/dte_guard.py executor \
-  --parent examples/executor_parent.json \
-  --output examples/executor_output.json \
-  --child-count 1
-```
-
-See `examples/subagent_transcripts/executor_call.json` for a concrete Codex-style transcript. The response contains child `SearchNode` objects only and does not include Judge or controller metrics. The full transcript is documentation; pass its nested `subagent_response` object, not the transcript wrapper, to the guard/output validator.
-
-## Relation Oracle subagent
-
-Use `prompts/DTE_STATIC_PREFIX.md` first, then `prompts/relation_oracle.md`, then dynamic relation-task JSON. Do not call relation oracle for every pair. First select candidates using deterministic signals:
-
-- exact normalized-claim duplicates;
-- semantically close embeddings;
-- near-tied UCB/score branches;
-- entropy plateau branches.
-
-Read `relation_candidates.md` after each run. The backend helper is `select_relation_candidate_pairs()` in `src/dte_backend/relation_candidates.py`.
-Validate Relation output before converting it into merge proposals or discriminator tasks. The `relation-oracle` CLI command runs the same validator; for outputs produced outside the CLI, run the guard explicitly:
-
-```bash
-python hooks/dte_guard.py relation \
-  --nodes examples/frontier_nodes.json \
-  --output examples/relation_output.json
-```
-
-Smoke command:
-
-```bash
-python -m dte_backend relation-oracle \
-  --nodes examples/frontier_nodes.json \
-  --relation-command "python examples/mock_relation_adapter.py"
-```
-
-After validation, convert the result through `relation_result_to_outputs()` in `src/dte_backend/relation_workflow.py`, or write machine artifacts with:
-
-```bash
-python -m dte_backend relation-artifacts \
-  --nodes examples/frontier_nodes.json \
-  --relation-output examples/relation_result.json \
-  --out-dir artifacts/relation
-```
-
-The relation oracle itself must not mutate the graph. See `examples/subagent_transcripts/relation_call.json` for a concrete Codex-style transcript. The full transcript is documentation; pass its nested `subagent_response` object, not the transcript wrapper, to the guard/output validator.
-
-## Human questions
-
-If `artifacts/session/human_questions.md` contains a question, the main agent should ask the user in chat. Do not invent an answer silently. Keep the question short and branch-oriented.
-
-## Strict-run live control
-
-During a running `strict-run`, the main agent should monitor:
-
-- `checkpoint_summary.md`: current task summary for interruption decisions;
-- `main_agent_status.md`: run-level state and stop reason;
-- `frontier.md`: active branches;
-- `entropy_trace.md`: entropy state and natural stop reason;
-- `strict_run_status.json`: machine-readable mode, stop reason, and forced synthesis metadata.
-
-To ask the backend to synthesize after the current safe task, write `<out-dir>/strict_run_control.json`:
-
-```json
-{
-  "action": "force_synthesis_after_current_task",
-  "requested_by": "main_agent",
-  "reason": "checkpoint has enough coverage",
-  "scope": "all"
-}
-```
-
-When the user interrupts the main agent directly, use:
-
-```json
-{
-  "action": "force_synthesis_after_current_task",
-  "requested_by": "user",
-  "reason": "user interrupted the main agent after reviewing the checkpoint",
-  "scope": "all"
-}
-```
-
-For targeted synthesis over selected branches:
-
-```json
-{
-  "action": "force_synthesis_after_current_task",
-  "requested_by": "user",
-  "reason": "focus on selected branches",
-  "scope": "node_ids",
-  "node_ids": ["n1", "n2"]
-}
-```
-
-The backend checks this file only after the current Judge/controller checkpoint or current expanded node finishes. It does not kill an in-flight oracle subprocess. Forced synthesis is recorded as `main_agent_requested_synthesis` or `user_interrupted_for_synthesis`; do not call it `entropy_plateau`.
-
-## Main agent summary loop
-
-After each run, summarize these files to the user:
-
-- `main_agent_status.md`: current state and search phase;
-- `checkpoint_summary.md`: current task summary for possible continuation/interruption decisions;
-- `frontier.md`: active frontier branches;
-- `entropy_trace.md`: entropy/temperature and stop reason;
-- `relation_candidates.md`: node pairs worth Relation Oracle classification;
-- `human_questions.md`: whether user input is needed;
-- `report.md`: DTE synthesis.
-
-The main agent should summarize what happened, why the controller continued or stopped, which nodes were expanded, and whether another run is needed.
-
-## Full smoke workflow
-
-```bash
-python scripts/smoke_workflow.py
-```
-
-This checks spec guard, Judge oracle, Relation oracle, DTE run with Judge command, relation artifact conversion, and required artifact generation.
-
-For a documented end-to-end mock example, see `docs/MOCK_END_TO_END_EXAMPLE.md`. It references the transcript fixtures and the standard smoke artifacts that the main agent should inspect.
+Do not present a checkpoint, standalone oracle output, or manually assembled subagent summary as the final DTE report.

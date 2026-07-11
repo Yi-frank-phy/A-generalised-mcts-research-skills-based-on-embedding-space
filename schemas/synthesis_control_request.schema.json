@@ -1,0 +1,44 @@
+{
+  "additionalProperties": false,
+  "description": "Explicit user request to stop after the current safe task.",
+  "properties": {
+    "action": {
+      "const": "force_synthesis_after_current_task",
+      "title": "Action",
+      "type": "string"
+    },
+    "requested_by": {
+      "const": "user",
+      "title": "Requested By",
+      "type": "string"
+    },
+    "reason": {
+      "minLength": 1,
+      "title": "Reason",
+      "type": "string"
+    },
+    "scope": {
+      "default": "all",
+      "enum": [
+        "all",
+        "node_ids"
+      ],
+      "title": "Scope",
+      "type": "string"
+    },
+    "node_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Node Ids",
+      "type": "array"
+    }
+  },
+  "required": [
+    "action",
+    "requested_by",
+    "reason"
+  ],
+  "title": "SynthesisControlRequest",
+  "type": "object"
+}

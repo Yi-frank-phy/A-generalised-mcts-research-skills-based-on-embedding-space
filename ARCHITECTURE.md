@@ -191,6 +191,14 @@ The current adapter validation is the basis of this firewall and should be exten
 
 A prompt or Skill instruction alone is not a hard boundary. In the final architecture, DTE Driver calls the native runtime; the native runtime does not decide whether to call DTE.
 
+### Observability is not authority
+
+Checkpoint and status artifacts are read-only observations. A model-facing root agent may summarize them and recommend a user decision, but it cannot convert observation into permission to advance the state machine, allocate work, stop the search, or commit synthesis. Only the DTE controller's own stopping policy or an explicit user interruption may end normal search.
+
+```text
+observation != authority
+```
+
 ## Seed architecture and the Explorer role
 
 A mandatory physical Explorer is removed from the target real-run architecture.

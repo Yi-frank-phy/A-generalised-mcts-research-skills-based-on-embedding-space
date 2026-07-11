@@ -1,0 +1,6 @@
+{
+  "action": "force_synthesis_after_current_task",
+  "requested_by": "user",
+  "reason": "user reviewed the latest checkpoint and requested synthesis",
+  "scope": "all"
+}

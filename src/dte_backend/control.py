@@ -1,8 +1,8 @@
-"""Strict-run control file support.
+"""Strict-run user control file support.
 
-The control file is intentionally narrow: it can request synthesis after the
-current safe task, but it cannot judge nodes, allocate budget, or mutate graph
-state.
+The user-authored control file is intentionally narrow: it can request synthesis
+after the current safe task, but it cannot judge nodes, allocate budget, or
+mutate graph state.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from .models import ForcedSynthesisRecord, SearchNode, SynthesisControlRequest
 
 
 def load_synthesis_control(path: str | Path | None, nodes: list[SearchNode]) -> SynthesisControlRequest | None:
-    """Return a validated synthesis request if the control file exists."""
+    """Return a validated user synthesis request if the control file exists."""
 
     if path is None:
         return None
@@ -41,13 +41,8 @@ def record_forced_synthesis(
     selected = {node.node_id for node in nodes} if request.scope == "all" else set(request.node_ids)
     frontier_ids = {node.node_id for node in nodes if node.status == "frontier"}
     left_unexplored = sorted(frontier_ids - selected)
-    stop_reason = (
-        "main_agent_requested_synthesis"
-        if request.requested_by == "main_agent"
-        else "user_interrupted_for_synthesis"
-    )
     return ForcedSynthesisRecord(
-        stop_reason=stop_reason,
+        stop_reason="user_interrupted_for_synthesis",
         requested_by=request.requested_by,
         reason=request.reason,
         scope=request.scope,

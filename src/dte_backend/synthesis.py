@@ -55,7 +55,7 @@ def synthesize_report(
     if forced_synthesis is not None:
         lines.extend(
             [
-                "## Forced Synthesis",
+                "## User-Interrupted Synthesis",
                 f"- stop reason: `{forced_synthesis.stop_reason}`",
                 f"- requested by: `{forced_synthesis.requested_by}`",
                 f"- reason: {forced_synthesis.reason}",
@@ -69,7 +69,8 @@ def synthesize_report(
                 ),
                 "- control path: " + (f"`{forced_synthesis.control_path}`" if forced_synthesis.control_path else "n/a"),
                 "",
-                "This was not natural `entropy_plateau` convergence. The synthesis was requested after a reviewed DTE checkpoint/task summary, so any listed frontier branches remain unresolved risk.",
+                "This was an explicit user interruption honored by the backend at a safe boundary, not natural "
+                "`entropy_plateau` convergence. Any listed frontier branches remain unresolved risk.",
                 "",
             ]
         )

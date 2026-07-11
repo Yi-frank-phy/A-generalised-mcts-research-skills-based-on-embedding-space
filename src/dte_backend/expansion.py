@@ -87,17 +87,19 @@ def expand_frontier(
         parent = by_id.get(node_id)
         if parent is None or parent.status != "frontier" or budget <= 0:
             continue
-        new_children.extend(
-            expand_node(
-                parent,
-                budget,
-                iteration=iteration,
-                spec=spec,
-                executor_adapter=executor_adapter,
-            )
+        validated_children = expand_node(
+            parent,
+            budget,
+            iteration=iteration,
+            spec=spec,
+            executor_adapter=executor_adapter,
         )
+        new_children.extend(validated_children)
         parent.status = "closed"
         parent.expansion_budget = 0
+        # This callback is the interruption safe point: the oracle has returned,
+        # its complete output has passed the Executor guard, and the node-level
+        # result has been committed. A pending request cannot bypass validation.
         if after_node_expanded is not None and after_node_expanded(nodes + new_children):
             break
     return nodes + new_children

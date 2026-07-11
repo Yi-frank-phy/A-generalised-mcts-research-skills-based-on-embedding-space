@@ -46,7 +46,7 @@ class RunResult:
     forced_synthesis: ForcedSynthesisRecord | None = None
 
 
-ControlCallback = Callable[[DTERunSpec, list[SearchNode], list[IterationTrace]], SynthesisControlRequest | None]
+UserControlCallback = Callable[[DTERunSpec, list[SearchNode], list[IterationTrace]], SynthesisControlRequest | None]
 CheckpointCallback = Callable[[RunResult], None]
 
 
@@ -82,7 +82,7 @@ def run_frontier_search(
     executor_adapter: ExecutorAdapter | None = None,
     judge_adapter: JudgeAdapter | None = None,
     cache: DTECache | None = None,
-    control_callback: ControlCallback | None = None,
+    user_control_callback: UserControlCallback | None = None,
     checkpoint_callback: CheckpointCallback | None = None,
     control_path: str | Path | None = None,
 ) -> RunResult:
@@ -122,18 +122,24 @@ def run_frontier_search(
             )
         )
 
-    def maybe_force_synthesis(current_nodes: list[SearchNode]) -> bool:
+    def maybe_apply_user_interruption(current_nodes: list[SearchNode]) -> bool:
         nonlocal forced_synthesis, stop_reason
-        if control_callback is None:
+        if user_control_callback is None:
             return False
-        request = control_callback(spec, current_nodes, traces)
+        request = user_control_callback(spec, current_nodes, traces)
         if request is None:
             return False
         forced_synthesis = record_forced_synthesis(request, current_nodes, control_path=control_path)
         stop_reason = forced_synthesis.stop_reason
         if traces:
-            traces[-1].notes.append(f"forced_synthesis_trigger={stop_reason}")
+            traces[-1].notes.append(f"user_interruption_trigger={stop_reason}")
         return True
+
+    def checkpoint_then_maybe_apply_user_interruption(current_nodes: list[SearchNode]) -> bool:
+        """Persist a complete node-level commit before polling user control."""
+
+        maybe_checkpoint(current_nodes)
+        return maybe_apply_user_interruption(current_nodes)
 
     for iteration in range(1, spec.budget.max_iterations + 1):
         frontier = [node for node in nodes if node.status == "frontier"]
@@ -220,7 +226,7 @@ def run_frontier_search(
             traces[-1].notes.append(f"auto_synthesis_trigger={entropy_state.stop_reason}")
             stop_reason = entropy_state.stop_reason
             break
-        if maybe_force_synthesis(nodes):
+        if maybe_apply_user_interruption(nodes):
             maybe_checkpoint(nodes)
             break
 
@@ -231,7 +237,7 @@ def run_frontier_search(
             iteration=iteration,
             spec=spec,
             executor_adapter=executor_adapter,
-            after_node_expanded=maybe_force_synthesis,
+            after_node_expanded=checkpoint_then_maybe_apply_user_interruption,
         )
         maybe_checkpoint(nodes)
         if forced_synthesis is not None:

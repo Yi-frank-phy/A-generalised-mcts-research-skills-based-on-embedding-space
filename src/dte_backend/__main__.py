@@ -265,7 +265,7 @@ def build_parser() -> argparse.ArgumentParser:
     strict.add_argument("--judge-timeout", type=float, default=360.0)
     strict.add_argument(
         "--control-path",
-        help="optional strict-run control JSON; defaults to <out-dir>/strict_run_control.json",
+        help="optional user-authored interruption JSON; defaults to <out-dir>/strict_run_control.json",
     )
     strict.set_defaults(func=cmd_strict_run)
 

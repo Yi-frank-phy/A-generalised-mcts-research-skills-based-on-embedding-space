@@ -28,17 +28,19 @@ def test_checkpoint_summary_mentions_forced_synthesis_state():
     )
     nodes = [SearchNode(node_id="n", claim="claim")]
 
-    def control_callback(spec, nodes, traces):
+    def user_control_callback(spec, nodes, traces):
         return SynthesisControlRequest(
             action="force_synthesis_after_current_task",
             requested_by="user",
             reason="reviewed checkpoint",
         )
 
-    result = run_frontier_search(spec, nodes, control_callback=control_callback)
+    result = run_frontier_search(spec, nodes, user_control_callback=user_control_callback)
     summary = render_checkpoint_summary_markdown(result)
     status = render_main_agent_status(result)
 
     assert "DTE Checkpoint Summary" in summary
     assert "Run-level stop reason: user_interrupted_for_synthesis" in summary
     assert "user_interrupted_for_synthesis" in status
+    assert "Observation is not authority" in summary
+    assert "may recommend" in status

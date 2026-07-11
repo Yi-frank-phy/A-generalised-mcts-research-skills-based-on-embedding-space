@@ -62,22 +62,32 @@ def test_search_node_validates():
     assert node.status == "frontier"
 
 
-def test_synthesis_control_request_validates_scope():
+def test_synthesis_control_request_accepts_user():
     request = SynthesisControlRequest(
         action="force_synthesis_after_current_task",
-        requested_by="main_agent",
+        requested_by="user",
         reason="reviewed checkpoint",
         scope="node_ids",
         node_ids=["n1"],
     )
     assert request.node_ids == ["n1"]
+    assert request.requested_by == "user"
+
+
+def test_synthesis_control_request_rejects_legacy_main_agent_request():
+    with pytest.raises(ValidationError, match="requested_by"):
+        SynthesisControlRequest(
+            action="force_synthesis_after_current_task",
+            requested_by="main_agent",
+            reason="model root tried to stop the run",
+        )
 
 
 def test_synthesis_control_request_rejects_missing_node_ids():
     with pytest.raises(ValidationError, match="requires at least one node_id"):
         SynthesisControlRequest(
             action="force_synthesis_after_current_task",
-            requested_by="main_agent",
+            requested_by="user",
             reason="reviewed checkpoint",
             scope="node_ids",
         )
@@ -92,3 +102,13 @@ def test_synthesis_control_request_rejects_extra_fields():
             scope="all",
             score=1.0,
         )
+
+
+def test_checked_in_synthesis_control_schema_and_example_are_user_only():
+    root = Path(__file__).resolve().parents[1]
+    schema = json.loads((root / "schemas" / "synthesis_control_request.schema.json").read_text(encoding="utf-8"))
+    example = json.loads((root / "examples" / "synthesis_control_request.json").read_text(encoding="utf-8"))
+
+    assert schema == SynthesisControlRequest.model_json_schema()
+    assert schema["properties"]["requested_by"]["const"] == "user"
+    assert example["requested_by"] == "user"

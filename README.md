@@ -7,17 +7,15 @@
 Core idea:
 
 ```text
-Codex / agent executor
+User / validated RunSpec
         ↓
-Skill protocol
+DTE backend (only outer controller)
         ↓
-Fixed role-isolated research flow
+bounded role adapters → validated structured outputs
         ↓
-Python math backend: Judge scores → entropy/novelty → UCB → Boltzmann expansion
+Judge scores → entropy/novelty → UCB → Boltzmann expansion
         ↓
-structured SearchNode outputs
-        ↓
-validated synthesis report
+DTE-selected synthesis checkpoint → validated report
 ```
 
 This repository is intentionally **not** a new general agent architecture. It is a packaging layer around a fixed research workflow:
@@ -81,7 +79,7 @@ python -m dte_backend strict-run \
 
 `scripts/codex_judge_adapter.py` calls `codex exec` by default. Set `DTE_CODEX_JUDGE_COMMAND` only when you need to override the Codex command used by that adapter.
 
-`strict-run` writes progress artifacts and watches `<out-dir>/strict_run_control.json` by default. Creating that JSON file can request synthesis after the current safe task finishes; the resulting stop reason is recorded as `main_agent_requested_synthesis` or `user_interrupted_for_synthesis`, never as `entropy_plateau`.
+The only production real-run entrypoint is `python -m dte_backend strict-run --mode real`. `strict-run` writes observable progress artifacts and watches `<out-dir>/strict_run_control.json` for an explicit user interruption. A model-facing main agent may read checkpoints and recommend stopping, but it cannot write the request: observation is not authority. A user interruption is recorded as `user_interrupted_for_synthesis`, never as `entropy_plateau`.
 
 ## License
 

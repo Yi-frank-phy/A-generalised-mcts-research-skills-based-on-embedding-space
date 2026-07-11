@@ -128,10 +128,10 @@ class MergeProposal(DTEBaseModel):
 
 
 class SynthesisControlRequest(DTEBaseModel):
-    """Operator/main-agent request to stop after the current safe task."""
+    """Explicit user request to stop after the current safe task."""
 
     action: Literal["force_synthesis_after_current_task"]
-    requested_by: Literal["main_agent", "user"]
+    requested_by: Literal["user"]
     reason: str = Field(min_length=1)
     scope: Literal["all", "node_ids"] = "all"
     node_ids: list[str] = Field(default_factory=list)
@@ -146,10 +146,10 @@ class SynthesisControlRequest(DTEBaseModel):
 
 
 class ForcedSynthesisRecord(DTEBaseModel):
-    """Recorded stop metadata for a forced synthesis."""
+    """Recorded stop metadata for an explicit user interruption."""
 
-    stop_reason: Literal["main_agent_requested_synthesis", "user_interrupted_for_synthesis"]
-    requested_by: Literal["main_agent", "user"]
+    stop_reason: Literal["user_interrupted_for_synthesis"]
+    requested_by: Literal["user"]
     reason: str
     scope: Literal["all", "node_ids"]
     node_ids: list[str] = Field(default_factory=list)

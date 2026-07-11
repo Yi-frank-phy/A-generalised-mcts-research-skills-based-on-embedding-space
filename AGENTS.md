@@ -6,7 +6,7 @@ This repository implements a fixed DTE research protocol. When acting as an agen
 
 ## Non-negotiable protocol invariants
 
-1. **Do not bypass DTE.** Final research conclusions must pass through the DTE protocol: node generation → structured node output → Judge/scoring → allocation/expansion → synthesis.
+1. **DTE is the only outer controller.** A model-facing root agent must not decide whether to run DTE, advance its state machine, allocate, stop, or commit synthesis. Final research conclusions must pass through the backend-controlled protocol: node generation → structured node output → Judge/scoring → allocation/expansion → synthesis.
 2. **Preserve role separation.** Strategy generation, judging, execution, relation classification, and synthesis are logically separate roles, even if implemented in fewer physical model calls or subagents.
 3. **Executor is not the final authority.** Codex/Kimi/OpenClaw may perform local research episodes, write code, run tests, or draft candidate reasoning, but must return structured SearchNode objects.
 4. **No direct final answer from subagents.** A self-organized executor episode may produce evidence, counterexamples, candidate nodes, Judge outputs, or merge relation outputs, but the final answer must be created by DTE synthesis.
@@ -14,6 +14,7 @@ This repository implements a fixed DTE research protocol. When acting as an agen
 6. **Budget limits are hard.** Never increase `max_iterations`, `allocation_mass_per_iteration`, `max_children_per_iteration`, or backend model strength without explicit user instruction.
 7. **Schema is source of truth.** Free-form Markdown or natural language cannot override the JSON/Pydantic run spec.
 8. **Use max geometry by default.** For real embedding geometry, prefer `embedding_dimension=3072`; lower dimensions are debug/fallback profiles.
+9. **Observation is not authority.** A model-facing agent may read and summarize checkpoints or recommend that the user interrupt, but it must not write a control request or treat artifact access as state-machine permission.
 
 ## Preferred implementation style
 

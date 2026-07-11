@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from .adapter import ExecutorAdapter
 from .cache import DTECache
+from .control import record_forced_synthesis
 from .embedding import get_embedding_provider
 from .entropy import EntropyState, evaluate_entropy_state
 from .expansion import expand_frontier
@@ -13,7 +16,7 @@ from .human import HumanQuestion, maybe_create_human_question
 from .judge import batch_judge
 from .math_engine import allocate_frontier
 from .merge import apply_equivalent_merges
-from .models import AllocationResult, DTERunSpec, MergeProposal, SearchNode
+from .models import AllocationResult, DTERunSpec, ForcedSynthesisRecord, MergeProposal, SearchNode, SynthesisControlRequest
 from .novelty import estimate_frontier_kde_state
 from .oracle_validation import validate_judge_output
 from .subprocess_oracles import JudgeAdapter
@@ -39,6 +42,12 @@ class RunResult:
     report: str
     cache: DTECache
     role_audit: dict[str, object] = field(default_factory=dict)
+    stop_reason: str | None = None
+    forced_synthesis: ForcedSynthesisRecord | None = None
+
+
+ControlCallback = Callable[[DTERunSpec, list[SearchNode], list[IterationTrace]], SynthesisControlRequest | None]
+CheckpointCallback = Callable[[RunResult], None]
 
 
 def _seed_nodes_from_spec(spec: DTERunSpec) -> tuple[list[SearchNode], dict[str, object]]:
@@ -73,6 +82,9 @@ def run_frontier_search(
     executor_adapter: ExecutorAdapter | None = None,
     judge_adapter: JudgeAdapter | None = None,
     cache: DTECache | None = None,
+    control_callback: ControlCallback | None = None,
+    checkpoint_callback: CheckpointCallback | None = None,
+    control_path: str | Path | None = None,
 ) -> RunResult:
     """Run the mandatory DTE loop.
 
@@ -91,6 +103,37 @@ def run_frontier_search(
     cache = cache or DTECache()
     embedding_provider = get_embedding_provider(spec.embedding_provider, dim=spec.embedding_dimension)
     previous_entropy: float | None = None
+    stop_reason: str | None = None
+    forced_synthesis: ForcedSynthesisRecord | None = None
+
+    def maybe_checkpoint(current_nodes: list[SearchNode]) -> None:
+        if checkpoint_callback is None:
+            return
+        checkpoint_callback(
+            RunResult(
+                spec=spec,
+                nodes=current_nodes,
+                traces=traces,
+                report="",
+                cache=cache,
+                role_audit=role_audit,
+                stop_reason=stop_reason,
+                forced_synthesis=forced_synthesis,
+            )
+        )
+
+    def maybe_force_synthesis(current_nodes: list[SearchNode]) -> bool:
+        nonlocal forced_synthesis, stop_reason
+        if control_callback is None:
+            return False
+        request = control_callback(spec, current_nodes, traces)
+        if request is None:
+            return False
+        forced_synthesis = record_forced_synthesis(request, current_nodes, control_path=control_path)
+        stop_reason = forced_synthesis.stop_reason
+        if traces:
+            traces[-1].notes.append(f"forced_synthesis_trigger={stop_reason}")
+        return True
 
     for iteration in range(1, spec.budget.max_iterations + 1):
         frontier = [node for node in nodes if node.status == "frontier"]
@@ -169,9 +212,14 @@ def run_frontier_search(
                 human_question=human_question,
             )
         )
+        maybe_checkpoint(nodes)
 
         if entropy_state.should_synthesize:
             traces[-1].notes.append(f"auto_synthesis_trigger={entropy_state.stop_reason}")
+            stop_reason = entropy_state.stop_reason
+            break
+        if maybe_force_synthesis(nodes):
+            maybe_checkpoint(nodes)
             break
 
         budget_map = {a.node_id: a.expansion_budget for a in allocations if a.expansion_budget > 0}
@@ -181,7 +229,24 @@ def run_frontier_search(
             iteration=iteration,
             spec=spec,
             executor_adapter=executor_adapter,
+            after_node_expanded=maybe_force_synthesis,
         )
+        maybe_checkpoint(nodes)
+        if forced_synthesis is not None:
+            break
 
-    report = synthesize_report(spec, nodes)
-    return RunResult(spec=spec, nodes=nodes, traces=traces, report=report, cache=cache, role_audit=role_audit)
+    if stop_reason is None and traces and traces[-1].iteration >= spec.budget.max_iterations:
+        stop_reason = "max_iterations"
+        traces[-1].notes.append("auto_synthesis_trigger=max_iterations")
+
+    report = synthesize_report(spec, nodes, forced_synthesis=forced_synthesis)
+    return RunResult(
+        spec=spec,
+        nodes=nodes,
+        traces=traces,
+        report=report,
+        cache=cache,
+        role_audit=role_audit,
+        stop_reason=stop_reason,
+        forced_synthesis=forced_synthesis,
+    )

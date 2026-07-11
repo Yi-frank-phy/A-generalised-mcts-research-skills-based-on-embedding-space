@@ -7,7 +7,7 @@ contract between Codex/Kimi/OpenClaw executor episodes and the DTE controller.
 from __future__ import annotations
 
 from typing import Literal
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
 
 class DTEBaseModel(BaseModel):
@@ -102,3 +102,33 @@ class MergeProposal(DTEBaseModel):
     rationale: str
     merged_node: SearchNode | None = None
     absorbed_node_ids: list[str] = Field(default_factory=list)
+
+
+class SynthesisControlRequest(DTEBaseModel):
+    """Operator/main-agent request to stop after the current safe task."""
+
+    action: Literal["force_synthesis_after_current_task"]
+    requested_by: Literal["main_agent", "user"]
+    reason: str = Field(min_length=1)
+    scope: Literal["all", "node_ids"] = "all"
+    node_ids: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_scope(self) -> "SynthesisControlRequest":
+        if self.scope == "node_ids" and not self.node_ids:
+            raise ValueError("scope='node_ids' requires at least one node_id")
+        if self.scope == "all" and self.node_ids:
+            raise ValueError("scope='all' must not include node_ids")
+        return self
+
+
+class ForcedSynthesisRecord(DTEBaseModel):
+    """Recorded stop metadata for a forced synthesis."""
+
+    stop_reason: Literal["main_agent_requested_synthesis", "user_interrupted_for_synthesis"]
+    requested_by: Literal["main_agent", "user"]
+    reason: str
+    scope: Literal["all", "node_ids"]
+    node_ids: list[str] = Field(default_factory=list)
+    left_unexplored_node_ids: list[str] = Field(default_factory=list)
+    control_path: str | None = None

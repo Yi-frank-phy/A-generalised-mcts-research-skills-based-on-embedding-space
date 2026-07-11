@@ -81,6 +81,8 @@ python -m dte_backend strict-run \
 
 `scripts/codex_judge_adapter.py` calls `codex exec` by default. Set `DTE_CODEX_JUDGE_COMMAND` only when you need to override the Codex command used by that adapter.
 
+`strict-run` writes progress artifacts and watches `<out-dir>/strict_run_control.json` by default. Creating that JSON file can request synthesis after the current safe task finishes; the resulting stop reason is recorded as `main_agent_requested_synthesis` or `user_interrupted_for_synthesis`, never as `entropy_plateau`.
+
 ## License
 
 Apache-2.0. See [`LICENSE`](./LICENSE).

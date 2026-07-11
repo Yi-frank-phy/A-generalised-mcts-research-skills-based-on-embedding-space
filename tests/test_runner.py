@@ -1,4 +1,4 @@
-from dte_backend.models import BudgetSpec, DTERunSpec, SearchNode
+from dte_backend.models import BudgetSpec, DTERunSpec, SearchNode, SynthesisControlRequest
 from dte_backend.runner import run_frontier_search
 from dte_backend.synthesis import synthesize_report
 import pytest
@@ -52,6 +52,40 @@ def test_run_frontier_search_validates_supplied_judge_adapter_output():
 
     with pytest.raises(ValueError, match="forbidden"):
         run_frontier_search(spec, nodes, judge_adapter=bad_judge_adapter)
+
+
+def test_run_frontier_search_can_force_synthesis_after_checkpoint():
+    spec = DTERunSpec(
+        problem="force synthesis",
+        goal="stop after reviewed checkpoint",
+        budget=BudgetSpec(max_iterations=5, total_child_budget=2, min_iterations_before_synthesis=5),
+    )
+    nodes = [
+        SearchNode(node_id="a", claim="route A", confidence=0.7),
+        SearchNode(node_id="b", claim="route B", confidence=0.6),
+    ]
+
+    def control_callback(spec, nodes, traces):
+        return SynthesisControlRequest(
+            action="force_synthesis_after_current_task",
+            requested_by="main_agent",
+            reason="checkpoint shows enough coverage",
+            scope="node_ids",
+            node_ids=["a"],
+        )
+
+    result = run_frontier_search(spec, nodes, control_callback=control_callback)
+
+    assert len(result.traces) == 1
+    assert result.stop_reason == "main_agent_requested_synthesis"
+    assert result.forced_synthesis is not None
+    assert result.forced_synthesis.node_ids == ["a"]
+    assert next(node for node in result.nodes if node.node_id == "a").status == "frontier"
+    assert next(node for node in result.nodes if node.node_id == "b").status == "frontier"
+    assert "Forced Synthesis" in result.report
+    assert "main_agent_requested_synthesis" in result.report
+    assert "left unexplored" in result.report
+    assert "- stop reason: `entropy_plateau`" not in result.report
 
 
 def test_synthesis_mentions_protocol():

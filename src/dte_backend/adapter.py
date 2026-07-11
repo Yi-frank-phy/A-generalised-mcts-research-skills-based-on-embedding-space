@@ -83,6 +83,8 @@ def run_subprocess_executor(command: Sequence[str], request: ExpansionRequest, t
         input=request.model_dump_json(),
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         timeout=timeout,
         check=False,
     )

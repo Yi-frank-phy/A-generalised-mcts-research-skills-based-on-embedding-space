@@ -38,6 +38,8 @@ Direct mock-adapter commands require `DTE_ALLOW_MOCK_ADAPTER=1`; the wrapper `py
 
 For real geometry, set `GEMINI_API_KEY` or `GOOGLE_API_KEY` and use `embedding_provider=gemini-embedding-2`, `embedding_dimension=3072`.
 
+`strict-run` watches `<out-dir>/strict_run_control.json` by default. The main agent or user may create that file to request synthesis after the current safe task finishes.
+
 ## Roles
 
 - **Main agent**: owns the DTE session, summarizes current state, launches subagents, asks the user short questions when needed, and never bypasses DTE synthesis.
@@ -193,11 +195,58 @@ The relation oracle itself must not mutate the graph. See `examples/subagent_tra
 
 If `artifacts/session/human_questions.md` contains a question, the main agent should ask the user in chat. Do not invent an answer silently. Keep the question short and branch-oriented.
 
+## Strict-run live control
+
+During a running `strict-run`, the main agent should monitor:
+
+- `checkpoint_summary.md`: current task summary for interruption decisions;
+- `main_agent_status.md`: run-level state and stop reason;
+- `frontier.md`: active branches;
+- `entropy_trace.md`: entropy state and natural stop reason;
+- `strict_run_status.json`: machine-readable mode, stop reason, and forced synthesis metadata.
+
+To ask the backend to synthesize after the current safe task, write `<out-dir>/strict_run_control.json`:
+
+```json
+{
+  "action": "force_synthesis_after_current_task",
+  "requested_by": "main_agent",
+  "reason": "checkpoint has enough coverage",
+  "scope": "all"
+}
+```
+
+When the user interrupts the main agent directly, use:
+
+```json
+{
+  "action": "force_synthesis_after_current_task",
+  "requested_by": "user",
+  "reason": "user interrupted the main agent after reviewing the checkpoint",
+  "scope": "all"
+}
+```
+
+For targeted synthesis over selected branches:
+
+```json
+{
+  "action": "force_synthesis_after_current_task",
+  "requested_by": "user",
+  "reason": "focus on selected branches",
+  "scope": "node_ids",
+  "node_ids": ["n1", "n2"]
+}
+```
+
+The backend checks this file only after the current Judge/controller checkpoint or current expanded node finishes. It does not kill an in-flight oracle subprocess. Forced synthesis is recorded as `main_agent_requested_synthesis` or `user_interrupted_for_synthesis`; do not call it `entropy_plateau`.
+
 ## Main agent summary loop
 
 After each run, summarize these files to the user:
 
 - `main_agent_status.md`: current state and search phase;
+- `checkpoint_summary.md`: current task summary for possible continuation/interruption decisions;
 - `frontier.md`: active frontier branches;
 - `entropy_trace.md`: entropy/temperature and stop reason;
 - `relation_candidates.md`: node pairs worth Relation Oracle classification;

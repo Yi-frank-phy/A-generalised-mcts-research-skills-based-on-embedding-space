@@ -8,6 +8,7 @@ validated SearchNode children to DTE.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Callable
 
 from .adapter import ExecutorAdapter, validate_adapter_output
 from .models import DTERunSpec, ExpansionRequest, SearchNode
@@ -76,6 +77,7 @@ def expand_frontier(
     iteration: int,
     spec: DTERunSpec | None = None,
     executor_adapter: ExecutorAdapter | None = None,
+    after_node_expanded: Callable[[list[SearchNode]], bool] | None = None,
 ) -> list[SearchNode]:
     """Close expanded parents and append their children."""
 
@@ -96,4 +98,6 @@ def expand_frontier(
         )
         parent.status = "closed"
         parent.expansion_budget = 0
+        if after_node_expanded is not None and after_node_expanded(nodes + new_children):
+            break
     return nodes + new_children

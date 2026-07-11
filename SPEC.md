@@ -387,7 +387,51 @@ Relation workflow:
 5. Let the backend, not the model, decide whether and when to apply the proposal.
 6. For `independent`, preserve the branches and continue normal Judge/EvolutionController allocation.
 
-## 15. Explicit non-goals
+## 15. Strict-run control and forced synthesis
+
+`strict-run` may be supervised by the main agent/user through a narrow control file. This is not a new oracle and does not replace Judge, EvolutionController, allocation, relation, or synthesis.
+
+Default CLI location:
+
+```text
+<out-dir>/strict_run_control.json
+```
+
+Supported control object:
+
+```json
+{
+  "action": "force_synthesis_after_current_task",
+  "requested_by": "main_agent",
+  "reason": "checkpoint has enough coverage",
+  "scope": "all"
+}
+```
+
+For targeted synthesis:
+
+```json
+{
+  "action": "force_synthesis_after_current_task",
+  "requested_by": "user",
+  "reason": "focus on the no-go branch",
+  "scope": "node_ids",
+  "node_ids": ["n1"]
+}
+```
+
+The backend reads this file only at safe points: after a Judge/EvolutionController/allocation checkpoint and after each expanded node has finished. It must not interrupt a running oracle subprocess. Invalid control JSON fails the run instead of being ignored.
+
+Forced synthesis must be recorded as one of:
+
+```text
+main_agent_requested_synthesis
+user_interrupted_for_synthesis
+```
+
+It must not be recorded as `entropy_plateau`. Artifacts must include the control path, stop reason, selected scope, and frontier branches left unexplored.
+
+## 16. Explicit non-goals
 
 DTE must not:
 

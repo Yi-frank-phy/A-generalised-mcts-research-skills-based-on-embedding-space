@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 import shlex
+import sys
 from pathlib import Path
 
 from .adapter import build_subprocess_adapter, run_subprocess_executor
@@ -27,6 +28,14 @@ from .runner import run_frontier_search
 from .strict_runner import StrictRunError, strict_run
 from .subprocess_oracles import build_subprocess_judge_adapter, run_subprocess_judge, run_subprocess_relation
 from .validators import load_json_list, load_json_model
+
+
+def configure_stdio() -> None:
+    """Use UTF-8 for machine-facing CLI output on Windows."""
+
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
 
 
 def split_command(command: str) -> list[str]:
@@ -158,6 +167,7 @@ def cmd_run(args: argparse.Namespace) -> None:
 def cmd_strict_run(args: argparse.Namespace) -> None:
     spec = load_json_model(args.spec, DTERunSpec)
     nodes = load_json_list(args.nodes, SearchNode) if args.nodes else None
+    control_path = args.control_path or str(Path(args.out_dir) / "strict_run_control.json")
     executor_adapter = None
     if args.executor_command:
         executor_adapter = build_subprocess_adapter(split_command(args.executor_command), timeout=args.executor_timeout)
@@ -175,6 +185,7 @@ def cmd_strict_run(args: argparse.Namespace) -> None:
             judge_command=args.judge_command,
             executor_adapter=executor_adapter,
             executor_command=args.executor_command,
+            control_path=control_path,
         )
     except StrictRunError as exc:
         raise SystemExit(f"strict-run failed: {exc}") from exc
@@ -201,13 +212,13 @@ def build_parser() -> argparse.ArgumentParser:
     judge = sub.add_parser("judge-oracle", help="run and validate a Judge oracle command")
     judge.add_argument("--nodes", required=True)
     judge.add_argument("--judge-command", required=True)
-    judge.add_argument("--timeout", type=float, default=180.0)
+    judge.add_argument("--timeout", type=float, default=360.0)
     judge.set_defaults(func=cmd_judge_oracle)
 
     relation = sub.add_parser("relation-oracle", help="run and validate a relation oracle command")
     relation.add_argument("--nodes", required=True)
     relation.add_argument("--relation-command", required=True)
-    relation.add_argument("--timeout", type=float, default=180.0)
+    relation.add_argument("--timeout", type=float, default=360.0)
     relation.set_defaults(func=cmd_relation_oracle)
 
     relation_artifacts = sub.add_parser("relation-artifacts", help="convert a relation oracle result into machine artifacts")
@@ -229,7 +240,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--executor-command", help="optional subprocess executor adapter command")
     run.add_argument("--executor-timeout", type=float, default=120.0)
     run.add_argument("--judge-command", help="optional subprocess Judge oracle command")
-    run.add_argument("--judge-timeout", type=float, default=180.0)
+    run.add_argument("--judge-timeout", type=float, default=360.0)
     run.add_argument("--cache-path", help="optional JSON cache path for embeddings and scores")
     run.set_defaults(func=cmd_run)
 
@@ -242,13 +253,18 @@ def build_parser() -> argparse.ArgumentParser:
     strict.add_argument("--executor-command", help="optional subprocess executor adapter command")
     strict.add_argument("--executor-timeout", type=float, default=120.0)
     strict.add_argument("--judge-command", help="required in real mode")
-    strict.add_argument("--judge-timeout", type=float, default=180.0)
+    strict.add_argument("--judge-timeout", type=float, default=360.0)
+    strict.add_argument(
+        "--control-path",
+        help="optional strict-run control JSON; defaults to <out-dir>/strict_run_control.json",
+    )
     strict.set_defaults(func=cmd_strict_run)
 
     return parser
 
 
 def main() -> None:
+    configure_stdio()
     parser = build_parser()
     args = parser.parse_args()
     args.func(args)

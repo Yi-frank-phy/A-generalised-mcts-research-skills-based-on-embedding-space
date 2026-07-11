@@ -15,6 +15,7 @@ from typing import Literal
 
 from .adapter import ExecutorAdapter
 from .artifacts import (
+    render_checkpoint_summary_markdown,
     render_entropy_trace_markdown,
     render_frontier_markdown,
     render_human_questions_markdown,
@@ -23,11 +24,13 @@ from .artifacts import (
     render_role_audit_markdown,
 )
 from .cache import CacheStats
+from .control import load_synthesis_control
 from .file_cache import FileDTECache
 from .guards import enforce_run_spec_guard
 from .models import DTERunSpec, SearchNode
 from .runner import RunResult, run_frontier_search
 from .subprocess_oracles import JudgeAdapter
+from .synthesis import synthesize_report
 
 
 StrictMode = Literal["smoke", "dry-run", "real"]
@@ -129,12 +132,22 @@ def enforce_strict_policy(
         raise StrictRunError("mock Executor adapter is smoke-only and forbidden in this mode")
 
 
-def write_run_artifacts(result: RunResult, out_dir: str | Path, strict_mode: StrictMode) -> None:
+def write_run_artifacts(
+    result: RunResult,
+    out_dir: str | Path,
+    strict_mode: StrictMode,
+    control_path: str | Path | None = None,
+) -> None:
     """Write all Codex-app-facing artifacts for one run."""
 
     out_path = Path(out_dir)
     out_path.mkdir(parents=True, exist_ok=True)
-    (out_path / "report.md").write_text(result.report, encoding="utf-8")
+    report = result.report or synthesize_report(
+        result.spec,
+        result.nodes,
+        forced_synthesis=result.forced_synthesis,
+    )
+    (out_path / "report.md").write_text(report, encoding="utf-8")
     (out_path / "nodes.json").write_text(
         json.dumps([n.model_dump() for n in result.nodes], ensure_ascii=False, indent=2),
         encoding="utf-8",
@@ -164,6 +177,7 @@ def write_run_artifacts(result: RunResult, out_dir: str | Path, strict_mode: Str
     (out_path / "frontier.md").write_text(render_frontier_markdown(result), encoding="utf-8")
     (out_path / "entropy_trace.md").write_text(render_entropy_trace_markdown(result), encoding="utf-8")
     (out_path / "main_agent_status.md").write_text(render_main_agent_status(result), encoding="utf-8")
+    (out_path / "checkpoint_summary.md").write_text(render_checkpoint_summary_markdown(result), encoding="utf-8")
     (out_path / "human_questions.md").write_text(render_human_questions_markdown(result), encoding="utf-8")
     (out_path / "role_audit.md").write_text(render_role_audit_markdown(result), encoding="utf-8")
     (out_path / "relation_candidates.md").write_text(render_relation_candidates_markdown(result), encoding="utf-8")
@@ -175,6 +189,11 @@ def write_run_artifacts(result: RunResult, out_dir: str | Path, strict_mode: Str
                 "embedding_dimension": result.spec.embedding_dimension,
                 "nodes": len(result.nodes),
                 "traces": len(result.traces),
+                "stop_reason": result.stop_reason,
+                "forced_synthesis": None
+                if result.forced_synthesis is None
+                else result.forced_synthesis.model_dump(),
+                "control_path": None if control_path is None else str(control_path),
             },
             ensure_ascii=False,
             indent=2,
@@ -193,6 +212,7 @@ def strict_run(
     judge_command: str | None = None,
     executor_adapter: ExecutorAdapter | None = None,
     executor_command: str | None = None,
+    control_path: str | Path | None = None,
 ) -> RunResult:
     """Execute the locked DTE state machine used by slash-command skills."""
 
@@ -209,12 +229,21 @@ def strict_run(
         os.environ["DTE_ALLOW_MOCK_ADAPTER"] = "1"
 
     cache = FileDTECache(cache_path) if cache_path else None
+    def control_callback(spec: DTERunSpec, nodes: list[SearchNode], traces):
+        return load_synthesis_control(control_path, nodes)
+
+    def checkpoint_callback(result: RunResult) -> None:
+        write_run_artifacts(result, out_dir=out_dir, strict_mode=mode, control_path=control_path)
+
     result = run_frontier_search(
         spec,
         initial_nodes,
         executor_adapter=executor_adapter,
         judge_adapter=judge_adapter,
         cache=cache,
+        control_callback=control_callback if control_path is not None else None,
+        checkpoint_callback=checkpoint_callback,
+        control_path=control_path,
     )
-    write_run_artifacts(result, out_dir=out_dir, strict_mode=mode)
+    write_run_artifacts(result, out_dir=out_dir, strict_mode=mode, control_path=control_path)
     return result

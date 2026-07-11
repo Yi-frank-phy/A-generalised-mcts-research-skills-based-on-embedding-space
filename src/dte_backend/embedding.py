@@ -11,7 +11,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 import os
+import ssl
+import time
 from typing import Protocol
+from urllib import error as urlerror
 from urllib import request as urlrequest
 
 from .text_features import hashed_embedding
@@ -71,8 +74,19 @@ class GeminiEmbedding2Provider:
         }
         data = json.dumps(payload).encode("utf-8")
         req = urlrequest.Request(url, data=data, headers={"Content-Type": "application/json"}, method="POST")
-        with urlrequest.urlopen(req, timeout=60) as resp:
-            parsed = json.loads(resp.read().decode("utf-8"))
+        last_error: Exception | None = None
+        for attempt in range(5):
+            try:
+                with urlrequest.urlopen(req, timeout=60) as resp:
+                    parsed = json.loads(resp.read().decode("utf-8"))
+                break
+            except (urlerror.URLError, TimeoutError, ssl.SSLError) as exc:
+                last_error = exc
+                if attempt == 4:
+                    raise
+                time.sleep(2**attempt)
+        else:
+            raise RuntimeError(f"Gemini embedding request failed: {last_error}")
         values = parsed.get("embedding", {}).get("values")
         if not isinstance(values, list):
             raise RuntimeError(f"Gemini embedding response missing embedding.values: {parsed}")

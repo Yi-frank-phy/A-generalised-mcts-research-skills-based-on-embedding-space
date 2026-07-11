@@ -1,4 +1,4 @@
 interface:
   display_name: "DTE Extreme Research"
-  short_description: "Run mandatory DTE research loops."
-  default_prompt: "Use $dte-extreme-research to run a structured DTE research loop for this problem."
+  short_description: "Run strict or app-orchestrated DTE research."
+  default_prompt: "Use $dte-extreme-research to run this problem through DTE; prefer app-orchestrated-real when low latency and visible progress matter."

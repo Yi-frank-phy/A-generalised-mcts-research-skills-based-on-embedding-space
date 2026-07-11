@@ -28,6 +28,9 @@ def render_frontier_markdown(result: RunResult) -> str:
 
 def render_entropy_trace_markdown(result: RunResult) -> str:
     lines = ["# DTE Entropy / Temperature Trace", ""]
+    if result.stop_reason:
+        lines.append(f"Run-level stop reason: `{result.stop_reason}`")
+        lines.append("")
     lines.append("| iteration | entropy | delta | normalized temperature | stop reason |")
     lines.append("|---:|---:|---:|---:|---|")
     for trace in result.traces:
@@ -64,9 +67,59 @@ def render_main_agent_status(result: RunResult) -> str:
         lines.append(f"- entropy delta: {'n/a' if state.entropy_delta is None else f'{state.entropy_delta:.4f}'}")
         lines.append(f"- normalized temperature: {state.normalized_temperature:.4f}")
         lines.append(f"- stop reason: {state.stop_reason or 'continue'}")
+    if result.stop_reason:
+        lines.append("")
+        lines.append("## Run-level stop")
+        lines.append(f"- stop reason: `{result.stop_reason}`")
+        if result.forced_synthesis is not None:
+            forced = result.forced_synthesis
+            lines.append(f"- requested by: `{forced.requested_by}`")
+            lines.append(f"- reason: {forced.reason}")
+            lines.append(f"- scope: `{forced.scope}`")
+            lines.append(
+                "- left unexplored frontier branches: "
+                + (", ".join(f"`{node_id}`" for node_id in forced.left_unexplored_node_ids) or "none")
+            )
     lines.append("")
     lines.append("## Main-agent role")
     lines.append("The main agent should summarize frontier state, entropy/temperature, expansion allocation, relation candidates, and any human question in chat. It should not bypass DTE synthesis.")
+    return "\n".join(lines) + "\n"
+
+
+def render_checkpoint_summary_markdown(result: RunResult) -> str:
+    """Render a compact DTE state summary for main-agent/user review."""
+
+    last = result.traces[-1] if result.traces else None
+    frontier = [n for n in result.nodes if n.status == "frontier"]
+    lines = ["# DTE Checkpoint Summary", ""]
+    lines.append(f"Problem: {result.spec.problem}")
+    lines.append(f"Goal: {result.spec.goal}")
+    if last is not None:
+        lines.append(f"Iteration: {last.iteration}")
+        if last.entropy_state is not None:
+            state = last.entropy_state
+            lines.append(f"Spatial entropy: {state.spatial_entropy:.4f}")
+            lines.append(f"Entropy delta: {'n/a' if state.entropy_delta is None else f'{state.entropy_delta:.4f}'}")
+            lines.append(f"Entropy stop reason: {state.stop_reason or 'continue'}")
+    if result.stop_reason:
+        lines.append(f"Run-level stop reason: {result.stop_reason}")
+    lines.append("")
+    lines.append("## Frontier")
+    lines.append("| id | score | uncertainty | ucb | budget | risks | claim |")
+    lines.append("|---|---:|---:|---:|---:|---|---|")
+    for node in frontier:
+        score = "n/a" if node.score is None else f"{node.score:.3f}"
+        uncertainty = "n/a" if node.uncertainty is None else f"{node.uncertainty:.3f}"
+        ucb = "n/a" if node.ucb_score is None else f"{node.ucb_score:.3f}"
+        risks = ", ".join(node.risks).replace("|", "\\|") if node.risks else "none"
+        claim = node.claim.replace("|", "\\|")
+        lines.append(
+            f"| `{node.node_id}` | {score} | {uncertainty} | {ucb} | "
+            f"{node.expansion_budget} | {risks} | {claim} |"
+        )
+    lines.append("")
+    lines.append("## Review guidance")
+    lines.append("Use this checkpoint to decide whether to continue, interrupt for synthesis, or narrow synthesis to specific node ids. Do not treat a forced synthesis as `entropy_plateau`.")
     return "\n".join(lines) + "\n"
 
 

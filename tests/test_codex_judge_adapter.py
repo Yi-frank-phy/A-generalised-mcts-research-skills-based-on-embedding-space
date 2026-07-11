@@ -1,9 +1,26 @@
 import json
 import subprocess
 import sys
+from pathlib import Path
 
 from dte_backend.models import SearchNode
 from dte_backend.prompt_builder import load_static_prefix
+from scripts import codex_judge_adapter
+
+
+def test_resolve_codex_executable_prefers_official_install(monkeypatch, tmp_path):
+    home = tmp_path / "home"
+    official = home / "AppData" / "Local" / "Programs" / "OpenAI" / "Codex" / "bin" / "codex.exe"
+    official.parent.mkdir(parents=True)
+    official.write_text("", encoding="utf-8")
+    windowsapps = tmp_path / "WindowsApps"
+    windowsapps.mkdir()
+    (windowsapps / "codex.exe").write_text("", encoding="utf-8")
+
+    monkeypatch.setattr(Path, "home", lambda: home)
+    monkeypatch.setenv("PATH", str(windowsapps))
+
+    assert codex_judge_adapter.resolve_codex_executable() == str(official)
 
 
 def test_codex_judge_adapter_invokes_configured_command_and_validates_json(tmp_path, monkeypatch):

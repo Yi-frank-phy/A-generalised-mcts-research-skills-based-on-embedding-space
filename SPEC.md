@@ -105,7 +105,7 @@ allocation_mass_per_iteration = 3
 max_children_per_iteration = 5
 ```
 
-Until the schema migration is implemented, the legacy field `total_child_budget` is interpreted as the soft allocation mass, not as a strict conserved child count.
+For temporary input compatibility, the legacy field `total_child_budget` is accepted only as a deprecated alias for `allocation_mass_per_iteration`. Canonical serialization and schemas use the new fields.
 
 If tentative allocation exceeds `H`, the controller must trim children by a deterministic marginal-priority rule derived from allocation mass and node priority. It must not trim by input order.
 

@@ -49,7 +49,8 @@
       "type": "object",
       "required": [
         "max_iterations",
-        "total_child_budget",
+        "allocation_mass_per_iteration",
+        "max_children_per_iteration",
         "max_research_iterations"
       ],
       "properties": {
@@ -58,10 +59,17 @@
           "minimum": 1,
           "maximum": 20
         },
-        "total_child_budget": {
+        "allocation_mass_per_iteration": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 50
+          "maximum": 50,
+          "default": 3
+        },
+        "max_children_per_iteration": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 50,
+          "default": 5
         },
         "max_research_iterations": {
           "type": "integer",

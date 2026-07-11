@@ -20,7 +20,8 @@
     "mode": "mandatory_frontier",
     "budget": {
       "max_iterations": 2,
-      "total_child_budget": 3,
+      "allocation_mass_per_iteration": 3,
+      "max_children_per_iteration": 5,
       "max_research_iterations": 1
     },
     "allow_self_organized_executor": true,

@@ -6,7 +6,8 @@ contract between Codex/Kimi/OpenClaw executor episodes and the DTE controller.
 
 from __future__ import annotations
 
-from typing import Literal
+from collections.abc import Mapping
+from typing import Any, Literal
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
 
@@ -20,11 +21,33 @@ class BudgetSpec(DTEBaseModel):
     """Hard budget limits for one DTE run."""
 
     max_iterations: int = Field(default=2, ge=1, le=20)
-    total_child_budget: int = Field(default=3, ge=1, le=50)
+    allocation_mass_per_iteration: int = Field(default=3, ge=1, le=50)
+    max_children_per_iteration: int = Field(default=5, ge=1, le=50)
     max_research_iterations: int = Field(default=1, ge=0, le=5)
     min_iterations_before_synthesis: int = Field(default=2, ge=1, le=20)
     entropy_change_threshold: float = Field(default=0.05, ge=0.0, le=1.0)
     t_max: float = Field(default=1.0, gt=0.0, le=10.0)
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_legacy_allocation_mass(cls, data: Any) -> Any:
+        """Accept the old budget name only as a deprecated input alias."""
+
+        if not isinstance(data, Mapping):
+            return data
+        values = dict(data)
+        legacy_name = "total_child_budget"
+        canonical_name = "allocation_mass_per_iteration"
+        if legacy_name not in values:
+            return values
+        if canonical_name in values and values[canonical_name] != values[legacy_name]:
+            raise ValueError(
+                "total_child_budget conflicts with allocation_mass_per_iteration; "
+                "provide equal values or only the canonical field"
+            )
+        values.setdefault(canonical_name, values[legacy_name])
+        del values[legacy_name]
+        return values
 
 
 class DTERunSpec(DTEBaseModel):

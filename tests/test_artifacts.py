@@ -9,7 +9,11 @@ from dte_backend.runner import run_frontier_search
 
 
 def test_codex_app_artifacts_render():
-    spec = DTERunSpec(problem="p", goal="g", budget=BudgetSpec(max_iterations=1, total_child_budget=1))
+    spec = DTERunSpec(
+        problem="p",
+        goal="g",
+        budget=BudgetSpec(max_iterations=1, allocation_mass_per_iteration=1),
+    )
     result = run_frontier_search(spec, [SearchNode(node_id="n", claim="claim")])
     assert "DTE Frontier" in render_frontier_markdown(result)
     assert "Entropy" in render_entropy_trace_markdown(result)
@@ -17,7 +21,11 @@ def test_codex_app_artifacts_render():
 
 
 def test_checkpoint_summary_mentions_forced_synthesis_state():
-    spec = DTERunSpec(problem="p", goal="g", budget=BudgetSpec(max_iterations=5, total_child_budget=1))
+    spec = DTERunSpec(
+        problem="p",
+        goal="g",
+        budget=BudgetSpec(max_iterations=5, allocation_mass_per_iteration=1),
+    )
     nodes = [SearchNode(node_id="n", claim="claim")]
 
     def control_callback(spec, nodes, traces):

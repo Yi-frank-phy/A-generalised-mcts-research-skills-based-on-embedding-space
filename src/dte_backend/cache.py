@@ -13,7 +13,7 @@ reformatted between runs.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 import hashlib
 import json
 
@@ -26,16 +26,53 @@ def _hash_payload(payload: dict[str, object]) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
-def embedding_cache_key(node: SearchNode) -> str:
-    """Hash only the stable semantic geometry payload."""
+@dataclass(frozen=True)
+class EmbeddingCacheNamespace:
+    """Configuration identity for one embedding contract."""
 
-    return _hash_payload(semantic_embedding_payload(node))
+    provider: str
+    model_snapshot: str
+    dimension: int
+    contract_version: str
 
 
-def judge_cache_key(node: SearchNode) -> str:
-    """Hash the evaluation payload used for Judge caching."""
+@dataclass(frozen=True)
+class JudgeCacheNamespace:
+    """Configuration identity for one observable Judge contract."""
 
-    return _hash_payload(evaluation_payload(node))
+    model_snapshot: str
+    reasoning_profile: str
+    rubric_version: str
+    prompt_version: str
+    output_schema_version: str
+
+
+DEFAULT_EMBEDDING_NAMESPACE = EmbeddingCacheNamespace("hash", "hash-v1", 3072, "embedding-v1")
+DEFAULT_JUDGE_NAMESPACE = JudgeCacheNamespace(
+    "heuristic-score-v1",
+    "deterministic",
+    "heuristic-rubric-v1",
+    "no-prompt",
+    "judge-result-v1",
+)
+
+
+def embedding_cache_key(
+    node: SearchNode,
+    namespace: EmbeddingCacheNamespace = DEFAULT_EMBEDDING_NAMESPACE,
+) -> str:
+    """Hash stable semantic geometry together with its provider contract."""
+
+    return _hash_payload({"namespace": asdict(namespace), "payload": semantic_embedding_payload(node)})
+
+
+def judge_cache_key(
+    node: SearchNode,
+    namespace: JudgeCacheNamespace = DEFAULT_JUDGE_NAMESPACE,
+) -> str:
+    """Hash evaluation content together with its Judge contract."""
+
+    return _hash_payload({"namespace": asdict(namespace), "payload": evaluation_payload(node)})
 
 
 def stable_node_payload(node: SearchNode) -> dict[str, object]:
@@ -76,8 +113,12 @@ class DTECache:
     judge_scores: dict[str, JudgeCacheEntry] = field(default_factory=dict)
     stats: CacheStats = field(default_factory=CacheStats)
 
-    def get_embedding(self, node: SearchNode) -> list[float] | None:
-        key = embedding_cache_key(node)
+    def get_embedding(
+        self,
+        node: SearchNode,
+        namespace: EmbeddingCacheNamespace = DEFAULT_EMBEDDING_NAMESPACE,
+    ) -> list[float] | None:
+        key = embedding_cache_key(node, namespace=namespace)
         value = self.embeddings.get(key)
         if value is None:
             self.stats.embedding_misses += 1
@@ -85,11 +126,20 @@ class DTECache:
         self.stats.embedding_hits += 1
         return list(value)
 
-    def set_embedding(self, node: SearchNode, embedding: list[float]) -> None:
-        self.embeddings[embedding_cache_key(node)] = list(embedding)
+    def set_embedding(
+        self,
+        node: SearchNode,
+        embedding: list[float],
+        namespace: EmbeddingCacheNamespace = DEFAULT_EMBEDDING_NAMESPACE,
+    ) -> None:
+        self.embeddings[embedding_cache_key(node, namespace=namespace)] = list(embedding)
 
-    def get_judge(self, node: SearchNode) -> JudgeCacheEntry | None:
-        key = judge_cache_key(node)
+    def get_judge(
+        self,
+        node: SearchNode,
+        namespace: JudgeCacheNamespace = DEFAULT_JUDGE_NAMESPACE,
+    ) -> JudgeCacheEntry | None:
+        key = judge_cache_key(node, namespace=namespace)
         value = self.judge_scores.get(key)
         if value is None:
             self.stats.judge_misses += 1
@@ -97,5 +147,14 @@ class DTECache:
         self.stats.judge_hits += 1
         return value
 
-    def set_judge(self, node: SearchNode, score: float, reasoning: str) -> None:
-        self.judge_scores[judge_cache_key(node)] = JudgeCacheEntry(score=score, reasoning=reasoning)
+    def set_judge(
+        self,
+        node: SearchNode,
+        score: float,
+        reasoning: str,
+        namespace: JudgeCacheNamespace = DEFAULT_JUDGE_NAMESPACE,
+    ) -> None:
+        self.judge_scores[judge_cache_key(node, namespace=namespace)] = JudgeCacheEntry(
+            score=score,
+            reasoning=reasoning,
+        )

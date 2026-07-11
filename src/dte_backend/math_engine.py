@@ -34,26 +34,30 @@ def calculate_ucb(
 
 def boltzmann_allocation(
     scores: Sequence[float],
-    total_budget: int,
+    allocation_mass_per_iteration: int,
+    max_children_per_iteration: int,
+    node_ids: Sequence[str],
     temperature: float = 1.0,
 ) -> list[int]:
     """Allocate integer expansion budgets with a Boltzmann rule.
 
     Args:
         scores: value scores in [0, 1].
-        total_budget: total number of children to allocate.
+        allocation_mass_per_iteration: continuous Boltzmann allocation mass.
+        max_children_per_iteration: hard cap on committed children.
+        node_ids: stable identifiers used for deterministic trimming.
         temperature: higher means more uniform; lower means greedier.
 
     Returns:
         A list of nonnegative integer expansion budgets.
     """
 
-    if total_budget <= 0:
+    if allocation_mass_per_iteration <= 0 or max_children_per_iteration <= 0:
         return [0 for _ in scores]
     if not scores:
         return []
-    if len(scores) == 1:
-        return [total_budget]
+    if len(scores) != len(node_ids):
+        raise ValueError("scores and node_ids must have equal length")
 
     values = np.asarray(scores, dtype=float)
     safe_t = max(float(temperature), 1e-10)
@@ -64,24 +68,56 @@ def boltzmann_allocation(
     weights = np.exp(log_weights - max_log_weight)
     probs = weights / np.sum(weights)
 
-    raw = probs * total_budget
-    allocation: list[int] = []
-    for quota in raw:
-        if quota < 1.0:
-            allocation.append(int(round(float(quota))))
-        else:
-            allocation.append(int(math.ceil(float(quota))))
+    quotas = probs * allocation_mass_per_iteration
+    return discretize_allocation(
+        quotas,
+        allocation_values=values,
+        node_ids=node_ids,
+        max_children_per_iteration=max_children_per_iteration,
+    )
 
-    # If rounding zeroed everything, guarantee at least one expansion for best node.
-    if sum(allocation) == 0:
-        allocation[int(np.argmax(values))] = 1
 
+def discretize_allocation(
+    quotas: Sequence[float],
+    allocation_values: Sequence[float],
+    node_ids: Sequence[str],
+    max_children_per_iteration: int,
+) -> list[int]:
+    """Discretize soft quotas, then enforce the deterministic hard child cap."""
+
+    if not (len(quotas) == len(allocation_values) == len(node_ids)):
+        raise ValueError("quotas, allocation_values, and node_ids must have equal length")
+    if max_children_per_iteration <= 0:
+        return [0 for _ in quotas]
+
+    tentative = [
+        int(math.floor(float(quota) + 0.5))
+        if float(quota) < 1.0
+        else int(math.ceil(float(quota)))
+        for quota in quotas
+    ]
+    if sum(tentative) <= max_children_per_iteration:
+        return tentative
+
+    slots: list[tuple[float, float, str, int, int]] = []
+    for index, (quota, value, node_id, count) in enumerate(
+        zip(quotas, allocation_values, node_ids, tentative)
+    ):
+        for child_index in range(1, count + 1):
+            marginal_support = float(quota) - (child_index - 1)
+            slots.append((marginal_support, float(value), str(node_id), child_index, index))
+
+    slots.sort(key=lambda slot: (-slot[0], -slot[1], slot[2], slot[3]))
+    allocation = [0 for _ in tentative]
+    for _, _, _, _, index in slots[:max_children_per_iteration]:
+        allocation[index] += 1
     return allocation
 
 
 def allocate_frontier(
     nodes: list[SearchNode],
-    total_budget: int,
+    allocation_mass_per_iteration: int,
+    max_children_per_iteration: int,
     tau: float = 1.0,
     c_explore: float = 1.0,
     temperature: float = 1.0,
@@ -110,7 +146,13 @@ def allocate_frontier(
     else:
         raise ValueError("allocation_metric must be 'ucb' or 'score'")
 
-    budgets = boltzmann_allocation(allocation_values, total_budget=total_budget, temperature=temperature)
+    budgets = boltzmann_allocation(
+        allocation_values,
+        allocation_mass_per_iteration=allocation_mass_per_iteration,
+        max_children_per_iteration=max_children_per_iteration,
+        node_ids=[node.node_id for node in frontier],
+        temperature=temperature,
+    )
 
     return [
         AllocationResult(

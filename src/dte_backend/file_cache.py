@@ -9,7 +9,16 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from .cache import DTECache, JudgeCacheEntry, embedding_cache_key, judge_cache_key
+from .cache import (
+    DEFAULT_EMBEDDING_NAMESPACE,
+    DEFAULT_JUDGE_NAMESPACE,
+    DTECache,
+    EmbeddingCacheNamespace,
+    JudgeCacheEntry,
+    JudgeCacheNamespace,
+    embedding_cache_key,
+    judge_cache_key,
+)
 from .models import SearchNode
 
 
@@ -29,8 +38,12 @@ class FileDTECache(DTECache):
     def save(self) -> None:
         self.path.write_text(json.dumps(self.data, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    def get_embedding(self, node: SearchNode) -> list[float] | None:
-        key = embedding_cache_key(node)
+    def get_embedding(
+        self,
+        node: SearchNode,
+        namespace: EmbeddingCacheNamespace = DEFAULT_EMBEDDING_NAMESPACE,
+    ) -> list[float] | None:
+        key = embedding_cache_key(node, namespace=namespace)
         value = self.data["vectors"].get(key)
         if value is None:
             self.stats.embedding_misses += 1
@@ -38,12 +51,21 @@ class FileDTECache(DTECache):
         self.stats.embedding_hits += 1
         return [float(v) for v in value]
 
-    def set_embedding(self, node: SearchNode, embedding: list[float]) -> None:
-        self.data["vectors"][embedding_cache_key(node)] = list(embedding)
+    def set_embedding(
+        self,
+        node: SearchNode,
+        embedding: list[float],
+        namespace: EmbeddingCacheNamespace = DEFAULT_EMBEDDING_NAMESPACE,
+    ) -> None:
+        self.data["vectors"][embedding_cache_key(node, namespace=namespace)] = list(embedding)
         self.save()
 
-    def get_judge(self, node: SearchNode) -> JudgeCacheEntry | None:
-        key = judge_cache_key(node)
+    def get_judge(
+        self,
+        node: SearchNode,
+        namespace: JudgeCacheNamespace = DEFAULT_JUDGE_NAMESPACE,
+    ) -> JudgeCacheEntry | None:
+        key = judge_cache_key(node, namespace=namespace)
         value = self.data["scores"].get(key)
         if value is None:
             self.stats.judge_misses += 1
@@ -51,6 +73,15 @@ class FileDTECache(DTECache):
         self.stats.judge_hits += 1
         return JudgeCacheEntry(score=float(value["score"]), reasoning=str(value["reasoning"]))
 
-    def set_judge(self, node: SearchNode, score: float, reasoning: str) -> None:
-        self.data["scores"][judge_cache_key(node)] = {"score": float(score), "reasoning": reasoning}
+    def set_judge(
+        self,
+        node: SearchNode,
+        score: float,
+        reasoning: str,
+        namespace: JudgeCacheNamespace = DEFAULT_JUDGE_NAMESPACE,
+    ) -> None:
+        self.data["scores"][judge_cache_key(node, namespace=namespace)] = {
+            "score": float(score),
+            "reasoning": reasoning,
+        }
         self.save()

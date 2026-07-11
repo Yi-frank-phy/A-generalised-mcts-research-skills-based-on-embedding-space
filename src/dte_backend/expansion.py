@@ -10,7 +10,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import Callable
 
-from .adapter import ExecutorAdapter, validate_adapter_output
+from .adapter import ExecutorAdapter, validate_search_node_output
 from .models import DTERunSpec, ExpansionRequest, SearchNode
 
 
@@ -68,7 +68,7 @@ def expand_node(
         children = executor_adapter.expand(request)  # type: ignore[union-attr]
     else:
         children = executor_adapter(request)
-    return validate_adapter_output(parent, count, {"nodes": [child.model_dump() for child in children]})
+    return validate_search_node_output(parent, count, children)
 
 
 def expand_frontier(

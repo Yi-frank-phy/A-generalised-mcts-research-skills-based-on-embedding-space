@@ -5,7 +5,11 @@ import pytest
 
 
 def test_run_frontier_search_minimal_loop():
-    spec = DTERunSpec(problem="test problem", goal="test goal", budget=BudgetSpec(max_iterations=1, total_child_budget=2))
+    spec = DTERunSpec(
+        problem="test problem",
+        goal="test goal",
+        budget=BudgetSpec(max_iterations=1, allocation_mass_per_iteration=2),
+    )
     nodes = [
         SearchNode(node_id="a", claim="route A", rationale="direct", confidence=0.6),
         SearchNode(node_id="b", claim="route B", rationale="counter", confidence=0.5),
@@ -18,14 +22,22 @@ def test_run_frontier_search_minimal_loop():
 
 
 def test_run_seeds_when_no_nodes():
-    spec = DTERunSpec(problem="seed me", goal="report", budget=BudgetSpec(max_iterations=1, total_child_budget=1))
+    spec = DTERunSpec(
+        problem="seed me",
+        goal="report",
+        budget=BudgetSpec(max_iterations=1, allocation_mass_per_iteration=1),
+    )
     result = run_frontier_search(spec)
     assert len(result.nodes) >= 3
     assert result.report.startswith("# DTE Prototype Report")
 
 
 def test_run_frontier_search_uses_supplied_judge_adapter():
-    spec = DTERunSpec(problem="judge me", goal="report", budget=BudgetSpec(max_iterations=1, total_child_budget=1))
+    spec = DTERunSpec(
+        problem="judge me",
+        goal="report",
+        budget=BudgetSpec(max_iterations=1, allocation_mass_per_iteration=1),
+    )
     nodes = [
         SearchNode(node_id="a", claim="strong route", confidence=0.1),
         SearchNode(node_id="b", claim="weak route", confidence=0.9),
@@ -44,7 +56,11 @@ def test_run_frontier_search_uses_supplied_judge_adapter():
 
 
 def test_run_frontier_search_validates_supplied_judge_adapter_output():
-    spec = DTERunSpec(problem="judge me", goal="report", budget=BudgetSpec(max_iterations=1, total_child_budget=1))
+    spec = DTERunSpec(
+        problem="judge me",
+        goal="report",
+        budget=BudgetSpec(max_iterations=1, allocation_mass_per_iteration=1),
+    )
     nodes = [SearchNode(node_id="a", claim="route")]
 
     def bad_judge_adapter(frontier):
@@ -58,7 +74,11 @@ def test_run_frontier_search_can_force_synthesis_after_checkpoint():
     spec = DTERunSpec(
         problem="force synthesis",
         goal="stop after reviewed checkpoint",
-        budget=BudgetSpec(max_iterations=5, total_child_budget=2, min_iterations_before_synthesis=5),
+        budget=BudgetSpec(
+            max_iterations=5,
+            allocation_mass_per_iteration=2,
+            min_iterations_before_synthesis=5,
+        ),
     )
     nodes = [
         SearchNode(node_id="a", claim="route A", confidence=0.7),

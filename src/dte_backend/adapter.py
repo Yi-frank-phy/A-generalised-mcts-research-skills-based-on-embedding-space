@@ -15,7 +15,14 @@ from .models import DTERunSpec, ExpansionRequest, SearchNode
 
 ExecutorAdapter = Callable[[ExpansionRequest], list[SearchNode]]
 
-_FORBIDDEN_PREFILLED_METRICS = {"score", "uncertainty", "ucb_score"}
+_FORBIDDEN_CONTROLLER_FIELDS = {
+    "local_embedding",
+    "judge_reasoning",
+    "score",
+    "uncertainty",
+    "ucb_score",
+    "expansion_budget",
+}
 
 
 def _extract_raw_nodes(data: Any) -> list[dict[str, Any]]:
@@ -48,11 +55,9 @@ def validate_adapter_output(parent: SearchNode, child_count: int, raw_output: st
 
     nodes: list[SearchNode] = []
     for raw in raw_nodes:
-        for metric in _FORBIDDEN_PREFILLED_METRICS:
-            if raw.get(metric) is not None:
-                raise ValueError(f"executor adapter may not pre-fill DTE metric: {metric}")
-        if int(raw.get("expansion_budget", 0)) != 0:
-            raise ValueError("executor adapter may not pre-fill expansion_budget")
+        for field_name in sorted(_FORBIDDEN_CONTROLLER_FIELDS):
+            if field_name in raw:
+                raise ValueError(f"executor adapter may not provide controller-owned field: {field_name}")
 
         node = SearchNode.model_validate(raw)
         if node.node_type == "synthesis" or node.status == "synthesis":
@@ -64,6 +69,25 @@ def validate_adapter_output(parent: SearchNode, child_count: int, raw_output: st
         nodes.append(node)
 
     return nodes
+
+
+def validate_search_node_output(
+    parent: SearchNode,
+    child_count: int,
+    children: list[SearchNode],
+) -> list[SearchNode]:
+    """Validate parsed children without confusing implicit defaults with output."""
+
+    raw_nodes: list[dict[str, Any]] = []
+    for child in children:
+        explicit_controller_fields = sorted(_FORBIDDEN_CONTROLLER_FIELDS.intersection(child.model_fields_set))
+        if explicit_controller_fields:
+            raise ValueError(
+                "executor adapter may not provide controller-owned field: "
+                f"{explicit_controller_fields[0]}"
+            )
+        raw_nodes.append(child.model_dump(exclude=_FORBIDDEN_CONTROLLER_FIELDS))
+    return validate_adapter_output(parent, child_count, {"nodes": raw_nodes})
 
 
 def run_subprocess_executor(command: Sequence[str], request: ExpansionRequest, timeout: float = 120.0) -> list[SearchNode]:

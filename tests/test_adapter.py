@@ -23,8 +23,36 @@ def test_validate_adapter_output_rejects_metric_prefill():
             ]
         }
     )
-    with pytest.raises(ValueError, match="pre-fill"):
+    with pytest.raises(ValueError, match="controller-owned field: score"):
         validate_adapter_output(parent, child_count=1, raw_output=raw)
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("local_embedding", None),
+        ("judge_reasoning", None),
+        ("score", None),
+        ("uncertainty", None),
+        ("ucb_score", None),
+        ("expansion_budget", 0),
+    ],
+)
+def test_validate_adapter_output_rejects_controller_owned_field_presence(field, value):
+    parent = SearchNode(node_id="p", claim="parent")
+    raw = {"nodes": [{"node_id": "child", "claim": "child", "parent_ids": ["p"], field: value}]}
+
+    with pytest.raises(ValueError, match=field):
+        validate_adapter_output(parent, child_count=1, raw_output=raw)
+
+
+def test_validate_adapter_output_still_accepts_legal_output():
+    parent = SearchNode(node_id="p", claim="parent")
+    raw = {"nodes": [{"node_id": "child", "claim": "child", "parent_ids": ["p"]}]}
+
+    children = validate_adapter_output(parent, child_count=1, raw_output=raw)
+
+    assert [child.node_id for child in children] == ["child"]
 
 
 def test_mock_subprocess_adapter_boundary():
@@ -39,7 +67,11 @@ def test_mock_subprocess_adapter_boundary():
 
 
 def test_runner_uses_external_executor_adapter():
-    spec = DTERunSpec(problem="p", goal="g", budget=BudgetSpec(max_iterations=1, total_child_budget=1))
+    spec = DTERunSpec(
+        problem="p",
+        goal="g",
+        budget=BudgetSpec(max_iterations=1, allocation_mass_per_iteration=1),
+    )
     nodes = [SearchNode(node_id="p", claim="parent", confidence=0.6)]
     adapter = build_subprocess_adapter([sys.executable, "examples/mock_executor_adapter.py"])
     result = run_frontier_search(spec, nodes, executor_adapter=adapter)

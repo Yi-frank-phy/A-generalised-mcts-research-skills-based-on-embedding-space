@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from .adapter import run_subprocess_executor, validate_adapter_output
+from .adapter import run_subprocess_executor, validate_search_node_output
 from .models import ExpansionRequest, SearchNode
 
 
@@ -24,10 +24,10 @@ def validate_executor_children(parent: SearchNode, count: int, children: list[Se
     """Validate already-parsed children through the canonical adapter rules."""
 
     try:
-        return validate_adapter_output(parent, count, {"nodes": [child.model_dump() for child in children]})
+        return validate_search_node_output(parent, count, children)
     except ValueError as exc:
         message = str(exc)
-        if "DTE metric" in message:
+        if any(field in message for field in ("local_embedding", "judge_reasoning", "score", "uncertainty", "ucb_score")):
             raise ValueError("Executor adapters cannot pre-fill Judge/Evolution metrics") from exc
         if "expansion_budget" in message:
             raise ValueError("Executor adapters cannot pre-fill expansion budgets") from exc

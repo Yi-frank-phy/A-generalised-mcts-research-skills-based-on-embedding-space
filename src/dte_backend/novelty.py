@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .cache import DTECache
+from .cache import DTECache, EmbeddingCacheNamespace
 from .context_envelope import semantic_embedding_text
 from .embedding import EmbeddingProvider, HashEmbeddingProvider
 from .kde import KDEState, compute_kde_state
@@ -23,13 +23,19 @@ def ensure_embeddings(
     """
 
     provider = provider or HashEmbeddingProvider(dim=dim)
+    namespace = EmbeddingCacheNamespace(
+        provider=provider.name,
+        model_snapshot=str(getattr(provider, "model", provider.name)),
+        dimension=provider.dim,
+        contract_version="embedding-v1",
+    )
     missing: list[tuple[SearchNode, str]] = []
     for node in nodes:
         if node.local_embedding:
             if cache is not None:
-                cache.set_embedding(node, node.local_embedding)
+                cache.set_embedding(node, node.local_embedding, namespace=namespace)
             continue
-        cached = cache.get_embedding(node) if cache is not None else None
+        cached = cache.get_embedding(node, namespace=namespace) if cache is not None else None
         if cached is not None:
             node.local_embedding = cached
             continue
@@ -40,7 +46,7 @@ def ensure_embeddings(
         for (node, _), vector in zip(missing, vectors):
             node.local_embedding = vector
             if cache is not None:
-                cache.set_embedding(node, vector)
+                cache.set_embedding(node, vector, namespace=namespace)
 
 
 def estimate_frontier_kde_state(

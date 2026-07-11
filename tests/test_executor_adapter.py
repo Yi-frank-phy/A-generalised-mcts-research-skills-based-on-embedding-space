@@ -60,12 +60,16 @@ def test_expand_frontier_uses_executor_adapter_and_closes_parent():
 def test_expand_frontier_validates_object_adapter_output_before_consuming():
     parent = SearchNode(node_id="p", claim="parent")
 
-    with pytest.raises(ValueError, match="DTE metric"):
+    with pytest.raises(ValueError, match="controller-owned field: score"):
         expand_frontier([parent], {"p": 1}, iteration=2, executor_adapter=BadObjectAdapter())
 
 
 def test_run_frontier_search_keeps_adapter_inside_mandatory_loop():
-    spec = DTERunSpec(problem="p", goal="g", budget=BudgetSpec(max_iterations=1, total_child_budget=1))
+    spec = DTERunSpec(
+        problem="p",
+        goal="g",
+        budget=BudgetSpec(max_iterations=1, allocation_mass_per_iteration=1),
+    )
     adapter = RecordingAdapter()
     result = run_frontier_search(spec, [SearchNode(node_id="p", claim="parent")], executor_adapter=adapter)
 

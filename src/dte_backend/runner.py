@@ -178,7 +178,8 @@ def run_frontier_search(
 
         allocations = allocate_frontier(
             nodes,
-            total_budget=spec.budget.total_child_budget,
+            allocation_mass_per_iteration=spec.budget.allocation_mass_per_iteration,
+            max_children_per_iteration=spec.budget.max_children_per_iteration,
             tau=max(entropy_state.normalized_temperature, 0.05),
             c_explore=1.0,
             temperature=max(entropy_state.effective_temperature, 0.05),
@@ -201,7 +202,8 @@ def run_frontier_search(
                 merges=merges,
                 notes=[
                     f"frontier={len(frontier)}",
-                    f"budget={spec.budget.total_child_budget}",
+                    f"allocation_mass={spec.budget.allocation_mass_per_iteration}",
+                    f"max_children={spec.budget.max_children_per_iteration}",
                     f"judge_cache_hits={cache.stats.judge_hits}",
                     f"embedding_cache_hits={cache.stats.embedding_hits}",
                     f"spatial_entropy={entropy_state.spatial_entropy:.4f}",

@@ -188,7 +188,7 @@ When the user has not specified a stricter or cheaper budget, use this balanced 
 }
 ```
 
-Keep `total_child_budget` explicit for the task. Do not set `min_iterations_before_synthesis` equal to `max_iterations`; the entropy stop condition must have room to operate before the hard cap.
+Keep `allocation_mass_per_iteration` and `max_children_per_iteration` explicit for the task. Do not set `min_iterations_before_synthesis` equal to `max_iterations`; the entropy stop condition must have room to operate before the hard cap.
 
 ## Prefix-cache rule for Codex backend LLM calls
 

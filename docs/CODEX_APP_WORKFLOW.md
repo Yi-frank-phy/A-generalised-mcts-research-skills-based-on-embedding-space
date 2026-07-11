@@ -8,7 +8,7 @@ Point Codex at this repository/skill and ask it to run DTE, not to redesign DTE:
 
 ```text
 Use the dte-extreme-research skill/backend in this repository.
-Read AGENTS.md, SKILL.md, CODEX_NEXT_STEPS.md, and this workflow document.
+Read AGENTS.md, SPEC.md, ARCHITECTURE.md, SKILL.md, and this workflow document; use issue #2 for the current implementation plan.
 For subagent prompts, place prompts/DTE_STATIC_PREFIX.md first, then the role prompt, then dynamic JSON last.
 Run the smoke workflow first.
 Then run the requested research task through DTE with cache enabled.

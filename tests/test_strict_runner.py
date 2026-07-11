@@ -79,7 +79,11 @@ def test_strict_run_reads_control_file_and_records_forced_synthesis(tmp_path):
     spec = DTERunSpec(
         problem="p",
         goal="g",
-        budget=BudgetSpec(max_iterations=5, total_child_budget=2, min_iterations_before_synthesis=5),
+        budget=BudgetSpec(
+            max_iterations=5,
+            allocation_mass_per_iteration=2,
+            min_iterations_before_synthesis=5,
+        ),
     )
     nodes = [
         SearchNode(node_id="a", claim="route A", confidence=0.7),
@@ -121,7 +125,11 @@ def test_strict_run_rejects_invalid_control_file(tmp_path):
     spec = DTERunSpec(
         problem="p",
         goal="g",
-        budget=BudgetSpec(max_iterations=5, total_child_budget=1, min_iterations_before_synthesis=5),
+        budget=BudgetSpec(
+            max_iterations=5,
+            allocation_mass_per_iteration=1,
+            min_iterations_before_synthesis=5,
+        ),
     )
     nodes = [SearchNode(node_id="a", claim="route A")]
     control_path = tmp_path / "strict_run_control.json"

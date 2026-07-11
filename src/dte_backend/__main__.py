@@ -54,7 +54,8 @@ def cmd_allocate(args: argparse.Namespace) -> None:
     nodes = load_json_list(args.path, SearchNode)
     allocations = allocate_frontier(
         nodes,
-        total_budget=args.budget,
+        allocation_mass_per_iteration=args.allocation_mass_per_iteration,
+        max_children_per_iteration=args.max_children_per_iteration,
         tau=args.tau,
         c_explore=args.c_explore,
         temperature=args.temperature,
@@ -202,7 +203,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     allocate = sub.add_parser("allocate", help="allocate expansion budget for frontier nodes")
     allocate.add_argument("path")
-    allocate.add_argument("--budget", type=int, default=3)
+    allocate.add_argument(
+        "--allocation-mass",
+        "--budget",
+        dest="allocation_mass_per_iteration",
+        type=int,
+        default=3,
+        help="soft allocation mass per iteration (--budget is deprecated)",
+    )
+    allocate.add_argument("--max-children", dest="max_children_per_iteration", type=int, default=5)
     allocate.add_argument("--tau", type=float, default=1.0)
     allocate.add_argument("--c-explore", type=float, default=1.0)
     allocate.add_argument("--temperature", type=float, default=1.0)

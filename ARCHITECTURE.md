@@ -1,57 +1,394 @@
-# Architecture Decision: DTE-as-a-Skill/Backend
+# Architecture Decision: DTE as the Outer Epistemic Controller
 
 ## Decision
 
-Package the existing DTE architecture as a skill-backed backend for Codex-level extreme research.
+DTE remains the mandatory outer controller for frontier search, graph state, uncertainty-aware allocation, Relation handling, stopping, and final synthesis.
 
-Do not redesign the DTE architecture per task.
+Native model runtimes such as Codex/Ultra may self-organize subagents inside one bounded role episode, but they are not the root controller of the DTE run.
 
-## Rationale
-
-DTE's advantage is not ordinary multi-agent scaffolding. Its advantage is the information-theoretic/evolutionary selection layer:
+The architecture is therefore:
 
 ```text
-Judge value → density/novelty → UCB → Boltzmann expansion → synthesis
+DTE controls cross-episode recursion.
+Native model runtimes control bounded within-episode orchestration.
+Guard scripts and a single commit boundary separate the two.
 ```
 
-This layer requires evaluation calls. Skipping evaluation removes the main advantage. Therefore optimization should focus on batching, caching, and role output compression, not removing the search engine.
+This decision replaces two weaker alternatives:
 
-## Key distinction
+1. DTE explicitly micromanages every physical subagent call.
+2. Ultra is the root agent and merely receives a prompt asking it to follow DTE.
+
+The first duplicates native orchestration and creates unnecessary I/O. The second allows the root model to bypass Judge, allocation, Relation, or synthesis. Neither is acceptable as the target architecture.
+
+## Why DTE remains necessary
+
+DTE is designed for research settings without a stable, automatically verifiable reward. Its advantage is the information-theoretic and evolutionary selection layer:
 
 ```text
-Logical role separation != physical model-call separation
+Judge potential
+  -> embedding geometry / density / novelty
+  -> uncertainty-aware UCB
+  -> Boltzmann expansion
+  -> Relation / discriminator handling
+  -> DTE-selected synthesis
 ```
 
-Roles remain separate to reduce bias. Calls can be batched or macro-stepped to reduce IO.
+AlphaEvolve-style evaluators may provide local evidence for verifiable subclaims, but they do not replace this outer search process. DTE searches over strategies, explanations, conjectures, representations, and research directions whose value cannot usually be reduced to a deterministic scalar score.
 
-## Kimi Agent Swarm lessons to absorb
+## Key distinctions
 
-Learn:
+### Logical roles are not physical model calls
 
-- isolated subagent contexts;
-- structured summaries returned to orchestrator;
-- parallel execution at the frontier;
-- critical-path reduction;
-- coach/player separation.
+```text
+logical role separation != one model call per role
+```
 
-Do not copy:
+Judge, Executor, Relation, Seed, and Synthesis remain separate contracts to reduce self-justification and preserve graph semantics. One native runtime may execute different role episodes at different times, and one Executor episode may internally use multiple subagents.
 
-- fully role-free orchestration;
-- direct final answers from subagents;
-- massive unbounded horizontal expansion.
+### DTE children are not subagent threads
+
+A DTE child is a committed graph node. A Codex subagent is an implementation detail inside an episode.
+
+For example, DTE may grant:
+
+```text
+max_returned_children = 2
+```
+
+while the native runtime internally uses five workers for literature search, counterexample generation, coding, critique, and aggregation. The episode may still commit at most two validated SearchNodes.
+
+### DTE owns vertical search; native orchestration owns horizontal work
+
+```text
+DTE graph depth      = cross-iteration epistemic recursion
+native subagent work = bounded parallelism inside one episode
+```
+
+The default native delegation depth should remain shallow. Recursive fan-out inside an episode duplicates the DTE search tree and makes budget semantics difficult to interpret.
+
+## Control ownership
+
+| Component | Owns | Must not own |
+|---|---|---|
+| DTE backend | graph revision, frontier, embedding, entropy, UCB, allocation, merge application, stop conditions, synthesis checkpoint | open-ended model research |
+| Seed episode | generation of materially distinct initial candidate nodes | ranking, allocation, winner selection, final answer |
+| Executor episode | bounded research/coding/proof work on one assigned parent | graph mutation, Judge metrics, global budget, synthesis |
+| Judge episode | observable potential score, reasoning, risks, evidence gaps | child generation, allocation, embedding, graph mutation |
+| Relation episode | equivalent/complementary/conflict/independent classification and discriminator proposal | direct merge or deletion |
+| Synthesis episode | report generation from a fixed selected checkpoint | continued exploration or hidden graph mutation |
+| Optional evaluator | reproducible evidence about a locally verifiable claim | global branch value or DTE stopping |
+
+## Runtime architecture
+
+```text
+User / RunSpec
+      |
+      v
+DTE Driver / Controller
+      |
+      +-- SeedEpisodeRequest --------------------------+
+      |                                                |
+      +-- JudgeEpisodeRequest -------------------------|-- Native model runtime
+      |                                                |     may self-organize
+      +-- ExecutorEpisodeRequest ----------------------|     internal subagents
+      |                                                |
+      +-- RelationEpisodeRequest ----------------------|
+      |                                                |
+      +-- SynthesisEpisodeRequest ---------------------+
+      |
+      v
+Role-specific guard and schema validation
+      |
+      v
+Single DTE commit boundary
+      |
+      v
+Graph revision / next controller step
+```
+
+The native runtime may choose whether to delegate internally. DTE specifies obligations, permissions, output limits, and accepted schemas; it does not prescribe `explorer + critic + verifier` as a mandatory topology.
+
+## AgentEpisode contract
+
+The stable integration boundary is transport-neutral:
+
+```text
+AgentEpisodeAdapter:
+    EpisodeRequest -> EpisodeResult
+```
+
+Possible transports include:
+
+```text
+subprocess / codex exec
+Codex SDK
+Codex App Server
+hosted native runtime
+future provider-specific adapters
+```
+
+Transport choice must not change DTE graph semantics.
+
+A request includes:
+
+```text
+episode_id
+role
+input_graph_revision
+selected node revisions
+max_returned_children where applicable
+objective
+coverage requirements
+allowed output types
+schema version
+runtime limits
+optional tool and write-root policy
+```
+
+A result includes:
+
+```text
+episode_id
+input_graph_revision
+status
+structured role output
+runtime reference / diagnostics
+output hash
+```
+
+Thread IDs, response IDs, compaction summaries, and descendant-agent traces are recovery or observability metadata. They are not accepted as graph facts.
+
+## Anti-bypass boundary
+
+A native model episode is treated as an untrusted producer, regardless of model capability.
+
+It must not receive write access to:
+
+```text
+DTE graph storage
+controller state
+embedding or Judge caches
+allocation functions
+merge application
+stop conditions
+final report commitment
+```
+
+The only successful output path is a validated structured result.
+
+```text
+natural-language answer       -> rejected as graph input
+Markdown report from Executor -> rejected as graph input
+stale parent revision         -> rejected
+controller fields pre-filled  -> rejected
+too many returned children    -> rejected
+timeout or failed episode     -> graph unchanged
+valid structured output       -> eligible for backend commit
+```
+
+The current adapter validation is the basis of this firewall and should be extended with graph-revision checks, ID collision checks, and one atomic commit function.
+
+A prompt or Skill instruction alone is not a hard boundary. In the final architecture, DTE Driver calls the native runtime; the native runtime does not decide whether to call DTE.
+
+## Seed architecture and the Explorer role
+
+A mandatory physical Explorer is removed from the target real-run architecture.
+
+Exploration remains necessary, but it becomes the responsibility of a bounded Seed Episode:
+
+```text
+problem + constraints
+      |
+      v
+Seed Episode
+  - may self-organize internal exploration
+  - returns 3-5 materially distinct, unranked SearchNodes
+      |
+      v
+DTE validation / duplicate checks
+      |
+      v
+Judge + geometry + allocation
+```
+
+The fixed direct/counterexample/formalism/merge seed templates remain useful for smoke tests, deterministic fallback, and regression testing.
+
+Removing the physical Explorer does not permit the native runtime to collapse alternatives or return one preferred answer. Seed obligations include diversity, boundary cases, uncertainty preservation, and no self-ranking.
+
+## Relation architecture
+
+Relation is semantic graph maintenance, not an evaluator.
+
+Candidate selection may use:
+
+- exact normalized duplicates;
+- embedding proximity;
+- near-tied Judge/UCB values;
+- explicit contradictory claims;
+- entropy plateau.
+
+Relation output is one of:
+
+```text
+equivalent
+complementary
+conflict
+independent
+```
+
+The backend converts validated output into a merge proposal or discriminator task. The model never applies the merge directly.
+
+Relation is not a universal synchronous barrier. Exact duplicates may be handled immediately; ordinary proximity creates optional or high-priority tasks. Only unresolved material conflicts among branches selected for synthesis must be resolved or explicitly disclosed.
+
+## Budget architecture
+
+DTE separates two budget layers.
+
+### Epistemic budget
+
+Owned by DTE:
+
+```text
+iterations
+soft allocation mass per iteration
+hard committed-child cap per iteration
+frontier selection
+DTE graph expansion
+```
+
+The default intended semantics are:
+
+```text
+allocation_mass_per_iteration = 3
+max_children_per_iteration = 5
+```
+
+The continuous Boltzmann mass is discretized into children and may realize more than three children, but never more than the hard cap.
+
+### Compute budget
+
+Bounded by run policy and used by the native runtime:
+
+```text
+internal subagent count
+parallel threads
+model and reasoning profile
+retries
+tool calls
+wall-clock or token envelope
+```
+
+Compute budget cannot create additional DTE graph children beyond the episode grant.
+
+## Reliability infrastructure
+
+Reliability work is justified to support long-running, resumable, self-organized episodes, not to turn DTE into an evaluator-first optimizer.
+
+Minimum target infrastructure:
+
+- graph revision and parent revision;
+- stale-result rejection;
+- role-specific schemas and guards;
+- one atomic commit boundary;
+- minimal JSONL or SQLite event log;
+- transport-neutral episode adapter;
+- cache namespaces that include provider/model/rubric/prompt/schema identity;
+- command-adapter fallback during SDK/App Server rollout.
+
+Initial event types may include:
+
+```text
+run_created
+episode_granted
+episode_started
+episode_completed
+episode_failed
+output_rejected
+nodes_committed
+judge_recorded
+allocation_recorded
+synthesis_completed
+```
+
+Do not begin with a large workflow framework, cryptographic event sourcing, or a distributed scheduler.
+
+## Optional evaluators
+
+Symbolic, numerical, executable, bibliographic, or formal evaluators are useful when a local subclaim is verifiable.
+
+They provide evidence, not the global objective:
+
+```text
+DTE research potential != evaluator correctness metric
+```
+
+DTE should preserve separate concepts for research potential, evidence strength, and epistemic uncertainty. Easy-to-measure branches must not automatically dominate high-potential conceptual branches.
+
+## Migration plan
+
+### Phase 0: specification correction
+
+- clarify soft allocation mass versus hard child cap;
+- use round-half-up semantics where intended;
+- restore Relation as a conditional semantic oracle;
+- state explicitly that evaluator evidence is optional;
+- state that DTE, not Ultra, is the root controller.
+
+### Phase 1: hard episode boundary
+
+- add graph/parent revisions to requests and results;
+- reject stale results and ID collisions;
+- centralize graph mutation in one commit function;
+- add minimal episode event logging;
+- preserve the existing command adapter as fallback.
+
+### Phase 2: native runtime integration
+
+- add SDK/App Server or hosted episode adapters;
+- allow native self-organized subagents inside Seed and Executor episodes;
+- keep Judge, Relation, and Synthesis logically isolated;
+- treat descendant-thread inspection as optional observability, not correctness.
+
+### Phase 3: controlled comparison
+
+Compare:
+
+```text
+legacy explicit role calls
+native guided episode orchestration
+more autonomous native episode orchestration
+```
+
+Measure latency, quota, branch diversity, duplicate rate, counterexample coverage, schema violations, attempted bypasses, Judge survival, and human-rated research value.
+
+## Explicit non-goals
+
+Do not:
+
+- make Ultra the root controller and rely on prompt compliance;
+- make DTE explicitly schedule every physical subagent;
+- require a fixed physical Explorer;
+- merge Seed, Executor, Judge, Relation, and Synthesis into one implicit context;
+- turn optional evaluators into the global reward;
+- expose writable controller state to model episodes;
+- accept direct final answers from Seed or Executor;
+- depend permanently on `codex exec`;
+- enable unbounded recursive subagent fan-out.
 
 ## Final architecture
 
 ```text
-DTE Skill
-  ↓
-Fixed role protocol
-  ↓
-Python math backend
-  ↓
-Executor adapters: Codex / Kimi / OpenClaw / LangChain
-  ↓
-structured node outputs
-  ↓
-DTE synthesis
+DTE Driver
+  -> owns graph, epistemic budget, geometry, Relation, stopping, synthesis
+  -> issues bounded role episode contracts
+
+Native Codex/Ultra runtime
+  -> owns internal within-episode orchestration
+  -> may use self-organized subagents
+  -> returns only bounded structured outputs
+
+Guards + commit boundary
+  -> validate the protocol boundary
+  -> prevent model episodes from bypassing DTE
 ```

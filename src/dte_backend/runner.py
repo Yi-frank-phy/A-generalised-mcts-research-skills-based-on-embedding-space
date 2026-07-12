@@ -8,7 +8,7 @@ from pathlib import Path
 
 from .adapter import ExecutorAdapter
 from .cache import DTECache
-from .control import record_forced_synthesis
+from .control import authorize_synthesis_control, record_forced_synthesis
 from .embedding import get_embedding_provider
 from .entropy import EntropyState, evaluate_entropy_state
 from .expansion import expand_frontier
@@ -122,18 +122,25 @@ def run_frontier_search(
             )
         )
 
-    def maybe_force_synthesis(current_nodes: list[SearchNode]) -> bool:
+    def maybe_apply_operator_command(current_nodes: list[SearchNode]) -> bool:
         nonlocal forced_synthesis, stop_reason
         if control_callback is None:
             return False
         request = control_callback(spec, current_nodes, traces)
         if request is None:
             return False
+        authorize_synthesis_control(spec, request)
         forced_synthesis = record_forced_synthesis(request, current_nodes, control_path=control_path)
         stop_reason = forced_synthesis.stop_reason
         if traces:
-            traces[-1].notes.append(f"forced_synthesis_trigger={stop_reason}")
+            traces[-1].notes.append(f"operator_command_trigger={stop_reason}")
         return True
+
+    def checkpoint_then_maybe_apply_operator_command(current_nodes: list[SearchNode]) -> bool:
+        """Persist a complete node-level commit before polling operator control."""
+
+        maybe_checkpoint(current_nodes)
+        return maybe_apply_operator_command(current_nodes)
 
     for iteration in range(1, spec.budget.max_iterations + 1):
         frontier = [node for node in nodes if node.status == "frontier"]
@@ -220,7 +227,7 @@ def run_frontier_search(
             traces[-1].notes.append(f"auto_synthesis_trigger={entropy_state.stop_reason}")
             stop_reason = entropy_state.stop_reason
             break
-        if maybe_force_synthesis(nodes):
+        if maybe_apply_operator_command(nodes):
             maybe_checkpoint(nodes)
             break
 
@@ -231,7 +238,7 @@ def run_frontier_search(
             iteration=iteration,
             spec=spec,
             executor_adapter=executor_adapter,
-            after_node_expanded=maybe_force_synthesis,
+            after_node_expanded=checkpoint_then_maybe_apply_operator_command,
         )
         maybe_checkpoint(nodes)
         if forced_synthesis is not None:

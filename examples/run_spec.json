@@ -7,6 +7,9 @@
     "Do not bypass the DTE Judge/Evolution/Synthesis protocol."
   ],
   "mode": "mandatory_frontier",
+  "operator_policy": {
+    "main_agent_may_request_synthesis": true
+  },
   "embedding_provider": "hash",
   "embedding_dimension": 3072,
   "budget": {

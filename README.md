@@ -7,17 +7,15 @@
 Core idea:
 
 ```text
-Codex / agent executor
+User / validated RunSpec
         ↓
-Skill protocol
+DTE backend (only outer controller)
         ↓
-Fixed role-isolated research flow
+bounded role adapters → validated structured outputs
         ↓
-Python math backend: Judge scores → entropy/novelty → UCB → Boltzmann expansion
+Judge scores → entropy/novelty → UCB → Boltzmann expansion
         ↓
-structured SearchNode outputs
-        ↓
-validated synthesis report
+DTE-selected synthesis checkpoint → validated report
 ```
 
 This repository is intentionally **not** a new general agent architecture. It is a packaging layer around a fixed research workflow:
@@ -81,7 +79,11 @@ python -m dte_backend strict-run \
 
 `scripts/codex_judge_adapter.py` calls `codex exec` by default. Set `DTE_CODEX_JUDGE_COMMAND` only when you need to override the Codex command used by that adapter.
 
-`strict-run` writes progress artifacts and watches `<out-dir>/strict_run_control.json` by default. Creating that JSON file can request synthesis after the current safe task finishes; the resulting stop reason is recorded as `main_agent_requested_synthesis` or `user_interrupted_for_synthesis`, never as `entropy_plateau`.
+The only production real-run entrypoint is `python -m dte_backend strict-run --mode real`. `strict-run` writes observable progress artifacts and polls `<out-dir>/strict_run_control.json` by default; `--control-path` may select another operator-controlled location. The main agent is an authorized operator proxy under `OperatorPolicy`: it may issue a validated synthesis request, but it cannot directly mutate controller-owned state or bypass safe-point and schema validation.
+
+`requested_by` identifies the actor for audit; `operator_policy` determines whether that actor is authorized. The JSON field does not authenticate the writer. The current protocol trusts the root/operator execution context that invokes the backend; stronger actor/capability isolation belongs to a future external DTE Driver.
+
+The real-mode controller and provider wiring are tested with a deterministic embedding-provider stub. Live Gemini API connectivity is intentionally not exercised because no production credential is available. This is not a merge blocker. CI still verifies the Gemini provider wiring, 3072-dimensional policy, cache namespace, and fail-closed behavior when neither supported API-key environment variable is present.
 
 ## License
 

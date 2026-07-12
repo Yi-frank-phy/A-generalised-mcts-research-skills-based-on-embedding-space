@@ -82,7 +82,11 @@ def render_main_agent_status(result: RunResult) -> str:
             )
     lines.append("")
     lines.append("## Main-agent role")
-    lines.append("The main agent should summarize frontier state, entropy/temperature, expansion allocation, relation candidates, and any human question in chat. It should not bypass DTE synthesis.")
+    lines.append(
+        "Observation is not authority by itself. Delegation plus OperatorPolicy plus a validated controller command "
+        "grants the main agent authority to request synthesis. It cannot directly allocate, mutate controller-owned "
+        "state, or commit synthesis."
+    )
     return "\n".join(lines) + "\n"
 
 
@@ -119,7 +123,10 @@ def render_checkpoint_summary_markdown(result: RunResult) -> str:
         )
     lines.append("")
     lines.append("## Review guidance")
-    lines.append("Use this checkpoint to decide whether to continue, interrupt for synthesis, or narrow synthesis to specific node ids. Do not treat a forced synthesis as `entropy_plateau`.")
+    lines.append(
+        "Observation is not authority by itself. A user or an authorized main-agent operator proxy may issue a validated "
+        "synthesis request; OperatorPolicy determines main-agent authorization. Neither stop reason is `entropy_plateau`."
+    )
     return "\n".join(lines) + "\n"
 
 
@@ -162,7 +169,10 @@ def render_relation_candidates_markdown(result: RunResult) -> str:
     if not pairs:
         lines.append("No relation-oracle candidate pairs were selected in this run.")
         return "\n".join(lines) + "\n"
-    lines.append("The main agent may send these pairs to the Relation Oracle. Validate the result before converting it into a MergeProposal or discriminator task.")
+    lines.append(
+        "The DTE backend may dispatch these pairs through a bounded Relation adapter. Validate the result before "
+        "converting it into a MergeProposal or discriminator task."
+    )
     lines.append("")
     lines.append("| priority | node ids | reason |")
     lines.append("|---:|---|---|")

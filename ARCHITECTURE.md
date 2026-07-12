@@ -191,6 +191,15 @@ The current adapter validation is the basis of this firewall and should be exten
 
 A prompt or Skill instruction alone is not a hard boundary. In the final architecture, DTE Driver calls the native runtime; the native runtime does not decide whether to call DTE.
 
+### Observability is not authority
+
+Checkpoint and status artifacts are read-only observations. Observation alone does not grant permission to advance the state machine, allocate work, stop the search, or commit synthesis. A model-facing root agent is an operator proxy: when the validated `DTERunSpec.operator_policy` permits it, the agent may submit a controller command requesting synthesis. The Python backend validates the command, waits for a safe point, applies the state transition, and records the actor and reason. The main agent never directly mutates controller-owned state or represents its request as algorithmic convergence.
+
+```text
+observation != authority
+delegation + policy + validated command = authority
+```
+
 ## Seed architecture and the Explorer role
 
 A mandatory physical Explorer is removed from the target real-run architecture.

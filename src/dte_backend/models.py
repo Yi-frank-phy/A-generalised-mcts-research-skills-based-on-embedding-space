@@ -50,6 +50,12 @@ class BudgetSpec(DTEBaseModel):
         return values
 
 
+class OperatorPolicy(DTEBaseModel):
+    """Narrow delegation policy for privileged controller commands."""
+
+    main_agent_may_request_synthesis: bool = True
+
+
 class DTERunSpec(DTEBaseModel):
     """Top-level run specification.
 
@@ -62,6 +68,7 @@ class DTERunSpec(DTEBaseModel):
     constraints: list[str] = Field(default_factory=list)
     mode: Literal["mandatory_frontier"] = "mandatory_frontier"
     budget: BudgetSpec = Field(default_factory=BudgetSpec)
+    operator_policy: OperatorPolicy = Field(default_factory=OperatorPolicy)
     allow_self_organized_executor: bool = True
     require_final_synthesis: bool = True
     embedding_provider: Literal["hash", "gemini-embedding-2"] = "hash"
@@ -128,10 +135,10 @@ class MergeProposal(DTEBaseModel):
 
 
 class SynthesisControlRequest(DTEBaseModel):
-    """Operator/main-agent request to stop after the current safe task."""
+    """Validated operator request to stop after the current safe task."""
 
     action: Literal["force_synthesis_after_current_task"]
-    requested_by: Literal["main_agent", "user"]
+    requested_by: Literal["user", "main_agent"]
     reason: str = Field(min_length=1)
     scope: Literal["all", "node_ids"] = "all"
     node_ids: list[str] = Field(default_factory=list)
@@ -146,10 +153,10 @@ class SynthesisControlRequest(DTEBaseModel):
 
 
 class ForcedSynthesisRecord(DTEBaseModel):
-    """Recorded stop metadata for a forced synthesis."""
+    """Recorded audit metadata for an authorized synthesis request."""
 
-    stop_reason: Literal["main_agent_requested_synthesis", "user_interrupted_for_synthesis"]
-    requested_by: Literal["main_agent", "user"]
+    stop_reason: Literal["user_interrupted_for_synthesis", "main_agent_requested_synthesis"]
+    requested_by: Literal["user", "main_agent"]
     reason: str
     scope: Literal["all", "node_ids"]
     node_ids: list[str] = Field(default_factory=list)

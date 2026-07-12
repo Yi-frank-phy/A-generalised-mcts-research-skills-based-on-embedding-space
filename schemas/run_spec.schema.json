@@ -26,6 +26,19 @@
     "mode": {
       "const": "mandatory_frontier"
     },
+    "operator_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "main_agent_may_request_synthesis": {
+          "type": "boolean",
+          "default": true
+        }
+      },
+      "default": {
+        "main_agent_may_request_synthesis": true
+      }
+    },
     "allow_self_organized_executor": {
       "type": "boolean"
     },

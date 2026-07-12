@@ -137,17 +137,19 @@ def write_run_artifacts(
     out_dir: str | Path,
     strict_mode: StrictMode,
     control_path: str | Path | None = None,
+    final: bool = True,
 ) -> None:
-    """Write all Codex-app-facing artifacts for one run."""
+    """Write observable state, and write the synthesis report only at finalization."""
 
     out_path = Path(out_dir)
     out_path.mkdir(parents=True, exist_ok=True)
-    report = result.report or synthesize_report(
-        result.spec,
-        result.nodes,
-        forced_synthesis=result.forced_synthesis,
-    )
-    (out_path / "report.md").write_text(report, encoding="utf-8")
+    if final:
+        report = result.report or synthesize_report(
+            result.spec,
+            result.nodes,
+            forced_synthesis=result.forced_synthesis,
+        )
+        (out_path / "report.md").write_text(report, encoding="utf-8")
     (out_path / "nodes.json").write_text(
         json.dumps([n.model_dump() for n in result.nodes], ensure_ascii=False, indent=2),
         encoding="utf-8",
@@ -189,6 +191,7 @@ def write_run_artifacts(
                 "embedding_dimension": result.spec.embedding_dimension,
                 "nodes": len(result.nodes),
                 "traces": len(result.traces),
+                "finalized": final,
                 "stop_reason": result.stop_reason,
                 "forced_synthesis": None
                 if result.forced_synthesis is None
@@ -233,7 +236,13 @@ def strict_run(
         return load_synthesis_control(control_path, nodes)
 
     def checkpoint_callback(result: RunResult) -> None:
-        write_run_artifacts(result, out_dir=out_dir, strict_mode=mode, control_path=control_path)
+        write_run_artifacts(
+            result,
+            out_dir=out_dir,
+            strict_mode=mode,
+            control_path=control_path,
+            final=False,
+        )
 
     result = run_frontier_search(
         spec,
@@ -245,5 +254,5 @@ def strict_run(
         checkpoint_callback=checkpoint_callback,
         control_path=control_path,
     )
-    write_run_artifacts(result, out_dir=out_dir, strict_mode=mode, control_path=control_path)
+    write_run_artifacts(result, out_dir=out_dir, strict_mode=mode, control_path=control_path, final=True)
     return result

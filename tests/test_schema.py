@@ -55,6 +55,8 @@ def test_checked_in_run_schema_and_example_use_canonical_budget_fields():
     assert example_budget["allocation_mass_per_iteration"] == 3
     assert example_budget["max_children_per_iteration"] == 5
     assert "total_child_budget" not in example_budget
+    assert schema["properties"]["operator_policy"]["properties"]["main_agent_may_request_synthesis"]["default"] is True
+    assert example["operator_policy"]["main_agent_may_request_synthesis"] is True
 
 
 def test_search_node_validates():
@@ -62,33 +64,83 @@ def test_search_node_validates():
     assert node.status == "frontier"
 
 
-def test_synthesis_control_request_validates_scope():
+def test_operator_policy_allows_main_agent_synthesis_by_default():
+    spec = DTERunSpec(problem="p", goal="g")
+    assert spec.operator_policy.main_agent_may_request_synthesis is True
+
+
+def test_synthesis_control_request_accepts_user():
     request = SynthesisControlRequest(
         action="force_synthesis_after_current_task",
-        requested_by="main_agent",
+        requested_by="user",
         reason="reviewed checkpoint",
         scope="node_ids",
         node_ids=["n1"],
     )
     assert request.node_ids == ["n1"]
+    assert request.requested_by == "user"
+
+
+def test_synthesis_control_request_accepts_main_agent_for_policy_authorization():
+    request = SynthesisControlRequest(
+        action="force_synthesis_after_current_task",
+        requested_by="main_agent",
+        reason="operator proxy requested synthesis",
+    )
+    assert request.requested_by == "main_agent"
+
+
+def test_synthesis_control_request_rejects_unknown_requester():
+    with pytest.raises(ValidationError, match="requested_by"):
+        SynthesisControlRequest(
+            action="force_synthesis_after_current_task",
+            requested_by="executor",
+            reason="unauthorized actor",
+        )
 
 
 def test_synthesis_control_request_rejects_missing_node_ids():
     with pytest.raises(ValidationError, match="requires at least one node_id"):
         SynthesisControlRequest(
             action="force_synthesis_after_current_task",
-            requested_by="main_agent",
+            requested_by="user",
             reason="reviewed checkpoint",
             scope="node_ids",
         )
 
 
-def test_synthesis_control_request_rejects_extra_fields():
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("score", 1.0),
+        ("embedding", [0.1]),
+        ("local_embedding", [0.1]),
+        ("uncertainty", 0.1),
+        ("ucb", 1.0),
+        ("ucb_score", 1.0),
+        ("allocation", 1),
+        ("expansion_budget", 1),
+        ("graph_status", "closed"),
+        ("status", "closed"),
+        ("synthesis_result", "bypass"),
+    ],
+)
+def test_synthesis_control_request_rejects_controller_owned_fields(field, value):
     with pytest.raises(ValidationError):
         SynthesisControlRequest(
             action="force_synthesis_after_current_task",
-            requested_by="user",
+            requested_by="main_agent",
             reason="reviewed checkpoint",
             scope="all",
-            score=1.0,
+            **{field: value},
         )
+
+
+def test_checked_in_synthesis_control_schema_and_example_match_operator_contract():
+    root = Path(__file__).resolve().parents[1]
+    schema = json.loads((root / "schemas" / "synthesis_control_request.schema.json").read_text(encoding="utf-8"))
+    example = json.loads((root / "examples" / "synthesis_control_request.json").read_text(encoding="utf-8"))
+
+    assert schema == SynthesisControlRequest.model_json_schema()
+    assert schema["properties"]["requested_by"]["enum"] == ["user", "main_agent"]
+    assert example["requested_by"] == "main_agent"

@@ -42,3 +42,5 @@ def test_checkpoint_summary_mentions_forced_synthesis_state():
     assert "DTE Checkpoint Summary" in summary
     assert "Run-level stop reason: user_interrupted_for_synthesis" in summary
     assert "user_interrupted_for_synthesis" in status
+    assert "Observation is not authority" in summary
+    assert "validated controller command" in status

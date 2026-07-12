@@ -60,7 +60,7 @@ def test_run_command_rejects_spec_that_fails_dte_guard(tmp_path):
     assert "Gemini geometry must use embedding_dimension=3072" in completed.stderr
 
 
-def test_strict_run_accepts_control_path(tmp_path):
+def test_strict_run_accepts_authorized_main_agent_control_path(tmp_path):
     out_dir = tmp_path / "strict-control"
     control_path = tmp_path / "strict_run_control.json"
     control_path.write_text(
@@ -99,6 +99,8 @@ def test_strict_run_accepts_control_path(tmp_path):
     assert completed.returncode == 0, completed.stderr
     status = json.loads((out_dir / "strict_run_status.json").read_text(encoding="utf-8"))
     assert status["stop_reason"] == "main_agent_requested_synthesis"
+    assert status["forced_synthesis"]["requested_by"] == "main_agent"
+    assert status["finalized"] is True
     assert status["control_path"] == str(control_path)
     assert (out_dir / "checkpoint_summary.md").exists()
 
@@ -118,7 +120,6 @@ def test_strict_run_uses_default_control_path_in_out_dir(tmp_path):
         ),
         encoding="utf-8",
     )
-
     completed = subprocess.run(
         [
             sys.executable,
@@ -141,4 +142,18 @@ def test_strict_run_uses_default_control_path_in_out_dir(tmp_path):
     assert completed.returncode == 0, completed.stderr
     status = json.loads((out_dir / "strict_run_status.json").read_text(encoding="utf-8"))
     assert status["stop_reason"] == "user_interrupted_for_synthesis"
+    assert status["finalized"] is True
     assert status["control_path"] == str(control_path)
+
+
+def test_strict_run_help_describes_default_operator_control_path():
+    completed = subprocess.run(
+        [sys.executable, "-m", "dte_backend", "strict-run", "--help"],
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert "optional operator control JSON path" in completed.stdout
+    assert "defaults to <out-" in completed.stdout
+    assert "dir>/strict_run_control.json" in completed.stdout

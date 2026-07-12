@@ -387,15 +387,24 @@ Relation workflow:
 5. Let the backend, not the model, decide whether and when to apply the proposal.
 6. For `independent`, preserve the branches and continue normal Judge/EvolutionController allocation.
 
-## 15. Strict-run control and forced synthesis
+## 15. Strict-run operator synthesis command
 
-`strict-run` may be supervised by the main agent/user through a narrow control file. This is not a new oracle and does not replace Judge, EvolutionController, allocation, relation, or synthesis.
+`strict-run` accepts a narrow synthesis request through a control file. This is a privileged controller command, not a new oracle, and it does not replace Judge, EvolutionController, allocation, relation, or synthesis. A model-facing main agent is a user-delegated operator proxy and may submit this command when the validated `DTERunSpec.operator_policy.main_agent_may_request_synthesis` is true. It may not directly mutate controller-owned state.
 
-Default CLI location:
+```text
+observation != authority
+delegation + policy + validated command = authority
+```
+
+Reading `checkpoint_summary.md`, `main_agent_status.md`, `frontier.md`, `entropy_trace.md`, or `strict_run_status.json` does not grant state-machine permission by itself.
+
+The CLI polls this path by default:
 
 ```text
 <out-dir>/strict_run_control.json
 ```
+
+`--control-path <operator-controlled-path>` may select another location. `requested_by` identifies the actor for audit; `operator_policy` determines whether that actor is authorized. The JSON field is not cryptographic proof of identity and does not create authority by itself. This phase trusts the root/operator execution context invoking the backend. A future external DTE Driver must provide stronger actor/capability isolation.
 
 Supported control object:
 
@@ -403,7 +412,7 @@ Supported control object:
 {
   "action": "force_synthesis_after_current_task",
   "requested_by": "main_agent",
-  "reason": "checkpoint has enough coverage",
+  "reason": "operator proxy found sufficient coverage for synthesis",
   "scope": "all"
 }
 ```
@@ -413,23 +422,22 @@ For targeted synthesis:
 ```json
 {
   "action": "force_synthesis_after_current_task",
-  "requested_by": "user",
+  "requested_by": "main_agent",
   "reason": "focus on the no-go branch",
   "scope": "node_ids",
   "node_ids": ["n1"]
 }
 ```
 
-The backend reads this file only at safe points: after a Judge/EvolutionController/allocation checkpoint and after each expanded node has finished. It must not interrupt a running oracle subprocess. Invalid control JSON fails the run instead of being ignored.
+The backend reads this file only at safe points: after a complete Judge/EvolutionController/allocation checkpoint and after an already-started node expansion has returned complete, validated Executor output. It validates the schema and `OperatorPolicy` before applying the command. It must not interrupt a running oracle subprocess, consume partial output, skip validation, or commit a partial expansion. Invalid or unauthorized control JSON fails closed instead of being ignored or remapped.
 
-Forced synthesis must be recorded as one of:
+Main-agent-requested synthesis must be recorded as:
 
 ```text
 main_agent_requested_synthesis
-user_interrupted_for_synthesis
 ```
 
-It must not be recorded as `entropy_plateau`. Artifacts must include the control path, stop reason, selected scope, and frontier branches left unexplored.
+Direct user requests record `user_interrupted_for_synthesis`. Main-agent requests record `main_agent_requested_synthesis`. Neither may be recorded as `entropy_plateau` or algorithmic convergence. Artifacts must include the control path, actor, audit reason, selected scope, and frontier branches left unexplored. Normal search ends only because the DTE controller reaches its stopping policy or because it accepts an authorized synthesis command at a safe boundary.
 
 ## 16. Explicit non-goals
 

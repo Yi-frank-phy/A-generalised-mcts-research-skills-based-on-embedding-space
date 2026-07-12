@@ -29,13 +29,12 @@ def test_production_docs_expose_only_strict_real_entrypoint():
     assert "main agent is the orchestrator" not in skill.casefold()
 
 
-def test_active_runtime_has_no_main_agent_synthesis_path():
+def test_active_runtime_routes_main_agent_authority_through_operator_policy():
     active = _joined(ACTIVE_RUNTIME_DOCS + ACTIVE_RUNTIME_CODE)
 
-    assert "main_agent_requested_synthesis" not in active
-    assert 'requested_by="main_agent"' not in active
-    assert '"requested_by": "main_agent"' not in active
-    assert "requested_by: main_agent" not in active
+    assert "main_agent_requested_synthesis" in active
+    assert "main_agent_may_request_synthesis" in active
+    assert "main-agent synthesis request is disabled by operator_policy" in active
 
 
 def test_runtime_instructions_state_observation_is_not_authority():
@@ -44,3 +43,5 @@ def test_runtime_instructions_state_observation_is_not_authority():
 
     assert "observation != authority" in skill
     assert "observation != authority" in workflow
+    assert "delegation + policy + validated command = authority" in skill
+    assert "delegation + policy + validated command = authority" in workflow

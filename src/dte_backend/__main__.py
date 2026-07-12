@@ -18,6 +18,7 @@ from .artifacts import (
     render_relation_candidates_markdown,
     render_role_audit_markdown,
 )
+from .control import OperatorAuthorizationError
 from .file_cache import FileDTECache
 from .guards import enforce_run_spec_guard
 from .math_engine import allocate_frontier
@@ -188,7 +189,7 @@ def cmd_strict_run(args: argparse.Namespace) -> None:
             executor_command=args.executor_command,
             control_path=control_path,
         )
-    except StrictRunError as exc:
+    except (StrictRunError, OperatorAuthorizationError) as exc:
         raise SystemExit(f"strict-run failed: {exc}") from exc
     print(json.dumps({"out_dir": str(args.out_dir), "mode": args.mode, "nodes": len(result.nodes), "traces": len(result.traces)}, ensure_ascii=False))
 
@@ -265,7 +266,7 @@ def build_parser() -> argparse.ArgumentParser:
     strict.add_argument("--judge-timeout", type=float, default=360.0)
     strict.add_argument(
         "--control-path",
-        help="optional user-authored interruption JSON; defaults to <out-dir>/strict_run_control.json",
+        help="optional operator control JSON path; defaults to <out-dir>/strict_run_control.json",
     )
     strict.set_defaults(func=cmd_strict_run)
 

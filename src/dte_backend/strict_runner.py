@@ -232,7 +232,7 @@ def strict_run(
         os.environ["DTE_ALLOW_MOCK_ADAPTER"] = "1"
 
     cache = FileDTECache(cache_path) if cache_path else None
-    def user_control_callback(spec: DTERunSpec, nodes: list[SearchNode], traces):
+    def control_callback(spec: DTERunSpec, nodes: list[SearchNode], traces):
         return load_synthesis_control(control_path, nodes)
 
     def checkpoint_callback(result: RunResult) -> None:
@@ -250,7 +250,7 @@ def strict_run(
         executor_adapter=executor_adapter,
         judge_adapter=judge_adapter,
         cache=cache,
-        user_control_callback=user_control_callback if control_path is not None else None,
+        control_callback=control_callback if control_path is not None else None,
         checkpoint_callback=checkpoint_callback,
         control_path=control_path,
     )

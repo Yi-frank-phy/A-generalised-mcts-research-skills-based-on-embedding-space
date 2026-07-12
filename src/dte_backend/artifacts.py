@@ -83,8 +83,9 @@ def render_main_agent_status(result: RunResult) -> str:
     lines.append("")
     lines.append("## Main-agent role")
     lines.append(
-        "Observation is not authority. The main agent may summarize frontier state and may recommend whether to "
-        "continue, but it cannot advance, stop, allocate, mutate, or commit synthesis for the DTE run."
+        "Observation is not authority by itself. Delegation plus OperatorPolicy plus a validated controller command "
+        "grants the main agent authority to request synthesis. It cannot directly allocate, mutate controller-owned "
+        "state, or commit synthesis."
     )
     return "\n".join(lines) + "\n"
 
@@ -123,8 +124,8 @@ def render_checkpoint_summary_markdown(result: RunResult) -> str:
     lines.append("")
     lines.append("## Review guidance")
     lines.append(
-        "Observation is not authority. The main agent may recommend a next step; only the user may explicitly "
-        "interrupt for synthesis or narrow synthesis to specific node ids. A user interruption is not `entropy_plateau`."
+        "Observation is not authority by itself. A user or an authorized main-agent operator proxy may issue a validated "
+        "synthesis request; OperatorPolicy determines main-agent authorization. Neither stop reason is `entropy_plateau`."
     )
     return "\n".join(lines) + "\n"
 

@@ -193,10 +193,11 @@ A prompt or Skill instruction alone is not a hard boundary. In the final archite
 
 ### Observability is not authority
 
-Checkpoint and status artifacts are read-only observations. A model-facing root agent may summarize them and recommend a user decision, but it cannot convert observation into permission to advance the state machine, allocate work, stop the search, or commit synthesis. Only the DTE controller's own stopping policy or an explicit user interruption may end normal search.
+Checkpoint and status artifacts are read-only observations. Observation alone does not grant permission to advance the state machine, allocate work, stop the search, or commit synthesis. A model-facing root agent is an operator proxy: when the validated `DTERunSpec.operator_policy` permits it, the agent may submit a controller command requesting synthesis. The Python backend validates the command, waits for a safe point, applies the state transition, and records the actor and reason. The main agent never directly mutates controller-owned state or represents its request as algorithmic convergence.
 
 ```text
 observation != authority
+delegation + policy + validated command = authority
 ```
 
 ## Seed architecture and the Explorer role

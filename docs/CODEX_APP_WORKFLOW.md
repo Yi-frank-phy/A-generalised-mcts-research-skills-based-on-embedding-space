@@ -17,7 +17,7 @@ python -m dte_backend strict-run \
 
 Equivalently, the production command is `python -m dte_backend strict-run --mode real` with the required arguments.
 
-The model-facing main agent must not manually replay Judge → controller → Executor → Relation, hand-compute controller fields, decide stopping, mutate the graph, or commit synthesis. Standalone role commands and guards are development interfaces, not a second production mode.
+The model-facing main agent must not manually replay Judge → controller → Executor → Relation, hand-compute controller fields, claim algorithmic convergence, mutate the graph, or commit synthesis. It may supervise the production backend and issue a synthesis request through its validated command interface when `OperatorPolicy` authorizes it. Standalone role commands and guards are development interfaces, not a second production mode.
 
 The future transport-neutral `AgentEpisodeAdapter: EpisodeRequest -> EpisodeResult` direction remains defined in `SPEC.md` and `ARCHITECTURE.md`. Until that backend-enforced boundary exists, a manual model-orchestrated harness is not a production DTE mode, has no hard anti-bypass guarantee, and must not be selected by default or emit `strict-run --mode real` truth labels.
 
@@ -26,11 +26,11 @@ The future transport-neutral `AgentEpisodeAdapter: EpisodeRequest -> EpisodeResu
 | Component | May do | Must not do |
 |---|---|---|
 | DTE backend | validate the RunSpec; own graph state; invoke bounded adapters; compute Judge/controller state, entropy, UCB, and allocation; apply accepted mutations; stop; select and commit synthesis | delegate outer-control decisions to a model-facing agent |
-| Main agent | start the user-selected backend command; display and summarize artifacts; ask user questions; recommend continuation or interruption | advance the state machine outside the backend; allocate; stop; write a control request; commit synthesis |
+| Main agent | start and supervise the backend; display and summarize artifacts; ask user questions; submit a synthesis request when `OperatorPolicy` authorizes it | advance the state machine outside the backend; allocate; directly mutate graph/controller state; claim convergence; commit synthesis |
 | Judge adapter | return validated observable scores, reasoning, and risks | allocate, mutate, expand, or stop |
 | Executor adapter | return validated child SearchNodes for a granted expansion | pre-fill controller fields, mutate graph storage, or synthesize |
 | Relation adapter | return a validated semantic classification or discriminator proposal | apply a merge or delete graph state |
-| User | explicitly request interruption after reviewing observable state | impersonate controller convergence; an interruption remains distinct from entropy convergence |
+| User | delegate operator authority and explicitly request interruption after reviewing observable state | impersonate controller convergence; an interruption remains distinct from entropy convergence |
 
 ## Smoke and dry-run checks
 
@@ -69,29 +69,37 @@ During a run, Codex may read and summarize:
 observation != authority
 ```
 
-Reading these files does not let the main agent continue, allocate, stop, or synthesize. It may recommend that the user continue or interrupt, but only the user may submit an interruption request.
+Reading these files does not itself grant authority. The main agent may supervise or issue a synthesis request only as an operator proxy authorized by the validated `OperatorPolicy`, and only the backend may advance, allocate, apply graph changes, stop, or commit synthesis.
 
-## Explicit user interruption
+Authority is not derived from observation. It is granted by the validated run policy and exercised through backend commands:
 
-`strict-run` watches `<out-dir>/strict_run_control.json` by default; `--control-path` may select another path. After the user explicitly requests synthesis, the user-authored object is:
+```text
+delegation + policy + validated command = authority
+```
+
+## Validated synthesis request
+
+`strict-run` polls `<out-dir>/strict_run_control.json` by default; `--control-path` may select another operator-controlled path. An authorized main-agent request is:
 
 ```json
 {
   "action": "force_synthesis_after_current_task",
-  "requested_by": "user",
-  "reason": "user reviewed the latest checkpoint and requested synthesis",
+  "requested_by": "main_agent",
+  "reason": "operator proxy found sufficient coverage for synthesis",
   "scope": "all"
 }
 ```
 
 Targeted synthesis uses `"scope": "node_ids"` and a non-empty `"node_ids"` list. The checked-in contract is `schemas/synthesis_control_request.schema.json`, with `examples/synthesis_control_request.json` as the canonical example.
 
+`requested_by` identifies the actor for audit; `operator_policy` determines authorization. The JSON field does not prove who wrote it or create authority by itself. This phase trusts the root/operator execution context invoking the backend. Stronger actor/capability isolation belongs to a future external DTE Driver.
+
 The backend polls only at safe points:
 
 1. after a complete Judge/EvolutionController/allocation checkpoint; or
 2. after an already-started node expansion has returned complete Executor output, passed validation, and committed that node-level result.
 
-It does not kill an in-flight oracle, consume partial output, skip an Executor guard, or interpret the interruption as convergence. The stop reason is `user_interrupted_for_synthesis`, never `entropy_plateau`. Legacy model-root requests are invalid and fail closed; they are not remapped to `user`.
+It does not kill an in-flight oracle, consume partial output, skip an Executor guard, or interpret the request as convergence. A direct user request records `user_interrupted_for_synthesis`; an authorized main-agent request records `main_agent_requested_synthesis`. Neither is `entropy_plateau`, and the two actors are never silently remapped.
 
 ## Cache discipline
 

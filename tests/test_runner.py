@@ -74,6 +74,7 @@ def test_run_frontier_search_accepts_user_interruption_after_checkpoint():
     spec = DTERunSpec(
         problem="force synthesis",
         goal="stop after reviewed checkpoint",
+        operator_policy={"main_agent_may_request_synthesis": False},
         budget=BudgetSpec(
             max_iterations=5,
             allocation_mass_per_iteration=2,
@@ -85,7 +86,7 @@ def test_run_frontier_search_accepts_user_interruption_after_checkpoint():
         SearchNode(node_id="b", claim="route B", confidence=0.6),
     ]
 
-    def user_control_callback(spec, nodes, traces):
+    def control_callback(spec, nodes, traces):
         return SynthesisControlRequest(
             action="force_synthesis_after_current_task",
             requested_by="user",
@@ -94,7 +95,7 @@ def test_run_frontier_search_accepts_user_interruption_after_checkpoint():
             node_ids=["a"],
         )
 
-    result = run_frontier_search(spec, nodes, user_control_callback=user_control_callback)
+    result = run_frontier_search(spec, nodes, control_callback=control_callback)
 
     assert len(result.traces) == 1
     assert result.stop_reason == "user_interrupted_for_synthesis"
@@ -106,6 +107,34 @@ def test_run_frontier_search_accepts_user_interruption_after_checkpoint():
     assert "user_interrupted_for_synthesis" in result.report
     assert "left unexplored" in result.report
     assert "- stop reason: `entropy_plateau`" not in result.report
+
+
+def test_run_frontier_search_accepts_authorized_main_agent_request():
+    spec = DTERunSpec(
+        problem="operator request",
+        goal="stop through backend policy",
+        budget=BudgetSpec(max_iterations=3, allocation_mass_per_iteration=1, min_iterations_before_synthesis=3),
+    )
+
+    def control_callback(spec, nodes, traces):
+        return SynthesisControlRequest(
+            action="force_synthesis_after_current_task",
+            requested_by="main_agent",
+            reason="operator proxy found sufficient coverage",
+        )
+
+    result = run_frontier_search(
+        spec,
+        [SearchNode(node_id="a", claim="route A")],
+        control_callback=control_callback,
+    )
+
+    assert result.stop_reason == "main_agent_requested_synthesis"
+    assert result.forced_synthesis is not None
+    assert result.forced_synthesis.requested_by == "main_agent"
+    assert "Main-Agent-Requested Synthesis" in result.report
+    assert "main_agent_requested_synthesis" in result.report
+    assert "`entropy_plateau` convergence or algorithmic convergence" in result.report
 
 
 def test_controller_natural_entropy_stop_is_unchanged():

@@ -53,9 +53,19 @@ def synthesize_report(
         )
 
     if forced_synthesis is not None:
+        section_title = (
+            "User-Interrupted Synthesis"
+            if forced_synthesis.requested_by == "user"
+            else "Main-Agent-Requested Synthesis"
+        )
+        actor_description = (
+            "an explicit user interruption"
+            if forced_synthesis.requested_by == "user"
+            else "an authorized main-agent controller command"
+        )
         lines.extend(
             [
-                "## User-Interrupted Synthesis",
+                f"## {section_title}",
                 f"- stop reason: `{forced_synthesis.stop_reason}`",
                 f"- requested by: `{forced_synthesis.requested_by}`",
                 f"- reason: {forced_synthesis.reason}",
@@ -69,8 +79,9 @@ def synthesize_report(
                 ),
                 "- control path: " + (f"`{forced_synthesis.control_path}`" if forced_synthesis.control_path else "n/a"),
                 "",
-                "This was an explicit user interruption honored by the backend at a safe boundary, not natural "
-                "`entropy_plateau` convergence. Any listed frontier branches remain unresolved risk.",
+                f"This was {actor_description} honored by the backend at a safe boundary, not natural "
+                "`entropy_plateau` convergence or algorithmic convergence. Any listed frontier branches remain "
+                "unresolved risk.",
                 "",
             ]
         )

@@ -104,36 +104,39 @@ Real mode refuses mock adapters, missing Judge oracle, hash geometry, missing ca
 
 The adapter calls `codex exec` by default and asks the model to return Judge JSON only. Set `DTE_CODEX_JUDGE_COMMAND` only to override the Codex command; the override must read the prompt from stdin and print JSON that passes the Judge output validator.
 
-### Strict-run visibility and user interruption
+### Strict-run visibility and operator commands
 
-For strict-run sessions, the main agent may monitor DTE artifacts and recommend synthesis when further expansion appears to have low expected value. It cannot stop the run, write a control request, or commit synthesis. Only the user may explicitly interrupt.
+For strict-run sessions, the main agent is a user-delegated operator proxy. It may monitor DTE artifacts, start and supervise the backend, and submit a synthesis request through the validated control interface when `DTERunSpec.operator_policy.main_agent_may_request_synthesis` is true. It may not directly mutate graph state, controller fields, allocation, stop metadata, or the synthesis result.
 
 ```text
 observation != authority
+delegation + policy + validated command = authority
 ```
 
 Base any recommendation on DTE-generated task state, not on a free-form hunch. Use the latest available `checkpoint_summary.md` / task summary, including the run objective, iteration, entropy state, frontier claims, Judge scores, uncertainty, UCB/allocation, risks, relation candidates, and unresolved human questions.
 
-`strict-run` watches `<out-dir>/strict_run_control.json` by default; `--control-path <path>` may override it. When the user explicitly requests synthesis, record that request as:
+`strict-run` polls `<out-dir>/strict_run_control.json` by default; an external caller/operator may select another location with `--control-path <path>`. A request by the main-agent operator proxy is:
 
 ```json
 {
   "action": "force_synthesis_after_current_task",
-  "requested_by": "user",
-  "reason": "user reviewed the checkpoint and requested synthesis",
+  "requested_by": "main_agent",
+  "reason": "checkpoint has sufficient coverage for synthesis",
   "scope": "all"
 }
 ```
 
 For targeted synthesis, use `"scope": "node_ids"` with a non-empty `"node_ids"` list. The backend reads this file only after the complete current Judge/controller checkpoint or after an already-started node expansion has returned complete output and passed Executor validation. It does not kill an in-flight oracle subprocess or consume partial output.
 
-If the user interrupts before natural entropy convergence, record it honestly:
+`requested_by` identifies the actor for audit; `operator_policy` determines whether that actor is authorized. The field does not authenticate the writer or create permission by itself. The current protocol trusts the root/operator execution context invoking the backend; stronger actor/capability isolation is deferred to a future external DTE Driver.
+
+Record the two actors distinctly:
 
 ```json
-"stop_reason": "user_interrupted_for_synthesis"
+"stop_reason": "main_agent_requested_synthesis"
 ```
 
-Do not relabel this as `entropy_plateau`. The final report must cite the checkpoint/task summary used for the decision and state which frontier branches may have been left unexplored.
+or `user_interrupted_for_synthesis` for a direct user request. Neither is `entropy_plateau` or algorithmic convergence. The final report must cite the checkpoint/task summary used for the decision and state which frontier branches may have been left unexplored.
 
 ## Real Gemini geometry
 
@@ -299,7 +302,7 @@ The final answer/report must include:
 - confidence levels;
 - unresolved risks;
 - reproducibility metadata: run spec, budget, strict mode (`real`, `smoke`, or `dry-run`), embedding provider, Judge/Executor/Relation backends, cache path, and whether any dry-run fallback was used.
-- if the user interrupted before natural convergence: the stop reason, the checkpoint/task summary used, and the frontier branches left unexplored.
+- if an operator requested synthesis before natural convergence: the actor-specific stop reason, the checkpoint/task summary used, and the frontier branches left unexplored.
 
 ## Prohibited behavior
 
@@ -308,8 +311,8 @@ The final answer/report must include:
 - Do not return a final answer directly from an executor episode.
 - Do not silently skip Judge or controller stages.
 - Do not let a subagent decide entropy convergence, UCB, allocation, or the stop condition.
-- Do not call user-interrupted synthesis `entropy_plateau`.
-- Do not let the main agent write a user control request or infer authority from checkpoint access.
+- Do not call user- or main-agent-requested synthesis `entropy_plateau`.
+- Do not let the main agent infer authority from checkpoint access or directly mutate controller-owned state; require `OperatorPolicy` and a validated controller command.
 - Do not invent a separate HIL workflow when the user is already supervising the main agent through chat interruption.
 - Do not replace role isolation with a single all-in-one agent.
 - Do not modify UCB to be cost-aware by default.

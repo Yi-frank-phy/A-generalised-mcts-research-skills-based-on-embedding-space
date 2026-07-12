@@ -1,6 +1,6 @@
 {
   "action": "force_synthesis_after_current_task",
-  "requested_by": "user",
-  "reason": "user reviewed the latest checkpoint and requested synthesis",
+  "requested_by": "main_agent",
+  "reason": "operator proxy found sufficient coverage for synthesis",
   "scope": "all"
 }

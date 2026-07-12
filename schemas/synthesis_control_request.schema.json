@@ -1,6 +1,6 @@
 {
   "additionalProperties": false,
-  "description": "Explicit user request to stop after the current safe task.",
+  "description": "Validated operator request to stop after the current safe task.",
   "properties": {
     "action": {
       "const": "force_synthesis_after_current_task",
@@ -8,7 +8,10 @@
       "type": "string"
     },
     "requested_by": {
-      "const": "user",
+      "enum": [
+        "user",
+        "main_agent"
+      ],
       "title": "Requested By",
       "type": "string"
     },

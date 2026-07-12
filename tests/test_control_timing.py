@@ -17,7 +17,7 @@ def _spec() -> DTERunSpec:
     )
 
 
-def test_user_control_is_polled_only_after_checkpoint_and_complete_expansion():
+def test_operator_control_is_polled_only_after_checkpoint_and_complete_expansion():
     events: list[str] = []
 
     class RecordingExecutor:
@@ -32,7 +32,7 @@ def test_user_control_is_polled_only_after_checkpoint_and_complete_expansion():
 
     polls = 0
 
-    def user_control_callback(spec, nodes, traces):
+    def control_callback(spec, nodes, traces):
         nonlocal polls
         polls += 1
         if polls == 1:
@@ -44,8 +44,8 @@ def test_user_control_is_polled_only_after_checkpoint_and_complete_expansion():
         assert next(node for node in nodes if node.node_id == "parent").status == "closed"
         return SynthesisControlRequest(
             action="force_synthesis_after_current_task",
-            requested_by="user",
-            reason="user interrupted after the completed node expansion",
+            requested_by="main_agent",
+            reason="operator requested synthesis after the completed node expansion",
         )
 
     result = run_frontier_search(
@@ -53,7 +53,7 @@ def test_user_control_is_polled_only_after_checkpoint_and_complete_expansion():
         [SearchNode(node_id="parent", claim="parent")],
         executor_adapter=RecordingExecutor(),
         checkpoint_callback=checkpoint_callback,
-        user_control_callback=user_control_callback,
+        control_callback=control_callback,
     )
 
     assert events == [
@@ -65,7 +65,7 @@ def test_user_control_is_polled_only_after_checkpoint_and_complete_expansion():
         "control_after_validated_expansion",
         "controller_checkpoint",
     ]
-    assert result.stop_reason == "user_interrupted_for_synthesis"
+    assert result.stop_reason == "main_agent_requested_synthesis"
     assert {node.node_id for node in result.nodes} == {"parent", "child"}
 
 
@@ -83,7 +83,7 @@ def test_pending_control_does_not_bypass_executor_validation():
                 )
             ]
 
-    def user_control_callback(spec, nodes, traces):
+    def control_callback(spec, nodes, traces):
         nonlocal polls
         polls += 1
         if polls == 1:
@@ -100,7 +100,7 @@ def test_pending_control_does_not_bypass_executor_validation():
             _spec(),
             [parent],
             executor_adapter=InvalidExecutor(),
-            user_control_callback=user_control_callback,
+            control_callback=control_callback,
         )
 
     assert polls == 1
@@ -118,7 +118,7 @@ def test_invalid_control_after_valid_expansion_preserves_only_the_completed_chec
     def checkpoint_callback(result):
         snapshots.append({node.node_id: node.status for node in result.nodes})
 
-    def invalid_user_control_callback(spec, nodes, traces):
+    def invalid_control_callback(spec, nodes, traces):
         nonlocal polls
         polls += 1
         if polls == 1:
@@ -132,7 +132,7 @@ def test_invalid_control_after_valid_expansion_preserves_only_the_completed_chec
             [parent],
             executor_adapter=ValidExecutor(),
             checkpoint_callback=checkpoint_callback,
-            user_control_callback=invalid_user_control_callback,
+            control_callback=invalid_control_callback,
         )
 
     assert snapshots == [

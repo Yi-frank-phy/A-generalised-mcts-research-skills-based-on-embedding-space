@@ -1,6 +1,6 @@
 ---
 name: evolving-frontier-research
-description: "Use when running structured frontier-search research for deep mathematical, physical, academic, proof, derivation, or conceptual questions through the backend-controlled DTE strict-run protocol."
+description: "Use when running structured frontier-search research for deep mathematical, physical, academic, proof, derivation, or conceptual questions through the backend-controlled DTE protocol and Codex App native episode loop."
 ---
 
 # Evolving Frontier Research Skill
@@ -19,7 +19,33 @@ Typical invocation:
 /evolving-frontier-research <research task>
 ```
 
-On invocation, Codex should use the locked DTE workflow, not the flexible `run` helper, unless the user explicitly asks only for explanation or planning. The only production real-run entrypoint is `python -m dte_backend strict-run --mode real`.
+On invocation in Codex App / Work, use the App-native driver loop below. The current main agent performs bounded episodes itself and may use opaque native subagents. Do not use the flexible `run` helper or spawn a second Codex process to simulate native orchestration. `strict-run --mode real` remains the compatible headless/legacy entrypoint.
+
+## Codex App native driver loop
+
+The normal App path is:
+
+```text
+start/resume DTE run
+-> next-episode
+-> perform the bounded request in the current App runtime
+-> submit one strict EpisodeResult
+-> inspect CommitOutcome/controller action
+-> repeat
+```
+
+Backend commands:
+
+```bash
+python -m dte_backend create-run --run-dir <run-dir> --spec <spec.json> --nodes <committed-nodes.json>
+python -m dte_backend next-episode --run-dir <run-dir>
+python -m dte_backend submit-episode-result --run-dir <run-dir> --result <result.json>
+python -m dte_backend run-status --run-dir <run-dir>
+```
+
+Use `fail-episode`, `cancel-episode`, and `retry-episode` for explicit attempt transitions. A retry must use the newly granted `attempt_id`; late output from cancelled, expired, failed, superseded, rejected, or committed attempts cannot be resubmitted as success.
+
+The main agent may reason, use tools, and delegate native subagents inside the request. It must not choose global allocation, hand-fill controller fields, directly edit graph state, skip submit validation, or substitute a chat/Markdown answer for committed output. Keep progress concise. Do not expose or reconstruct internal subagent count, names, routing, transcripts, hidden reasoning, tokens, or quota. App usage telemetry is `unavailable` unless the platform directly supplies it.
 
 ## Critical real-run rule
 
@@ -39,7 +65,7 @@ The mock adapters are blocked by default and only run when `DTE_ALLOW_MOCK_ADAPT
 
 It must not present mock-oracle output as research judgment.
 
-## One-screen execution protocol
+## Headless strict-run compatibility protocol
 
 1. Read this `SKILL.md`, then `AGENTS.md` when repository-specific operating rules are needed.
 2. If not installed, run `python -m pip install -e .[dev]`.
@@ -47,7 +73,7 @@ It must not present mock-oracle output as research judgment.
 4. Convert the user task into a run specification.
 5. Use `embedding_provider=gemini-embedding-2` and `embedding_dimension=3072` for real mode. Hash embedding is allowed only in `--mode smoke` or `--mode dry-run`.
 6. Always provide `--cache-path .dte_cache/cache.json` outside smoke mode.
-7. For a real research run, call `python -m dte_backend strict-run --mode real` with `--judge-command "python scripts/codex_judge_adapter.py"`. Do not use the mock Judge.
+7. For a headless real research run, call `python -m dte_backend strict-run --mode real` with `--judge-command "python scripts/codex_judge_adapter.py"`. Do not use the mock Judge. This legacy subprocess route is not the Codex App native path.
 8. Summarize these artifacts after each run:
    - `main_agent_status.md`
    - `frontier.md`
@@ -321,3 +347,5 @@ The final answer/report must include:
 - Do not treat Judge as an embedding model; Judge is a closed oracle that returns observable judgments only.
 - Do not let relation-oracle output directly rewrite graph state before validation.
 - Do not place dynamic content before `prompts/DTE_STATIC_PREFIX.md` in subagent prompts.
+- In Codex App / Work, do not launch `codex exec`, SDK/App Server, or another Codex process as the normal native episode path; the current App main agent performs the episode.
+- Do not require hidden App subagent topology, traces, token usage, or quota before accepting an otherwise valid structured result.

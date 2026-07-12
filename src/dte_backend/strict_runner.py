@@ -10,10 +10,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 import os
+import uuid
 from pathlib import Path
 from typing import Literal
 
 from .adapter import ExecutorAdapter
+from .episode_adapter import AgentEpisodeAdapter
 from .artifacts import (
     render_checkpoint_summary_markdown,
     render_entropy_trace_markdown,
@@ -31,6 +33,7 @@ from .models import DTERunSpec, SearchNode
 from .runner import RunResult, run_frontier_search
 from .subprocess_oracles import JudgeAdapter
 from .synthesis import synthesize_report
+from .telemetry import EpisodeEventLog
 
 
 StrictMode = Literal["smoke", "dry-run", "real"]
@@ -214,6 +217,7 @@ def strict_run(
     judge_adapter: JudgeAdapter | None = None,
     judge_command: str | None = None,
     executor_adapter: ExecutorAdapter | None = None,
+    episode_adapter: AgentEpisodeAdapter | None = None,
     executor_command: str | None = None,
     control_path: str | Path | None = None,
 ) -> RunResult:
@@ -232,6 +236,14 @@ def strict_run(
         os.environ["DTE_ALLOW_MOCK_ADAPTER"] = "1"
 
     cache = FileDTECache(cache_path) if cache_path else None
+    run_id = str(uuid.uuid4())
+    event_log = EpisodeEventLog(Path(out_dir) / "episode_events.jsonl")
+    event_log.emit(
+        "run_created",
+        run_id=run_id,
+        status="created",
+        input_graph_revision=0,
+    )
     def control_callback(spec: DTERunSpec, nodes: list[SearchNode], traces):
         return load_synthesis_control(control_path, nodes)
 
@@ -248,11 +260,20 @@ def strict_run(
         spec,
         initial_nodes,
         executor_adapter=executor_adapter,
+        episode_adapter=episode_adapter,
         judge_adapter=judge_adapter,
         cache=cache,
         control_callback=control_callback if control_path is not None else None,
         checkpoint_callback=checkpoint_callback,
         control_path=control_path,
+        episode_event_log=event_log,
+        run_id=run_id,
     )
     write_run_artifacts(result, out_dir=out_dir, strict_mode=mode, control_path=control_path, final=True)
+    event_log.emit(
+        "run_completed",
+        run_id=run_id,
+        status=result.stop_reason or "completed",
+        accepted_node_count=len(result.nodes),
+    )
     return result

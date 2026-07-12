@@ -65,6 +65,12 @@ DTE graph depth      = cross-iteration epistemic recursion
 native subagent work = bounded parallelism inside one episode
 ```
 
+The first implemented Executor slice represents structural graph state with a monotonically increasing in-memory graph revision and a revision for every committed node. A grant snapshots both. `commit_episode_result(...)` rechecks them, validates the complete envelope and all children on a copy, then replaces graph state once. Rejections do not close the parent or add any child. This is intentionally not event sourcing or distributed version control.
+
+The production Codex App path is a persistent driver protocol: the backend grants one request, the current App main agent performs it with native opaque orchestration, and the backend accepts one complete result. The backend does not launch another Codex process. Command/subprocess and deterministic adapters remain legacy/headless and test implementations of the transport-neutral boundary. Internal agent count, names, routing, traces, token usage, and quota remain unavailable telemetry rather than correctness conditions.
+
+Each logical episode has explicit attempts. Only the active `in_progress` attempt may submit; retry supersedes the previous attempt and creates a new `attempt_id`. Cancelled, expired, failed, superseded, rejected, or committed attempts are terminal for acceptance. The App main agent supervises its invisible internal work, while the backend enforces deadlines and lifecycle at submission.
+
 The default native delegation depth should remain shallow. Recursive fan-out inside an episode duplicates the DTE search tree and makes budget semantics difficult to interpret.
 
 ## Control ownership

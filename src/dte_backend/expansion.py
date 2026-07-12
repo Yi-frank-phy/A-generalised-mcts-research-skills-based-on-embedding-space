@@ -11,7 +11,15 @@ import uuid
 from collections.abc import Callable
 
 from .adapter import ExecutorAdapter, validate_search_node_output
+from .episode_adapter import (
+    AgentEpisodeAdapter,
+    LegacyExecutorEpisodeAdapter,
+    build_executor_episode_request,
+    run_and_commit_episode,
+)
+from .episode_commit import EpisodeGraph
 from .models import DTERunSpec, ExpansionRequest, SearchNode
+from .telemetry import EpisodeEventLog
 
 
 _VARIANTS = [
@@ -77,29 +85,56 @@ def expand_frontier(
     iteration: int,
     spec: DTERunSpec | None = None,
     executor_adapter: ExecutorAdapter | None = None,
+    episode_adapter: AgentEpisodeAdapter | None = None,
+    episode_graph: EpisodeGraph | None = None,
+    episode_event_log: EpisodeEventLog | None = None,
+    run_id: str = "local-run",
     after_node_expanded: Callable[[list[SearchNode]], bool] | None = None,
 ) -> list[SearchNode]:
     """Close expanded parents and append their children."""
 
-    by_id = {n.node_id: n for n in nodes}
+    graph = episode_graph or EpisodeGraph(nodes=list(nodes))
+    if episode_adapter is not None and executor_adapter is not None:
+        raise ValueError("provide either episode_adapter or executor_adapter, not both")
+    effective_episode_adapter = episode_adapter
+    if effective_episode_adapter is None and executor_adapter is not None:
+        effective_episode_adapter = LegacyExecutorEpisodeAdapter(executor_adapter)
     new_children: list[SearchNode] = []
     for node_id, budget in budgets.items():
-        parent = by_id.get(node_id)
+        parent = graph.node_by_id(node_id)
         if parent is None or parent.status != "frontier" or budget <= 0:
             continue
-        validated_children = expand_node(
-            parent,
-            budget,
-            iteration=iteration,
-            spec=spec,
-            executor_adapter=executor_adapter,
-        )
-        new_children.extend(validated_children)
-        parent.status = "closed"
-        parent.expansion_budget = 0
+        if effective_episode_adapter is None:
+            validated_children = expand_node(parent, budget, iteration=iteration, spec=spec)
+            new_children.extend(validated_children)
+            parent.status = "closed"
+            parent.expansion_budget = 0
+            graph.nodes.extend(validated_children)
+        else:
+            request = build_executor_episode_request(
+                graph,
+                parent,
+                run_id=run_id,
+                iteration=iteration,
+                max_returned_children=budget,
+                objective=(parent.claim if spec is None else f"{spec.goal}: expand {parent.claim}"),
+                constraints=[] if spec is None else list(spec.constraints),
+                native_orchestration_allowed=True if spec is None else spec.allow_self_organized_executor,
+            )
+            outcome = run_and_commit_episode(
+                graph,
+                request,
+                effective_episode_adapter,
+                telemetry=episode_event_log,
+            )
+            if not outcome.accepted:
+                raise ValueError(outcome.rejection_reason or "Executor episode result rejected")
+            new_children.extend(
+                node for node in graph.nodes if node.node_id in set(outcome.accepted_node_ids)
+            )
         # This callback is the interruption safe point: the oracle has returned,
         # its complete output has passed the Executor guard, and the node-level
         # result has been committed. A pending request cannot bypass validation.
-        if after_node_expanded is not None and after_node_expanded(nodes + new_children):
+        if after_node_expanded is not None and after_node_expanded(graph.nodes):
             break
-    return nodes + new_children
+    return graph.nodes

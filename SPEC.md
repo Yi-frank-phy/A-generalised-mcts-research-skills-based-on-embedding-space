@@ -253,6 +253,8 @@ output hash
 
 Runtime thread IDs, response IDs, compaction summaries, and descendant-agent traces are optional observability or recovery metadata. They are not graph facts.
 
+The implemented P1 Executor slice uses strict `EpisodeRequest` and `EpisodeResult` envelopes with `attempt_id`, persistent App-driven run/episode lifecycle, graph and per-node revisions, and `commit_episode_result(...)` as the only mutation path for episode output. The current Codex App main agent calls `next-episode`, performs the bounded episode with opaque native orchestration, and calls `submit-episode-result`; the backend never launches a second Codex for this path. The legacy command transport remains a regression/headless fallback. See the normative `docs/specs/p1-native-ultra-agentepisode-codex-app-profile.md`.
+
 ## 8. Executor output contract
 
 The backend invokes an Executor Episode only after Judge and EvolutionController have assigned expansion rights.

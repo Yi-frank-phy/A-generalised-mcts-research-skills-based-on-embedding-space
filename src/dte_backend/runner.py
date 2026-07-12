@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .adapter import ExecutorAdapter
+from .episode_adapter import AgentEpisodeAdapter
+from .episode_commit import EpisodeGraph
 from .cache import DTECache
 from .control import authorize_synthesis_control, record_forced_synthesis
 from .embedding import get_embedding_provider
@@ -22,6 +24,7 @@ from .oracle_validation import validate_judge_output
 from .subprocess_oracles import JudgeAdapter
 from .role_pipeline import seed_frontier_from_roles
 from .synthesis import synthesize_report
+from .telemetry import EpisodeEventLog
 
 
 @dataclass
@@ -44,6 +47,7 @@ class RunResult:
     role_audit: dict[str, object] = field(default_factory=dict)
     stop_reason: str | None = None
     forced_synthesis: ForcedSynthesisRecord | None = None
+    run_id: str = "local-run"
 
 
 ControlCallback = Callable[[DTERunSpec, list[SearchNode], list[IterationTrace]], SynthesisControlRequest | None]
@@ -80,11 +84,14 @@ def run_frontier_search(
     spec: DTERunSpec,
     initial_nodes: list[SearchNode] | None = None,
     executor_adapter: ExecutorAdapter | None = None,
+    episode_adapter: AgentEpisodeAdapter | None = None,
     judge_adapter: JudgeAdapter | None = None,
     cache: DTECache | None = None,
     control_callback: ControlCallback | None = None,
     checkpoint_callback: CheckpointCallback | None = None,
     control_path: str | Path | None = None,
+    episode_event_log: EpisodeEventLog | None = None,
+    run_id: str = "local-run",
 ) -> RunResult:
     """Run the mandatory DTE loop.
 
@@ -105,6 +112,7 @@ def run_frontier_search(
     previous_entropy: float | None = None
     stop_reason: str | None = None
     forced_synthesis: ForcedSynthesisRecord | None = None
+    episode_graph = EpisodeGraph(nodes=nodes)
 
     def maybe_checkpoint(current_nodes: list[SearchNode]) -> None:
         if checkpoint_callback is None:
@@ -119,6 +127,7 @@ def run_frontier_search(
                 role_audit=role_audit,
                 stop_reason=stop_reason,
                 forced_synthesis=forced_synthesis,
+                run_id=run_id,
             )
         )
 
@@ -238,6 +247,10 @@ def run_frontier_search(
             iteration=iteration,
             spec=spec,
             executor_adapter=executor_adapter,
+            episode_adapter=episode_adapter,
+            episode_graph=episode_graph,
+            episode_event_log=episode_event_log,
+            run_id=run_id,
             after_node_expanded=checkpoint_then_maybe_apply_operator_command,
         )
         maybe_checkpoint(nodes)
@@ -258,4 +271,5 @@ def run_frontier_search(
         role_audit=role_audit,
         stop_reason=stop_reason,
         forced_synthesis=forced_synthesis,
+        run_id=run_id,
     )

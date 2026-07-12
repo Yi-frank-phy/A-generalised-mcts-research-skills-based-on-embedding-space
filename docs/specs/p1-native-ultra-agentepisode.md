@@ -566,3 +566,16 @@ These questions should be resolved by repository and runtime inspection rather t
 4. Can native runtime progress be observed without serializing every internal event?
 
 None of these questions changes the protocol. When unavailable, the implementation must preserve the transport-neutral boundary and use the command fallback honestly.
+
+## 18. Implementation status (Executor vertical slice)
+
+Status as of this implementation:
+
+| Increment | Status | Implemented fact / remaining boundary |
+| --- | --- | --- |
+| Increment 1: contract and commit | **implemented** | Strict versioned request/result, Executor payload/output, runtime/tool/diagnostic models, graph and parent revisions, canonical output hash, atomic `commit_episode_result(...)`, and rejection telemetry. |
+| Increment 2: adapter unification | **implemented** | Existing subprocess/command Executor is bridged behind `AgentEpisodeAdapter`; deterministic native-shaped stub uses the same interface; existing `strict-run` behavior is preserved. |
+| Increment 3: App-native driver protocol | **implemented** | Persistent `create-run`, `next-episode`, `submit-episode-result`, `fail-episode`, `cancel-episode`, `retry-episode`, `request-synthesis`, and `run-status` let the current Codex App main agent perform opaque native work without repository-spawned Codex. SDK/App Server transport is deferred. |
+| Increment 4: telemetry | **implemented** | Append-only `<run-dir>/episode_events.jsonl` records run/attempt lifecycle, submission, commit/rejection, quality counters, profile, and `usage_source=unavailable` without fabricated App usage or hidden topology. Later Judge survival and Relation outcomes remain deferred fields. |
+
+Deferred beyond this slice: native Seed/Judge/Relation/Synthesis loops, SDK/App Server transports, visibility into hidden App subagents, telemetry-driven controller tuning, and distributed revisions. The comparison profiles alter only within-episode guidance; they do not change graph semantics or require a minimum subagent count. The normative first-production interpretation is `p1-native-ultra-agentepisode-codex-app-profile.md`.

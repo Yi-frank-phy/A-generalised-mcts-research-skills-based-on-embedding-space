@@ -488,3 +488,18 @@ DTE backend supplies and validates the bounded epistemic protocol.
 ```
 
 This is the required meaning of seamless Ultra-mode adaptation for the first implementation.
+
+## 17. Implemented vertical-slice status
+
+The Executor App-native slice now implements:
+
+- persistent `create-run`, `next-episode`, `submit-episode-result`, `fail-episode`, `cancel-episode`, `retry-episode`, `request-synthesis`, and `run-status` operations;
+- strict request/result envelopes with distinct `episode_id` and `attempt_id`;
+- persistent request, result, status, graph, node-revision, deadline, retry, and commit-outcome records;
+- App-main-agent grants that never launch a Codex subprocess;
+- rejection of stale, failed, cancelled, expired, superseded, rejected, or already committed attempts;
+- a single `commit_episode_result(...)` graph mutation boundary;
+- coarse append-only telemetry with App usage marked `unavailable`;
+- Skill and `AGENTS.md` instructions for the current-App loop.
+
+The command/subprocess adapter remains only a legacy/headless fallback and regression baseline. SDK/App Server transport, hidden App-subagent inspection, native Seed/Judge/Relation/Synthesis loops, and precise App token/quota telemetry remain deferred.

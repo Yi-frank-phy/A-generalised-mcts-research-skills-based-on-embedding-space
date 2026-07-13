@@ -491,7 +491,7 @@ This is the required meaning of seamless Ultra-mode adaptation for the first imp
 
 ## 17. Implemented vertical-slice status
 
-The Executor App-native slice now implements:
+The App-native Judge → controller → Executor slice now implements:
 
 - persistent `create-run`, `next-episode`, `submit-episode-result`, `fail-episode`, `cancel-episode`, `retry-episode`, `request-synthesis`, and `run-status` operations;
 - strict request/result envelopes with distinct `episode_id` and `attempt_id`;
@@ -499,7 +499,10 @@ The Executor App-native slice now implements:
 - App-main-agent grants that never launch a Codex subprocess;
 - rejection of stale, failed, cancelled, expired, superseded, rejected, or already committed attempts;
 - a single `commit_episode_result(...)` graph mutation boundary;
+- strict versioned Judge payload/observation schemas and exact-grant atomic Judge commits;
+- backend-only deterministic embedding/KDE, entropy, uncertainty, UCB, and allocation progression after Judge commit;
+- seamless progression from an ordinary unscored frontier to a bounded Executor grant without a main-agent `continue_controller` decision;
 - coarse append-only telemetry with App usage marked `unavailable`;
 - Skill and `AGENTS.md` instructions for the current-App loop.
 
-The command/subprocess adapter remains only a legacy/headless fallback and regression baseline. SDK/App Server transport, hidden App-subagent inspection, native Seed/Judge/Relation/Synthesis loops, and precise App token/quota telemetry remain deferred.
+The command/subprocess adapter remains only a legacy/headless fallback and regression baseline. SDK/App Server transport, hidden App-subagent inspection, native Seed, Relation, and final Synthesis episodes, full production role closure, and precise App token/quota telemetry remain deferred.

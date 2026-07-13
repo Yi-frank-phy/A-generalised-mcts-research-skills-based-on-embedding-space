@@ -18,7 +18,11 @@ ExecutorAdapter = Callable[[ExpansionRequest], list[SearchNode]]
 _FORBIDDEN_CONTROLLER_FIELDS = {
     "local_embedding",
     "judge_reasoning",
+    "judge_risks",
+    "judge_uncertainty_evidence",
+    "judge_result_provenance",
     "score",
+    "density",
     "uncertainty",
     "ucb_score",
     "expansion_budget",

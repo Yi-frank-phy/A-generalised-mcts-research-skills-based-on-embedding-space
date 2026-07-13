@@ -8,7 +8,14 @@ from typing import Any, Mapping
 
 from pydantic import ValidationError
 
-from .episode_models import CommitOutcome, EpisodeRequest, EpisodeResult, compute_output_hash
+from .episode_models import (
+    CommitOutcome,
+    EpisodeRequest,
+    EpisodeResult,
+    ExecutorEpisodeOutput,
+    JudgeEpisodeOutput,
+    compute_output_hash,
+)
 from .models import SearchNode
 from .telemetry import EpisodeEventLog
 
@@ -18,10 +25,13 @@ CONTROLLER_OWNED_FIELDS = frozenset(
         "embedding",
         "local_embedding",
         "score",
+        "density",
         "judge_reasoning",
         "judge_verdict",
         "judge_verdict_reference",
         "judge_verdict_references",
+        "judge_risks",
+        "judge_uncertainty_evidence",
         "uncertainty",
         "ucb_score",
         "expansion_budget",
@@ -31,6 +41,8 @@ CONTROLLER_OWNED_FIELDS = frozenset(
         "controller_stop_reason",
         "stop_reason",
         "synthesis_checkpoint",
+        "node_revision",
+        "judge_result_provenance",
     }
 )
 
@@ -80,8 +92,15 @@ def _raw_nodes(raw_result: Any) -> list[Any]:
     return []
 
 
+def _raw_judge_observations(raw_result: Any) -> list[Any]:
+    output = _raw_structured_output(raw_result)
+    if isinstance(output, Mapping) and isinstance(output.get("observations"), list):
+        return list(output["observations"])
+    return []
+
+
 def _quality_counts(raw_result: Any) -> tuple[int, int]:
-    raw_nodes = _raw_nodes(raw_result)
+    raw_nodes = _raw_nodes(raw_result) or _raw_judge_observations(raw_result)
     controller_violations = 0
     node_ids: list[str] = []
     for raw_node in raw_nodes:
@@ -103,6 +122,7 @@ def _reject(
     schema_valid: bool,
     controller_violations: int,
     duplicate_count: int,
+    returned_observation_count: int | None,
 ) -> CommitOutcome:
     if telemetry is not None:
         telemetry.emit(
@@ -115,6 +135,9 @@ def _reject(
             input_graph_revision=request.input_graph_revision,
             returned_node_count=None,
             accepted_node_count=0,
+            selected_node_count=len(request.selected_node_revisions),
+            returned_observation_count=returned_observation_count,
+            accepted_observation_count=0 if request.role == "judge" else None,
             rejection_reason=reason,
             schema_valid=schema_valid,
             controller_field_violation_count=controller_violations,
@@ -138,6 +161,8 @@ def commit_episode_result(
     """Validate the complete result before atomically replacing graph state."""
 
     controller_violations, duplicate_count = _quality_counts(raw_result)
+    raw_observations = _raw_judge_observations(raw_result)
+    returned_observation_count = len(raw_observations) if request.role == "judge" else None
     try:
         result = raw_result if isinstance(raw_result, EpisodeResult) else EpisodeResult.model_validate(raw_result)
     except ValidationError as exc:
@@ -149,6 +174,7 @@ def commit_episode_result(
             schema_valid=False,
             controller_violations=controller_violations,
             duplicate_count=duplicate_count,
+            returned_observation_count=returned_observation_count,
         )
 
     def reject(reason: str) -> CommitOutcome:
@@ -160,6 +186,7 @@ def commit_episode_result(
             schema_valid=True,
             controller_violations=controller_violations,
             duplicate_count=duplicate_count,
+            returned_observation_count=returned_observation_count,
         )
 
     if result.episode_id != request.episode_id:
@@ -172,8 +199,6 @@ def commit_episode_result(
         return reject("role mismatch")
     if result.status != "completed":
         return reject(f"result status is {result.status}, not completed")
-    if request.role != "executor":
-        return reject("only Executor episode commits are implemented")
     if request.input_graph_revision != graph.revision or result.input_graph_revision != graph.revision:
         return reject("stale graph revision")
     if result.selected_node_revisions != request.selected_node_revisions:
@@ -183,6 +208,80 @@ def commit_episode_result(
     if result.output_hash != compute_output_hash(result.structured_output, result.schema_version):
         return reject("output hash mismatch")
 
+    if request.role == "judge":
+        for node_id, revision in request.selected_node_revisions.items():
+            if graph.node_revisions.get(node_id) != revision:
+                return reject(f"stale selected-node revision: {node_id}")
+        if not isinstance(result.structured_output, JudgeEpisodeOutput):
+            return reject("completed Judge result has the wrong structured output schema")
+        granted_ids = set(request.selected_node_revisions)
+        observations = result.structured_output.observations
+        observation_ids = [observation.node_id for observation in observations]
+        if len(observation_ids) != len(set(observation_ids)):
+            return reject("duplicate Judge node ID inside result")
+        returned_ids = set(observation_ids)
+        missing = sorted(granted_ids - returned_ids)
+        if missing:
+            return reject(f"Judge result omitted granted node: {missing[0]}")
+        extra = sorted(returned_ids - granted_ids)
+        if extra:
+            return reject(f"Judge result returned ungranted node: {extra[0]}")
+
+        next_nodes = deepcopy(graph.nodes)
+        next_revisions = dict(graph.node_revisions)
+        by_id = {node.node_id: node for node in next_nodes}
+        for observation in observations:
+            node = by_id.get(observation.node_id)
+            if node is None or node.status != "frontier":
+                return reject(f"Judge target is not a committed frontier node: {observation.node_id}")
+            node.score = observation.score
+            node.judge_reasoning = observation.reasoning
+            node.judge_risks = list(observation.risks)
+            node.judge_uncertainty_evidence = list(observation.uncertainty_evidence)
+            node.judge_result_provenance = {
+                "run_id": request.run_id,
+                "episode_id": request.episode_id,
+                "attempt_id": request.attempt_id,
+                "schema_version": result.schema_version,
+                "output_hash": result.output_hash,
+            }
+            next_revisions[node.node_id] += 1
+
+        revision_before = graph.revision
+        graph.nodes = next_nodes
+        graph.node_revisions = next_revisions
+        graph.revision = revision_before + 1
+        if telemetry is not None:
+            telemetry.emit(
+                "judge_observations_committed",
+                run_id=request.run_id,
+                episode_id=request.episode_id,
+                attempt_id=request.attempt_id,
+                role=request.role,
+                status="committed",
+                input_graph_revision=request.input_graph_revision,
+                selected_node_count=len(granted_ids),
+                returned_observation_count=len(observations),
+                accepted_observation_count=len(observations),
+                schema_valid=True,
+                controller_field_violation_count=controller_violations,
+                duplicate_within_result_count=duplicate_count,
+                usage_source="unavailable",
+            )
+        return CommitOutcome(
+            accepted=True,
+            episode_id=request.episode_id,
+            accepted_node_ids=observation_ids,
+            accepted_node_count=len(observations),
+            graph_revision_before=revision_before,
+            graph_revision_after=graph.revision,
+        )
+
+    if request.role != "executor":
+        return reject(f"commit path is not implemented for role={request.role}")
+    if not isinstance(result.structured_output, ExecutorEpisodeOutput):
+        return reject("completed Executor result has the wrong structured output schema")
+
     assert request.parent_node_id is not None
     assert request.parent_node_revision is not None
     assert request.max_returned_children is not None
@@ -191,9 +290,6 @@ def commit_episode_result(
         return reject("assigned parent is not committed")
     if graph.node_revisions.get(parent.node_id) != request.parent_node_revision:
         return reject("stale parent revision")
-    if result.structured_output is None:
-        return reject("completed Executor result is missing structured output")
-
     candidates = result.structured_output.nodes
     if len(candidates) > request.max_returned_children:
         return reject("returned child count exceeds grant")

@@ -47,6 +47,8 @@ Use `fail-episode`, `cancel-episode`, and `retry-episode` for explicit attempt t
 
 The main agent may reason, use tools, and delegate native subagents inside the request. It must not choose global allocation, hand-fill controller fields, directly edit graph state, skip submit validation, or substitute a chat/Markdown answer for committed output. Keep progress concise. Do not expose or reconstruct internal subagent count, names, routing, transcripts, hidden reasoning, tokens, or quota. App usage telemetry is `unavailable` unless the platform directly supplies it.
 
+`next-episode` may return a strict `role=judge` request for ordinary unscored frontier nodes. Judge every granted node exactly once and return only observable score, reasoning, risks, and optional uncertainty evidence. After a valid Judge submit, call `next-episode` again: the backend, not the main agent, computes embedding/KDE density, entropy, uncertainty, UCB, and allocation before returning an Executor grant or a terminal controller action. Normal App operation must not require the main agent to interpret `continue_controller`.
+
 ## Critical real-run rule
 
 Mock adapters are smoke-test tools only. They are not research Judges, not research Relation Oracles, and not acceptable for real slash-command runs.

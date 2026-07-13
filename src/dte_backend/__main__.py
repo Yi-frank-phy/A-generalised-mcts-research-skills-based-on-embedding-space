@@ -10,6 +10,16 @@ import sys
 from pathlib import Path
 
 from .adapter import build_subprocess_adapter, run_subprocess_executor
+from .app_driver import (
+    app_run_status,
+    cancel_app_episode,
+    create_app_run,
+    fail_app_episode,
+    next_app_episode,
+    request_app_synthesis,
+    retry_app_episode,
+    submit_app_episode_result,
+)
 from .artifacts import (
     render_entropy_trace_markdown,
     render_frontier_markdown,
@@ -22,7 +32,8 @@ from .control import OperatorAuthorizationError
 from .file_cache import FileDTECache
 from .guards import enforce_run_spec_guard
 from .math_engine import allocate_frontier
-from .models import DTERunSpec, ExpansionRequest, SearchNode
+from .episode_models import RuntimeLimits
+from .models import DTERunSpec, ExpansionRequest, SearchNode, SynthesisControlRequest
 from .oracle_validation import validate_relation_output
 from .relation_workflow import relation_result_to_outputs
 from .runner import run_frontier_search
@@ -194,6 +205,59 @@ def cmd_strict_run(args: argparse.Namespace) -> None:
     print(json.dumps({"out_dir": str(args.out_dir), "mode": args.mode, "nodes": len(result.nodes), "traces": len(result.traces)}, ensure_ascii=False))
 
 
+def _print_model(value) -> None:
+    print(value.model_dump_json(indent=2))
+
+
+def cmd_create_run(args: argparse.Namespace) -> None:
+    spec = load_json_model(args.spec, DTERunSpec)
+    enforce_run_spec_guard(spec)
+    nodes = load_json_list(args.nodes, SearchNode)
+    _print_model(create_app_run(args.run_dir, spec, nodes, run_id=args.run_id))
+
+
+def cmd_next_episode(args: argparse.Namespace) -> None:
+    limits = RuntimeLimits(
+        wall_clock_seconds=args.wall_clock_seconds,
+        max_retries=args.max_retries,
+        selected_by=args.selected_by,
+    )
+    _print_model(next_app_episode(args.run_dir, runtime_limits=limits, profile=args.profile))
+
+
+def cmd_submit_episode_result(args: argparse.Namespace) -> None:
+    raw = json.loads(Path(args.result).read_text(encoding="utf-8"))
+    _print_model(submit_app_episode_result(args.run_dir, raw))
+
+
+def cmd_fail_episode(args: argparse.Namespace) -> None:
+    _print_model(fail_app_episode(args.run_dir, args.episode_id, args.attempt_id, args.reason))
+
+
+def cmd_cancel_episode(args: argparse.Namespace) -> None:
+    _print_model(cancel_app_episode(args.run_dir, args.episode_id, args.attempt_id, args.reason))
+
+
+def cmd_retry_episode(args: argparse.Namespace) -> None:
+    _print_model(
+        retry_app_episode(
+            args.run_dir,
+            args.episode_id,
+            selected_by=args.selected_by,
+            wall_clock_seconds=args.wall_clock_seconds,
+        )
+    )
+
+
+def cmd_request_synthesis(args: argparse.Namespace) -> None:
+    request = load_json_model(args.request, SynthesisControlRequest)
+    _print_model(request_app_synthesis(args.run_dir, request))
+
+
+def cmd_run_status(args: argparse.Namespace) -> None:
+    _print_model(app_run_status(args.run_dir))
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="DTE backend helper")
     sub = parser.add_subparsers(required=True)
@@ -269,6 +333,68 @@ def build_parser() -> argparse.ArgumentParser:
         help="optional operator control JSON path; defaults to <out-dir>/strict_run_control.json",
     )
     strict.set_defaults(func=cmd_strict_run)
+
+    create = sub.add_parser("create-run", help="create persistent state for a Codex App-driven DTE run")
+    create.add_argument("--run-dir", required=True)
+    create.add_argument("--spec", required=True)
+    create.add_argument("--nodes", required=True, help="committed initial SearchNode JSON list")
+    create.add_argument("--run-id")
+    create.set_defaults(func=cmd_create_run)
+
+    next_episode = sub.add_parser("next-episode", help="grant or resume one bounded App-native episode")
+    next_episode.add_argument("--run-dir", required=True)
+    next_episode.add_argument("--wall-clock-seconds", type=int)
+    next_episode.add_argument("--max-retries", type=int, default=1)
+    next_episode.add_argument(
+        "--selected-by",
+        choices=["user", "main_agent", "run_default"],
+        default="run_default",
+    )
+    next_episode.add_argument(
+        "--profile",
+        choices=["legacy-explicit", "native-guided", "native-autonomous"],
+        default="native-autonomous",
+    )
+    next_episode.set_defaults(func=cmd_next_episode)
+
+    submit = sub.add_parser("submit-episode-result", help="validate and commit one complete EpisodeResult")
+    submit.add_argument("--run-dir", required=True)
+    submit.add_argument("--result", required=True)
+    submit.set_defaults(func=cmd_submit_episode_result)
+
+    fail = sub.add_parser("fail-episode", help="record failure of the active App-native attempt")
+    fail.add_argument("--run-dir", required=True)
+    fail.add_argument("--episode-id", required=True)
+    fail.add_argument("--attempt-id", required=True)
+    fail.add_argument("--reason", required=True)
+    fail.set_defaults(func=cmd_fail_episode)
+
+    cancel = sub.add_parser("cancel-episode", help="cancel the active App-native attempt")
+    cancel.add_argument("--run-dir", required=True)
+    cancel.add_argument("--episode-id", required=True)
+    cancel.add_argument("--attempt-id", required=True)
+    cancel.add_argument("--reason", required=True)
+    cancel.set_defaults(func=cmd_cancel_episode)
+
+    retry = sub.add_parser("retry-episode", help="supersede an attempt and grant a new attempt ID")
+    retry.add_argument("--run-dir", required=True)
+    retry.add_argument("--episode-id", required=True)
+    retry.add_argument("--wall-clock-seconds", type=int)
+    retry.add_argument(
+        "--selected-by",
+        choices=["user", "main_agent", "run_default"],
+        default="main_agent",
+    )
+    retry.set_defaults(func=cmd_retry_episode)
+
+    synthesis = sub.add_parser("request-synthesis", help="submit an OperatorPolicy-validated synthesis request")
+    synthesis.add_argument("--run-dir", required=True)
+    synthesis.add_argument("--request", required=True)
+    synthesis.set_defaults(func=cmd_request_synthesis)
+
+    status = sub.add_parser("run-status", help="read persistent App-native run and lifecycle state")
+    status.add_argument("--run-dir", required=True)
+    status.set_defaults(func=cmd_run_status)
 
     return parser
 

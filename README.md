@@ -79,11 +79,38 @@ python -m dte_backend strict-run \
 
 `scripts/codex_judge_adapter.py` calls `codex exec` by default. Set `DTE_CODEX_JUDGE_COMMAND` only when you need to override the Codex command used by that adapter.
 
-The only production real-run entrypoint is `python -m dte_backend strict-run --mode real`. `strict-run` writes observable progress artifacts and polls `<out-dir>/strict_run_control.json` by default; `--control-path` may select another operator-controlled location. The main agent is an authorized operator proxy under `OperatorPolicy`: it may issue a validated synthesis request, but it cannot directly mutate controller-owned state or bypass safe-point and schema validation.
+`strict-run --mode real` remains the compatible headless/legacy entrypoint. In Codex App / Work, the normal native path is the persistent driver protocol below: the current App main agent requests and performs each bounded episode itself; the repository does not launch a second Codex process. In both paths the main agent is an authorized operator proxy under `OperatorPolicy`, not a second controller.
 
 `requested_by` identifies the actor for audit; `operator_policy` determines whether that actor is authorized. The JSON field does not authenticate the writer. The current protocol trusts the root/operator execution context that invokes the backend; stronger actor/capability isolation belongs to a future external DTE Driver.
 
 The real-mode controller and provider wiring are tested with a deterministic embedding-provider stub. Live Gemini API connectivity is intentionally not exercised because no production credential is available. This is not a merge blocker. CI still verifies the Gemini provider wiring, 3072-dimensional policy, cache namespace, and fail-closed behavior when neither supported API-key environment variable is present.
+
+## AgentEpisode Executor vertical slice
+
+Executor expansion now has a transport-neutral, versioned boundary driven by the current Codex App main agent:
+
+```text
+next-episode -> EpisodeRequest -> current App native work -> EpisodeResult
+    -> commit_episode_result(...) -> revised graph
+```
+
+`commit_episode_result(...)` validates the complete result before replacing graph state. It rejects stale graph or parent revisions, identity/role/schema/hash mismatches, over-grant output, collisions, duplicate IDs, missing parent references, forbidden node types/statuses, non-completed results, and every controller-owned field. Rejection leaves the graph unchanged and appends an `output_rejected` event when telemetry is configured.
+
+The App-native backend command loop is:
+
+```bash
+python -m dte_backend create-run --run-dir <run-dir> --spec <spec.json> --nodes <committed-nodes.json>
+python -m dte_backend next-episode --run-dir <run-dir>
+# Current App main agent performs the returned request with native tools/subagents.
+python -m dte_backend submit-episode-result --run-dir <run-dir> --result <result.json>
+python -m dte_backend run-status --run-dir <run-dir>
+```
+
+`fail-episode`, `cancel-episode`, and `retry-episode` provide explicit attempt transitions; retries receive a new `attempt_id`, and cancelled, expired, failed, superseded, rejected, or already committed attempts cannot commit. Requests, results, and status records live under `<run-dir>/episodes/<episode-id>/<attempt-id>/`; writing a result file alone never mutates the graph.
+
+The existing subprocess Executor is preserved only as a legacy/headless fallback and regression baseline through `CommandAgentEpisodeAdapter`. `NativeStubEpisodeAdapter` is a deterministic test fixture. Neither is the normal Codex App path, and neither is described as Ultra integration. SDK/App Server transports are deferred by the normative App profile.
+
+Episode telemetry is append-only JSONL at `<run-dir>/episode_events.jsonl`. Because hidden App runtime usage and subagent topology are not available to repository code, App events record `usage_source=unavailable` and do not estimate tokens, quota, subagent count, or routing traces.
 
 ## License
 

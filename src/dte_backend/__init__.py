@@ -23,7 +23,7 @@ from .models import AllocationResult, BudgetSpec, DTERunSpec, SearchNode
 from .runner import RunResult, run_frontier_search
 
 # Install the fail-closed public submission boundary on the already-loaded
-# app_driver module.  This also covers `python -m dte_backend`, whose __main__
+# app_driver module. This also covers `python -m dte_backend`, whose __main__
 # imports the function from app_driver after package initialization.
 submit_app_episode_result = build_fail_closed_submit(
     original_submit=_app_driver.submit_app_episode_result,

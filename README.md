@@ -115,6 +115,8 @@ The existing subprocess Executor is preserved only as a legacy/headless fallback
 
 Episode telemetry is append-only JSONL at `<run-dir>/episode_events.jsonl`. Because hidden App runtime usage and subagent topology are not available to repository code, App events record `usage_source=unavailable` and do not estimate tokens, quota, subagent count, or routing traces.
 
+App-path embedding vectors are cached in the run-scoped `<run-dir>/dte_cache.json` through the existing `FileDTECache` namespace contract (provider, model/snapshot, dimension, and embedding contract version). The cache is not graph state; a cache failure cannot partially commit controller fields or revisions. Terminal `ready_for_synthesis` / `run_complete` actions are sticky, and after already-allocated Executor grants are consumed the iteration cap is enforced before any new Judge grant.
+
 Native Seed, Relation, and final Synthesis episodes remain deferred, as does full production role closure. The headless Judge command remains a regression/legacy path rather than the normal App runtime.
 
 ## License

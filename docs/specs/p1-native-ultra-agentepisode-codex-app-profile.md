@@ -502,6 +502,8 @@ The App-native Judge → controller → Executor slice now implements:
 - strict versioned Judge payload/observation schemas and exact-grant atomic Judge commits;
 - backend-only deterministic embedding/KDE, entropy, uncertainty, UCB, and allocation progression after Judge commit;
 - seamless progression from an ordinary unscored frontier to a bounded Executor grant without a main-agent `continue_controller` decision;
+- sticky terminal controller actions and iteration-cap enforcement before new Judge grants, while preserving already-committed positive Executor allocations;
+- run-scoped App embedding persistence at `<run-dir>/dte_cache.json` using the existing provider/model/dimension/contract-version namespace;
 - coarse append-only telemetry with App usage marked `unavailable`;
 - Skill and `AGENTS.md` instructions for the current-App loop.
 

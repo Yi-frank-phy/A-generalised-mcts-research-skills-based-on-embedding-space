@@ -14,6 +14,7 @@ from dte_backend.app_driver import (
     retry_app_episode,
     submit_app_episode_result,
 )
+from dte_backend.cache import EmbeddingCacheNamespace
 from dte_backend.embedding import HashEmbeddingProvider
 from dte_backend.episode_adapter import build_judge_episode_request
 from dte_backend.episode_commit import EpisodeGraph, commit_episode_result
@@ -28,29 +29,47 @@ from dte_backend.episode_models import (
     RuntimeLimits,
     compute_output_hash,
 )
+from dte_backend.file_cache import FileDTECache
 from dte_backend.models import BudgetSpec, DTERunSpec, SearchNode
 from dte_backend.telemetry import EpisodeEventLog
 
 
-def run_spec(*, cap=2):
+def run_spec(*, cap=2, max_iterations=2, require_final_synthesis=True):
     return DTERunSpec(
         problem="ordinary unscored frontier",
         goal="advance through Judge and controller to Executor",
         constraints=["preserve controller ownership"],
         budget=BudgetSpec(
-            max_iterations=2,
+            max_iterations=max_iterations,
             allocation_mass_per_iteration=1,
             max_children_per_iteration=cap,
         ),
         embedding_provider="hash",
         embedding_dimension=8,
+        require_final_synthesis=require_final_synthesis,
     )
 
 
-def make_run(tmp_path, *, node_count=1, cap=2):
+def make_run(
+    tmp_path,
+    *,
+    node_count=1,
+    cap=2,
+    max_iterations=2,
+    require_final_synthesis=True,
+):
     run_dir = tmp_path / "run"
     nodes = [SearchNode(node_id=f"n{index}", claim=f"claim {index}") for index in range(node_count)]
-    create_app_run(run_dir, run_spec(cap=cap), nodes, run_id="judge-run")
+    create_app_run(
+        run_dir,
+        run_spec(
+            cap=cap,
+            max_iterations=max_iterations,
+            require_final_synthesis=require_final_synthesis,
+        ),
+        nodes,
+        run_id="judge-run",
+    )
     return run_dir
 
 
@@ -94,12 +113,12 @@ def judge_result(request, *, observations=None, status="completed"):
     )
 
 
-def executor_result(request):
+def executor_result(request, *, child_id="child", child_claim="bounded child"):
     output = ExecutorEpisodeOutput(
         nodes=[
             ExecutorNodeCandidate(
-                node_id="child",
-                claim="bounded child",
+                node_id=child_id,
+                claim=child_claim,
                 parent_ids=[request.parent_node_id],
             )
         ]
@@ -117,6 +136,18 @@ def executor_result(request):
         output_hash=compute_output_hash(output, request.output_schema_version),
         schema_version=request.output_schema_version,
     )
+
+
+class TrackingEmbeddingProvider:
+    def __init__(self, *, name="tracking", model="tracking-v1", dim=8):
+        self.name = name
+        self.model = model
+        self.dim = dim
+        self.calls = 0
+
+    def embed_texts(self, texts):
+        self.calls += len(texts)
+        return [[float(index + 1) for index in range(self.dim)] for _ in texts]
 
 
 def graph_snapshot(run_dir):
@@ -375,3 +406,128 @@ def test_judge_telemetry_is_coarse_with_unavailable_usage(tmp_path):
     serialized = json.dumps(events)
     assert "subagent_names" not in serialized
     assert "hidden_reasoning" not in serialized
+
+
+@pytest.mark.parametrize("terminal_action", ["ready_for_synthesis", "run_complete"])
+def test_terminal_controller_actions_are_sticky_even_with_positive_budget(tmp_path, terminal_action):
+    run_dir = make_run(tmp_path)
+    state = app_driver.load_app_run(run_dir)
+    state.nodes[0].expansion_budget = 1
+    state.nodes[0].ucb_score = 1.0
+    state.controller_action = terminal_action
+    app_driver._save_state(run_dir, state)
+
+    state_path = run_dir / "app_run_state.json"
+    event_path = run_dir / "episode_events.jsonl"
+    state_before = state_path.read_text(encoding="utf-8")
+    events_before = event_path.read_text(encoding="utf-8")
+
+    for _ in range(3):
+        outcome = next_app_episode(run_dir)
+        assert outcome.controller_action == terminal_action
+        assert outcome.request is None
+
+    assert state_path.read_text(encoding="utf-8") == state_before
+    assert event_path.read_text(encoding="utf-8") == events_before
+    persisted = app_run_status(run_dir)
+    assert persisted.graph_revision == state.graph_revision
+    assert persisted.node_revisions == state.node_revisions
+    assert persisted.nodes[0].expansion_budget == 1
+    assert persisted.episodes == []
+
+
+@pytest.mark.parametrize(
+    ("require_final_synthesis", "terminal_action"),
+    [(True, "ready_for_synthesis"), (False, "run_complete")],
+)
+def test_max_iterations_stops_before_judging_final_executor_child(
+    tmp_path,
+    require_final_synthesis,
+    terminal_action,
+):
+    run_dir = make_run(
+        tmp_path,
+        max_iterations=1,
+        require_final_synthesis=require_final_synthesis,
+    )
+    initial_judge = next_app_episode(run_dir).request
+    submit_app_episode_result(run_dir, judge_result(initial_judge))
+    executor = next_app_episode(run_dir, embedding_provider=HashEmbeddingProvider(dim=8)).request
+    assert executor.role == "executor"
+    submit_app_episode_result(run_dir, executor_result(executor, child_id="final-child"))
+
+    events_before = EpisodeEventLog(run_dir / "episode_events.jsonl").read_events()
+    judge_grants_before = [
+        event
+        for event in events_before
+        if event["role"] == "judge" and event["event_type"] in {"episode_granted", "episode_started"}
+    ]
+    outcome = next_app_episode(run_dir)
+    assert outcome.controller_action == terminal_action
+    assert outcome.request is None
+    assert app_run_status(run_dir).nodes[-1].node_id == "final-child"
+    assert app_run_status(run_dir).nodes[-1].score is None
+
+    events_after = EpisodeEventLog(run_dir / "episode_events.jsonl").read_events()
+    judge_grants_after = [
+        event
+        for event in events_after
+        if event["role"] == "judge" and event["event_type"] in {"episode_granted", "episode_started"}
+    ]
+    assert judge_grants_after == judge_grants_before
+
+
+def test_app_progression_reuses_file_backed_embedding_cache_across_calls(tmp_path):
+    run_dir = make_run(tmp_path, max_iterations=2)
+    initial_judge = next_app_episode(run_dir).request
+    submit_app_episode_result(run_dir, judge_result(initial_judge))
+
+    first_provider = TrackingEmbeddingProvider()
+    executor = next_app_episode(run_dir, embedding_provider=first_provider).request
+    assert first_provider.calls == 1
+    assert (run_dir / "dte_cache.json").exists()
+    submit_app_episode_result(
+        run_dir,
+        executor_result(executor, child_id="same-semantics", child_claim="claim 0"),
+    )
+
+    child_judge = next_app_episode(run_dir).request
+    assert child_judge.role == "judge"
+    submit_app_episode_result(run_dir, judge_result(child_judge))
+
+    second_provider = TrackingEmbeddingProvider()
+    next_grant = next_app_episode(run_dir, embedding_provider=second_provider)
+    assert next_grant.controller_action == "ready_for_synthesis"
+    assert next_grant.request is None
+    assert second_provider.calls == 0
+
+    cache = FileDTECache(run_dir / "dte_cache.json")
+    semantic_twin = SearchNode(node_id="other-id", claim="claim 0")
+    matching = EmbeddingCacheNamespace("tracking", "tracking-v1", 8, "embedding-v1")
+    assert cache.get_embedding(semantic_twin, namespace=matching) is not None
+    for changed in (
+        EmbeddingCacheNamespace("other-provider", "tracking-v1", 8, "embedding-v1"),
+        EmbeddingCacheNamespace("tracking", "tracking-v2", 8, "embedding-v1"),
+        EmbeddingCacheNamespace("tracking", "tracking-v1", 16, "embedding-v1"),
+    ):
+        assert cache.get_embedding(semantic_twin, namespace=changed) is None
+
+
+def test_cache_failure_cannot_partially_commit_controller_state(monkeypatch, tmp_path):
+    run_dir = make_run(tmp_path)
+    request = next_app_episode(run_dir).request
+    submit_app_episode_result(run_dir, judge_result(request))
+    state_path = run_dir / "app_run_state.json"
+    event_path = run_dir / "episode_events.jsonl"
+    state_before = state_path.read_text(encoding="utf-8")
+    events_before = event_path.read_text(encoding="utf-8")
+
+    def fail_cache_write(*args, **kwargs):
+        raise OSError("cache write failed")
+
+    monkeypatch.setattr(FileDTECache, "set_embedding", fail_cache_write)
+    with pytest.raises(OSError, match="cache write failed"):
+        next_app_episode(run_dir, embedding_provider=TrackingEmbeddingProvider())
+
+    assert state_path.read_text(encoding="utf-8") == state_before
+    assert event_path.read_text(encoding="utf-8") == events_before

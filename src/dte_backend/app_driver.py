@@ -18,12 +18,12 @@ from typing import Any, Literal
 from pydantic import Field
 
 from .control import authorize_synthesis_control
-from .cache import DTECache
 from .embedding import EmbeddingProvider, get_embedding_provider
 from .entropy import evaluate_entropy_state
 from .episode_adapter import build_executor_episode_request, build_judge_episode_request
 from .episode_commit import EpisodeGraph, commit_episode_result
 from .episode_models import CommitOutcome, EpisodeRequest, EpisodeResult, RuntimeLimits
+from .file_cache import FileDTECache
 from .math_engine import allocate_frontier
 from .models import DTEBaseModel, DTERunSpec, SearchNode, SynthesisControlRequest
 from .novelty import estimate_frontier_kde_state
@@ -144,6 +144,12 @@ def _state_path(run_dir: str | Path) -> Path:
 
 def _event_log(run_dir: str | Path) -> EpisodeEventLog:
     return EpisodeEventLog(Path(run_dir) / "episode_events.jsonl")
+
+
+def _app_cache_path(run_dir: str | Path) -> Path:
+    """Stable run-scoped cache artifact; it is not part of graph state."""
+
+    return Path(run_dir) / "dte_cache.json"
 
 
 def _write_json_atomic(path: Path, payload: Any) -> None:
@@ -306,7 +312,7 @@ def _progress_controller(
     )
     next_frontier, kde_state = estimate_frontier_kde_state(
         next_nodes,
-        cache=DTECache(),
+        cache=FileDTECache(_app_cache_path(run_dir)),
         provider=provider,
     )
     for node, log_density, uncertainty in zip(
@@ -461,6 +467,12 @@ def next_app_episode(
         )
 
     limits = runtime_limits or RuntimeLimits(max_retries=1)
+    if state.controller_action in {"ready_for_synthesis", "run_complete"}:
+        return NextEpisodeOutcome(
+            run_id=state.run_id,
+            controller_action=state.controller_action,
+            reason="controller terminal action is sticky",
+        )
     if state.controller_action == "await_operator_decision":
         return NextEpisodeOutcome(
             run_id=state.run_id,
@@ -497,6 +509,18 @@ def next_app_episode(
                 transport_hints={"profile": profile, "runtime": "current-codex-app"},
             )
             return _grant_new_episode(run_dir, state, request, profile=profile)
+
+        if state.controller_iteration >= state.spec.budget.max_iterations:
+            terminal_action: ControllerAction = (
+                "ready_for_synthesis" if state.spec.require_final_synthesis else "run_complete"
+            )
+            state.controller_action = terminal_action
+            _save_state(run_dir, state)
+            return NextEpisodeOutcome(
+                run_id=state.run_id,
+                controller_action=terminal_action,
+                reason="maximum controller iterations reached",
+            )
 
         unjudged = _select_unjudged_frontier(state)
         if unjudged:

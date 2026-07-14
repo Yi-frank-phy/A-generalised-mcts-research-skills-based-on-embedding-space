@@ -22,14 +22,14 @@ This repository implements a fixed DTE research protocol. When acting as an agen
 When the current Codex App main agent runs DTE research:
 
 1. Start or resume the persistent backend run.
-2. Call `next-episode`; do not manually select the global branch or child grant.
+2. Call `next-episode`; do not manually select the global branch, Judge batch, or child grant. The backend consumes deterministic embedding/entropy/UCB/allocation transitions internally.
 3. Read the complete versioned `EpisodeRequest` and its `attempt_id`.
 4. Perform only that bounded episode with current App reasoning, tools, and optional native subagents.
 5. Construct one complete strict `EpisodeResult`; progress chat, Markdown, files, and subagent summaries are not committed results.
 6. Call `submit-episode-result` and inspect `CommitOutcome` plus the backend controller action.
 7. Repeat only when the backend requests another episode; use explicit fail/cancel/retry transitions when needed.
 
-Never hand-fill score, embedding, uncertainty, UCB, allocation, graph revision, stopping, or synthesis fields. Never bypass submission validation or treat hidden agent count, names, routing, traces, tokens, or quota as required graph facts.
+For a Judge request, return only the granted nodes' observable scores, reasoning, risks, and optional uncertainty evidence. Never hand-fill score into graph state, embedding, density, entropy, uncertainty, UCB, allocation, graph/node revision, stopping, or synthesis fields. Never bypass submission validation or treat hidden agent count, names, routing, traces, tokens, or quota as required graph facts.
 
 ## Preferred implementation style
 

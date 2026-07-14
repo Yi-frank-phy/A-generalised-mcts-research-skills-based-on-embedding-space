@@ -20,6 +20,8 @@ EVENT_TYPES = {
     "episode_superseded",
     "output_rejected",
     "nodes_committed",
+    "judge_observations_committed",
+    "allocation_recorded",
     "run_completed",
 }
 
@@ -52,6 +54,11 @@ class EpisodeEventLog:
             "input_graph_revision": None,
             "returned_node_count": None,
             "accepted_node_count": None,
+            "selected_node_count": None,
+            "returned_observation_count": None,
+            "accepted_observation_count": None,
+            "allocated_child_count": None,
+            "spatial_entropy": None,
             "rejection_reason": None,
             "input_tokens": None,
             "output_tokens": None,

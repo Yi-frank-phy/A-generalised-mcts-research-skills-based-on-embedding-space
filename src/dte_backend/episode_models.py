@@ -80,6 +80,51 @@ class ExecutorEpisodeOutput(DTEBaseModel):
     unresolved_questions: list[str] = Field(default_factory=list)
 
 
+class JudgeNodeInput(DTEBaseModel):
+    """Producer-visible Judge input with no controller mutation authority."""
+
+    node_id: str = Field(min_length=1)
+    node_type: Literal["candidate", "evidence", "counterexample", "merge"] = "candidate"
+    claim: str = Field(min_length=1)
+    rationale: str = ""
+    assumptions: list[str] = Field(default_factory=list)
+    evidence: list[str] = Field(default_factory=list)
+    risks: list[str] = Field(default_factory=list)
+    confidence: float = Field(default=0.5, ge=0.0, le=1.0)
+
+
+class JudgeEpisodePayload(DTEBaseModel):
+    rubric_version: str = Field(min_length=1)
+    problem: str = Field(min_length=1)
+    goal: str = Field(min_length=1)
+    constraints: list[str] = Field(default_factory=list)
+    selected_frontier_nodes: list[JudgeNodeInput] = Field(min_length=1)
+    required_output_fields: list[
+        Literal["node_id", "score", "reasoning", "risks", "uncertainty_evidence"]
+    ] = Field(default_factory=lambda: ["node_id", "score", "reasoning", "risks"])
+
+    @model_validator(mode="after")
+    def validate_selected_nodes(self) -> "JudgeEpisodePayload":
+        node_ids = [node.node_id for node in self.selected_frontier_nodes]
+        if len(node_ids) != len(set(node_ids)):
+            raise ValueError("Judge payload selected node IDs must be unique")
+        if len(self.required_output_fields) != len(set(self.required_output_fields)):
+            raise ValueError("Judge required_output_fields must be unique")
+        return self
+
+
+class JudgeObservation(DTEBaseModel):
+    node_id: str = Field(min_length=1)
+    score: float = Field(ge=0.0, le=1.0)
+    reasoning: str = Field(min_length=1)
+    risks: list[str]
+    uncertainty_evidence: list[str] = Field(default_factory=list)
+
+
+class JudgeEpisodeOutput(DTEBaseModel):
+    observations: list[JudgeObservation] = Field(min_length=1)
+
+
 class RuntimeDiagnostics(DTEBaseModel):
     adapter_name: str = Field(min_length=1)
     transport_name: str = Field(min_length=1)
@@ -120,6 +165,7 @@ class EpisodeRequest(DTEBaseModel):
     max_returned_children: int | None = Field(default=None, ge=0, le=50)
     required_parent_id_on_children: bool = True
     executor_payload: ExecutorEpisodePayload | None = None
+    judge_payload: JudgeEpisodePayload | None = None
 
     @model_validator(mode="after")
     def validate_role_payload(self) -> "EpisodeRequest":
@@ -140,6 +186,28 @@ class EpisodeRequest(DTEBaseModel):
                 raise ValueError("executor payload parent does not match parent_node_id")
             if self.selected_node_revisions.get(self.parent_node_id) != self.parent_node_revision:
                 raise ValueError("selected_node_revisions must include the assigned parent revision")
+            if not self.required_parent_id_on_children:
+                raise ValueError("Executor request must require the assigned parent ID on children")
+            if self.judge_payload is not None:
+                raise ValueError("judge_payload requires role='judge'")
+        elif self.role == "judge":
+            if self.judge_payload is None:
+                raise ValueError("judge request is missing judge_payload")
+            executor_fields = (
+                self.parent_node_id,
+                self.parent_node_revision,
+                self.max_returned_children,
+                self.executor_payload,
+            )
+            if any(value is not None for value in executor_fields):
+                raise ValueError("executor-specific fields require role='executor'")
+            if self.required_parent_id_on_children:
+                raise ValueError("Judge request must not grant child-parent authority")
+            selected_ids = [node.node_id for node in self.judge_payload.selected_frontier_nodes]
+            if set(selected_ids) != set(self.selected_node_revisions):
+                raise ValueError("Judge payload nodes must exactly match selected_node_revisions")
+            if self.allowed_output_types:
+                raise ValueError("Judge request must not grant graph output types")
         elif any(
             value is not None
             for value in (
@@ -150,6 +218,8 @@ class EpisodeRequest(DTEBaseModel):
             )
         ):
             raise ValueError("executor-specific fields require role='executor'")
+        elif self.judge_payload is not None:
+            raise ValueError("judge_payload requires role='judge'")
         if len(set(self.allowed_output_types)) != len(self.allowed_output_types):
             raise ValueError("allowed_output_types must not contain duplicates")
         return self
@@ -163,7 +233,7 @@ class EpisodeResult(DTEBaseModel):
     input_graph_revision: int = Field(ge=0)
     selected_node_revisions: dict[str, int]
     status: EpisodeStatus
-    structured_output: ExecutorEpisodeOutput | None
+    structured_output: ExecutorEpisodeOutput | JudgeEpisodeOutput | None
     runtime_diagnostics: RuntimeDiagnostics
     output_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     schema_version: str = Field(min_length=1)
@@ -198,7 +268,10 @@ def canonical_json_bytes(value: Any) -> bytes:
     ).encode("utf-8")
 
 
-def compute_output_hash(output: ExecutorEpisodeOutput | None, schema_version: str) -> str:
+def compute_output_hash(
+    output: ExecutorEpisodeOutput | JudgeEpisodeOutput | None,
+    schema_version: str,
+) -> str:
     payload = {
         "schema_version": schema_version,
         "structured_output": None if output is None else output.model_dump(mode="json"),

@@ -27,7 +27,20 @@ def validate_executor_children(parent: SearchNode, count: int, children: list[Se
         return validate_search_node_output(parent, count, children)
     except ValueError as exc:
         message = str(exc)
-        if any(field in message for field in ("local_embedding", "judge_reasoning", "score", "uncertainty", "ucb_score")):
+        if any(
+            field in message
+            for field in (
+                "local_embedding",
+                "judge_reasoning",
+                "judge_risks",
+                "judge_uncertainty_evidence",
+                "judge_result_provenance",
+                "score",
+                "density",
+                "uncertainty",
+                "ucb_score",
+            )
+        ):
             raise ValueError("Executor adapters cannot pre-fill Judge/Evolution metrics") from exc
         if "expansion_budget" in message:
             raise ValueError("Executor adapters cannot pre-fill expansion budgets") from exc

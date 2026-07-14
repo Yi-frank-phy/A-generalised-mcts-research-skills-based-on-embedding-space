@@ -85,16 +85,19 @@ python -m dte_backend strict-run \
 
 The real-mode controller and provider wiring are tested with a deterministic embedding-provider stub. Live Gemini API connectivity is intentionally not exercised because no production credential is available. This is not a merge blocker. CI still verifies the Gemini provider wiring, 3072-dimensional policy, cache namespace, and fail-closed behavior when neither supported API-key environment variable is present.
 
-## AgentEpisode Executor vertical slice
+## App-native Judge → controller → Executor vertical slice
 
-Executor expansion now has a transport-neutral, versioned boundary driven by the current Codex App main agent:
+Ordinary unscored frontier nodes now progress through transport-neutral, versioned Judge and Executor boundaries driven by the current Codex App main agent:
 
 ```text
-next-episode -> EpisodeRequest -> current App native work -> EpisodeResult
-    -> commit_episode_result(...) -> revised graph
+unscored frontier -> Judge EpisodeRequest -> current App native work
+    -> Judge EpisodeResult -> atomic backend commit
+    -> backend embedding/KDE/entropy/UCB/allocation
+    -> Executor EpisodeRequest -> current App native work
+    -> Executor EpisodeResult -> atomic backend commit
 ```
 
-`commit_episode_result(...)` validates the complete result before replacing graph state. It rejects stale graph or parent revisions, identity/role/schema/hash mismatches, over-grant output, collisions, duplicate IDs, missing parent references, forbidden node types/statuses, non-completed results, and every controller-owned field. Rejection leaves the graph unchanged and appends an `output_rejected` event when telemetry is configured.
+`commit_episode_result(...)` dispatches by the committed request role and validates the complete result before replacing graph state. Judge commits require exactly one observable score/reasoning observation per granted node and reject stale revisions, missing/extra/duplicate node IDs, invalid scores, or controller-owned pollution. Executor validation retains the existing over-grant, collision, ancestry, type/status, lifecycle, hash, and revision firewall. Every rejection leaves graph and node revisions unchanged.
 
 The App-native backend command loop is:
 
@@ -111,6 +114,10 @@ python -m dte_backend run-status --run-dir <run-dir>
 The existing subprocess Executor is preserved only as a legacy/headless fallback and regression baseline through `CommandAgentEpisodeAdapter`. `NativeStubEpisodeAdapter` is a deterministic test fixture. Neither is the normal Codex App path, and neither is described as Ultra integration. SDK/App Server transports are deferred by the normative App profile.
 
 Episode telemetry is append-only JSONL at `<run-dir>/episode_events.jsonl`. Because hidden App runtime usage and subagent topology are not available to repository code, App events record `usage_source=unavailable` and do not estimate tokens, quota, subagent count, or routing traces.
+
+App-path embedding vectors are cached in the run-scoped `<run-dir>/dte_cache.json` through the existing `FileDTECache` namespace contract (provider, model/snapshot, dimension, and embedding contract version). The cache is not graph state; a cache failure cannot partially commit controller fields or revisions. Terminal `ready_for_synthesis` / `run_complete` actions are sticky, and after already-allocated Executor grants are consumed the iteration cap is enforced before any new Judge grant.
+
+Native Seed, Relation, and final Synthesis episodes remain deferred, as does full production role closure. The headless Judge command remains a regression/legacy path rather than the normal App runtime.
 
 ## License
 

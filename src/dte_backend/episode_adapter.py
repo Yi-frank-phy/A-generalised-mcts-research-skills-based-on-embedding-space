@@ -15,6 +15,8 @@ from .episode_models import (
     EpisodeResult,
     ExecutorEpisodeOutput,
     ExecutorNodeCandidate,
+    JudgeEpisodePayload,
+    JudgeNodeInput,
     RuntimeDiagnostics,
     RuntimeLimits,
     compute_output_hash,
@@ -60,7 +62,11 @@ def build_executor_episode_request(
         not in {
             "local_embedding",
             "judge_reasoning",
+            "judge_risks",
+            "judge_uncertainty_evidence",
+            "judge_result_provenance",
             "score",
+            "density",
             "uncertainty",
             "ucb_score",
             "expansion_budget",
@@ -92,6 +98,78 @@ def build_executor_episode_request(
             "iteration": iteration,
             "constraints": constraints or [],
         },
+    )
+
+
+def build_judge_episode_request(
+    graph: EpisodeGraph,
+    nodes: list[SearchNode],
+    *,
+    run_id: str,
+    problem: str,
+    goal: str,
+    constraints: list[str] | None = None,
+    rubric_version: str = "research-potential.v1",
+    native_orchestration_allowed: bool = True,
+    runtime_limits: RuntimeLimits | None = None,
+    tool_policy: Any = None,
+    transport_hints: dict[str, Any] | None = None,
+) -> EpisodeRequest:
+    """Create one bounded observable Judge grant from committed frontier nodes."""
+
+    if not nodes:
+        raise ValueError("Judge grant requires at least one selected node")
+    selected_revisions: dict[str, int] = {}
+    selected_inputs: list[JudgeNodeInput] = []
+    for node in nodes:
+        if node.status != "frontier" or node.node_id not in graph.node_revisions:
+            raise ValueError("Judge grants require committed frontier nodes")
+        selected_revisions[node.node_id] = graph.node_revisions[node.node_id]
+        selected_inputs.append(
+            JudgeNodeInput.model_validate(
+                node.model_dump(
+                    mode="json",
+                    include={
+                        "node_id",
+                        "node_type",
+                        "claim",
+                        "rationale",
+                        "assumptions",
+                        "evidence",
+                        "risks",
+                        "confidence",
+                    },
+                )
+            )
+        )
+    return EpisodeRequest(
+        episode_id=str(uuid.uuid4()),
+        attempt_id=str(uuid.uuid4()),
+        run_id=run_id,
+        role="judge",
+        input_graph_revision=graph.revision,
+        selected_node_revisions=selected_revisions,
+        objective=f"Judge research potential for: {goal}",
+        coverage_requirements=[
+            "score every granted node exactly once",
+            "state observable reasoning and material risks",
+            "do not return controller-owned geometry, allocation, revision, stopping, or synthesis fields",
+        ],
+        allowed_output_types=[],
+        output_schema_version="judge-output.v1",
+        native_orchestration_allowed=native_orchestration_allowed,
+        runtime_limits=runtime_limits or RuntimeLimits(),
+        tool_policy=tool_policy,
+        transport_hints=transport_hints,
+        required_parent_id_on_children=False,
+        judge_payload=JudgeEpisodePayload(
+            rubric_version=rubric_version,
+            problem=problem,
+            goal=goal,
+            constraints=constraints or [],
+            selected_frontier_nodes=selected_inputs,
+            required_output_fields=["node_id", "score", "reasoning", "risks"],
+        ),
     )
 
 
@@ -160,7 +238,11 @@ class LegacyExecutorEpisodeAdapter:
                         exclude={
                             "local_embedding",
                             "judge_reasoning",
+                            "judge_risks",
+                            "judge_uncertainty_evidence",
+                            "judge_result_provenance",
                             "score",
+                            "density",
                             "uncertainty",
                             "ucb_score",
                             "expansion_budget",

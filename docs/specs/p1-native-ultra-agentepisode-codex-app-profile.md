@@ -348,6 +348,16 @@ The App main agent may read `request.json` and write a candidate `result.json`, 
 
 The result artifact must not itself be treated as committed state.
 
+App-native Relation adds stable versioned epistemic artifacts:
+
+```text
+<run-dir>/relations/candidates.json
+<run-dir>/relations/relation_ledger.json
+<run-dir>/relations/synthesis_readiness.json
+```
+
+They mirror controller-owned persistent state and survive restart. Writing an episode `result.json` alone cannot modify them.
+
 ## 10. Skill and prompt integration
 
 `SKILL.md`, `AGENTS.md`, and relevant runtime guidance must teach the Codex App main agent to follow this loop:
@@ -491,7 +501,7 @@ This is the required meaning of seamless Ultra-mode adaptation for the first imp
 
 ## 17. Implemented vertical-slice status
 
-The App-native Judge → controller → Executor slice now implements:
+The App-native Judge → controller → Executor → Relation/readiness slice now implements:
 
 - persistent `create-run`, `next-episode`, `submit-episode-result`, `fail-episode`, `cancel-episode`, `retry-episode`, `request-synthesis`, and `run-status` operations;
 - strict request/result envelopes with distinct `episode_id` and `attempt_id`;
@@ -506,5 +516,13 @@ The App-native Judge → controller → Executor slice now implements:
 - run-scoped App embedding persistence at `<run-dir>/dte_cache.json` using the existing provider/model/dimension/contract-version namespace;
 - coarse append-only telemetry with App usage marked `unavailable`;
 - Skill and `AGENTS.md` instructions for the current-App loop.
+- deterministic provisional synthesis branch selection from committed non-merged nodes;
+- bounded `role=relation` requests with canonical candidate pairs and independent `max_relation_pairs_per_episode`;
+- strict equivalent/complementary/conflict/independent observations committed through `commit_episode_result(...)`;
+- persistent candidate, Relation, merge-application, and Synthesis-readiness records;
+- backend-only canonical equivalent merge with source-node provenance preservation;
+- conditional readiness blocking for selected exact duplicates and potential material conflicts, while ordinary unresolved candidates remain nonblocking;
+- explicit material-conflict disclosure obligations because full discriminator Executor scheduling remains deferred;
+- Relation gating before a new sticky terminal action, without reopening legacy persisted terminal runs or incrementing controller search iteration.
 
-The command/subprocess adapter remains only a legacy/headless fallback and regression baseline. SDK/App Server transport, hidden App-subagent inspection, native Seed, Relation, and final Synthesis episodes, full production role closure, and precise App token/quota telemetry remain deferred.
+The command/subprocess adapter remains only a legacy/headless fallback and regression baseline. SDK/App Server transport, hidden App-subagent inspection, native Seed and final Synthesis episodes, full discriminator Executor scheduling, full production role closure, and precise App token/quota telemetry remain deferred.

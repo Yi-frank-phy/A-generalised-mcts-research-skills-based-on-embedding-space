@@ -279,8 +279,9 @@ def test_app_driver_preserves_operator_policy_authority(tmp_path):
         request_app_synthesis(run_dir, main_request)
     user_request = main_request.model_copy(update={"requested_by": "user"})
     state = request_app_synthesis(run_dir, user_request)
-    assert state.controller_action == "ready_for_synthesis"
+    assert state.controller_action == "continue_controller"
     assert state.synthesis_request.requested_by == "user"
+    assert next_app_episode(run_dir).controller_action == "ready_for_synthesis"
 
 
 def test_skill_and_agents_define_current_app_loop_without_sdk_primary_path():

@@ -32,6 +32,7 @@ def test_run_spec_serializes_only_canonical_budget_fields():
     serialized = spec.model_dump()["budget"]
     assert serialized["allocation_mass_per_iteration"] == 3
     assert serialized["max_children_per_iteration"] == 5
+    assert serialized["max_relation_pairs_per_episode"] == 3
     assert "total_child_budget" not in serialized
 
 
@@ -39,6 +40,7 @@ def test_generated_budget_schema_uses_canonical_fields():
     schema = BudgetSpec.model_json_schema()["properties"]
     assert "allocation_mass_per_iteration" in schema
     assert "max_children_per_iteration" in schema
+    assert schema["max_relation_pairs_per_episode"]["default"] == 3
     assert "total_child_budget" not in schema
 
 
@@ -51,9 +53,11 @@ def test_checked_in_run_schema_and_example_use_canonical_budget_fields():
 
     assert "allocation_mass_per_iteration" in schema_budget["properties"]
     assert "max_children_per_iteration" in schema_budget["properties"]
+    assert "max_relation_pairs_per_episode" in schema_budget["properties"]
     assert "total_child_budget" not in schema_budget["properties"]
     assert example_budget["allocation_mass_per_iteration"] == 3
     assert example_budget["max_children_per_iteration"] == 5
+    assert example_budget["max_relation_pairs_per_episode"] == 3
     assert "total_child_budget" not in example_budget
     assert schema["properties"]["operator_policy"]["properties"]["main_agent_may_request_synthesis"]["default"] is True
     assert example["operator_policy"]["main_agent_may_request_synthesis"] is True

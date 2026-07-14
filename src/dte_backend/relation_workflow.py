@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from uuid import uuid4
 
+from .merge import select_canonical_node
 from .models import MergeProposal, SearchNode
 from .oracles import RelationOracleResult
 
@@ -36,13 +37,8 @@ def relation_result_to_outputs(
         return None, None
 
     if relation.relation == "equivalent":
-        ranked = sorted(
-            source_nodes,
-            key=lambda node: (node.score if node.score is not None else node.confidence),
-            reverse=True,
-        )
-        keep = ranked[0]
-        absorbed = ranked[1:]
+        keep = select_canonical_node(source_nodes)
+        absorbed = [node for node in source_nodes if node.node_id != keep.node_id]
         return (
             MergeProposal(
                 merge_type="equivalent_merge",

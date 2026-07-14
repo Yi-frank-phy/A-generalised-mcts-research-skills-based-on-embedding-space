@@ -2,7 +2,47 @@
 
 from __future__ import annotations
 
-from .models import DTERunSpec, ForcedSynthesisRecord, SearchNode
+from .models import DTERunSpec, ForcedSynthesisRecord, SearchNode, SynthesisControlRequest
+from .relation_models import ProvisionalSynthesisSelection
+
+
+def select_provisional_synthesis_nodes(
+    nodes: list[SearchNode],
+    *,
+    graph_revision: int,
+    synthesis_request: SynthesisControlRequest | None = None,
+    max_nodes: int = 8,
+) -> ProvisionalSynthesisSelection:
+    """Select a deterministic committed branch set before final Synthesis.
+
+    This extracts the existing report ranking into a reusable backend decision.
+    Merged aliases are excluded so equivalent branches cannot be double-counted.
+    """
+
+    eligible = [
+        node
+        for node in nodes
+        if node.status in {"frontier", "closed"} and node.node_type != "synthesis"
+    ]
+    if synthesis_request is not None and synthesis_request.scope == "node_ids":
+        requested = set(synthesis_request.node_ids)
+        eligible = [node for node in eligible if node.node_id in requested]
+        reason = "operator-requested committed node scope"
+    else:
+        reason = "deterministic report ranking over committed non-merged branches"
+
+    ranked = sorted(
+        eligible,
+        key=lambda node: (
+            -(node.score if node.score is not None else node.confidence),
+            node.node_id,
+        ),
+    )
+    return ProvisionalSynthesisSelection(
+        selected_node_ids=[node.node_id for node in ranked[:max_nodes]],
+        selection_reason=reason,
+        selection_revision=graph_revision,
+    )
 
 
 def synthesize_report(

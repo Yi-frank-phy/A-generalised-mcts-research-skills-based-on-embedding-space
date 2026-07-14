@@ -22,6 +22,13 @@ from .episode_models import (
     compute_output_hash,
 )
 from .models import ExpansionRequest, SearchNode
+from .relation_models import (
+    RelationCandidate,
+    RelationEpisodePayload,
+    RelationEvidenceInput,
+    RelationNodeInput,
+    RelationPairInput,
+)
 from .telemetry import EpisodeEventLog
 
 
@@ -169,6 +176,114 @@ def build_judge_episode_request(
             constraints=constraints or [],
             selected_frontier_nodes=selected_inputs,
             required_output_fields=["node_id", "score", "reasoning", "risks"],
+        ),
+    )
+
+
+def _relation_node_input(node: SearchNode, revision: int) -> RelationNodeInput:
+    return RelationNodeInput(
+        node_id=node.node_id,
+        node_revision=revision,
+        node_type=node.node_type,
+        claim=node.claim,
+        rationale=node.rationale,
+        assumptions=list(node.assumptions),
+        evidence=[
+            RelationEvidenceInput(
+                evidence_ref=f"{node.node_id}:evidence:{index}",
+                text=value,
+            )
+            for index, value in enumerate(node.evidence)
+        ],
+        risks=list(node.risks),
+        confidence=node.confidence,
+        judge_reasoning=node.judge_reasoning,
+        judge_risks=list(node.judge_risks),
+        judge_uncertainty_evidence=list(node.judge_uncertainty_evidence),
+        judge_result_provenance=(
+            None if node.judge_result_provenance is None else dict(node.judge_result_provenance)
+        ),
+        parent_ids=list(node.parent_ids),
+    )
+
+
+def build_relation_episode_request(
+    graph: EpisodeGraph,
+    candidates: list[RelationCandidate],
+    *,
+    run_id: str,
+    problem: str,
+    goal: str,
+    constraints: list[str],
+    provisional_synthesis_node_ids: list[str],
+    max_relation_pairs_per_episode: int,
+    rubric_version: str = "semantic-relation.v1",
+    native_orchestration_allowed: bool = True,
+    runtime_limits: RuntimeLimits | None = None,
+    tool_policy: Any = None,
+    transport_hints: dict[str, Any] | None = None,
+) -> EpisodeRequest:
+    """Build one bounded Relation grant from exact backend-selected candidates."""
+
+    if not candidates:
+        raise ValueError("Relation grant requires at least one candidate")
+    if len(candidates) > max_relation_pairs_per_episode:
+        raise ValueError("Relation grant exceeds max_relation_pairs_per_episode")
+    selected_revisions: dict[str, int] = {}
+    pair_inputs: list[RelationPairInput] = []
+    for candidate in candidates:
+        left = graph.node_by_id(candidate.left_node_id)
+        right = graph.node_by_id(candidate.right_node_id)
+        if left is None or right is None:
+            raise ValueError("Relation candidate references an uncommitted node")
+        left_revision = graph.node_revisions[left.node_id]
+        right_revision = graph.node_revisions[right.node_id]
+        if (
+            candidate.left_node_revision != left_revision
+            or candidate.right_node_revision != right_revision
+        ):
+            raise ValueError("Relation candidate revision is stale")
+        selected_revisions[left.node_id] = left_revision
+        selected_revisions[right.node_id] = right_revision
+        pair_inputs.append(
+            RelationPairInput(
+                candidate_id=candidate.candidate_id,
+                left=_relation_node_input(left, left_revision),
+                right=_relation_node_input(right, right_revision),
+                left_node_revision=left_revision,
+                right_node_revision=right_revision,
+                candidate_reason=candidate.candidate_reason,
+                priority=candidate.priority,
+                material_to_synthesis=candidate.material_to_synthesis,
+            )
+        )
+    return EpisodeRequest(
+        episode_id=str(uuid.uuid4()),
+        attempt_id=str(uuid.uuid4()),
+        run_id=run_id,
+        role="relation",
+        input_graph_revision=graph.revision,
+        selected_node_revisions=selected_revisions,
+        objective="Classify only the granted committed-node Relation candidates",
+        coverage_requirements=[
+            "classify every granted candidate exactly once",
+            "use only granted node pairs and evidence references",
+            "return observations or proposals, never graph mutations or controller fields",
+        ],
+        allowed_output_types=[],
+        output_schema_version="relation-output.v1",
+        native_orchestration_allowed=native_orchestration_allowed,
+        runtime_limits=runtime_limits or RuntimeLimits(),
+        tool_policy=tool_policy,
+        transport_hints=transport_hints,
+        required_parent_id_on_children=False,
+        relation_payload=RelationEpisodePayload(
+            rubric_version=rubric_version,
+            problem=problem,
+            goal=goal,
+            constraints=list(constraints),
+            candidate_pairs=pair_inputs,
+            provisional_synthesis_node_ids=list(provisional_synthesis_node_ids),
         ),
     )
 
@@ -390,7 +505,12 @@ def run_and_commit_episode(
         )
 
     diagnostics = result.runtime_diagnostics
-    returned = 0 if result.structured_output is None else len(result.structured_output.nodes)
+    if result.structured_output is None:
+        returned = 0
+    elif isinstance(result.structured_output, ExecutorEpisodeOutput):
+        returned = len(result.structured_output.nodes)
+    else:
+        returned = len(result.structured_output.observations)
     if telemetry is not None:
         telemetry.emit(
             "episode_completed" if result.status == "completed" else "episode_failed",

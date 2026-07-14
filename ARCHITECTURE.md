@@ -65,7 +65,7 @@ DTE graph depth      = cross-iteration epistemic recursion
 native subagent work = bounded parallelism inside one episode
 ```
 
-The implemented Judge/Executor slice represents structural graph state with a monotonically increasing graph revision and a revision for every committed node. A grant snapshots both. `commit_episode_result(...)` dispatches by the committed request role, rechecks the full envelope and selected revisions, validates on a copy, then replaces graph state once. Judge commits revise only granted nodes with validated observable judgments; controller progression separately revises frontier geometry/allocation fields; Executor commits close one granted parent and add bounded children. Rejections change neither graph nor node revisions. This is intentionally not event sourcing or distributed version control.
+The implemented Judge/Executor/Relation slice represents structural graph state with a monotonically increasing graph revision and a revision for every committed node. A grant snapshots both. `commit_episode_result(...)` dispatches by the committed request role, rechecks the full envelope and selected revisions, validates on a copy, then replaces graph state once. Judge commits revise only granted nodes with validated observable judgments; controller progression separately revises frontier geometry/allocation fields; Executor commits close one granted parent and add bounded children; Relation commits add validated semantic edges and only backend-applied equivalent merges revise affected nodes. Rejections change neither graph nor node revisions. This is intentionally not event sourcing or distributed version control.
 
 The production Codex App path is a persistent driver protocol: the backend grants one request, the current App main agent performs it with native opaque orchestration, and the backend accepts one complete result. The backend does not launch another Codex process. Command/subprocess and deterministic adapters remain legacy/headless and test implementations of the transport-neutral boundary. Internal agent count, names, routing, traces, token usage, and quota remain unavailable telemetry rather than correctness conditions.
 
@@ -256,6 +256,10 @@ The backend converts validated output into a merge proposal or discriminator tas
 
 Relation is not a universal synchronous barrier. Exact duplicates may be handled immediately; ordinary proximity creates optional or high-priority tasks. Only unresolved material conflicts among branches selected for synthesis must be resolved or explicitly disclosed.
 
+In the App-native path, Relation is scheduled only after backend provisional Synthesis selection and before a new terminal action is committed. The persistent candidate ledger canonicalizes unordered pairs, the relation ledger stores validated epistemic edges, and the readiness record separates blockers from ordinary unresolved candidates. Existing persisted terminal runs remain sticky and are reported as legacy-unchecked rather than reopened.
+
+Equivalent classification does not give the model merge authority. The backend selects a canonical node from committed status, information/evidence completeness, Judge value, provenance stability, and a node-ID tie-break; absorbed nodes remain auditable aliases and cannot receive future Executor allocation or be double-counted by Synthesis selection.
+
 ## Budget architecture
 
 DTE separates two budget layers.
@@ -277,6 +281,7 @@ The default intended semantics are:
 ```text
 allocation_mass_per_iteration = 3
 max_children_per_iteration = 5
+max_relation_pairs_per_episode = 3
 ```
 
 The continuous Boltzmann mass is discretized into children and may realize more than three children, but never more than the hard cap.

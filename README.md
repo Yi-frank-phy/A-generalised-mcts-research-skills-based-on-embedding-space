@@ -117,7 +117,9 @@ Episode telemetry is append-only JSONL at `<run-dir>/episode_events.jsonl`. Beca
 
 App-path embedding vectors are cached in the run-scoped `<run-dir>/dte_cache.json` through the existing `FileDTECache` namespace contract (provider, model/snapshot, dimension, and embedding contract version). The cache is not graph state; a cache failure cannot partially commit controller fields or revisions. Terminal `ready_for_synthesis` / `run_complete` actions are sticky, and after already-allocated Executor grants are consumed the iteration cap is enforced before any new Judge grant.
 
-Native Seed, Relation, and final Synthesis episodes remain deferred, as does full production role closure. The headless Judge command remains a regression/legacy path rather than the normal App runtime.
+App-native Relation episodes now maintain a versioned semantic relation layer before a new Synthesis terminal action. The backend selects provisional synthesis branches, derives bounded canonical Relation candidates, grants at most `max_relation_pairs_per_episode`, commits observations through the same role-dispatched boundary, applies deterministic equivalent merges, records complementary/conflict/independent edges, and evaluates a deterministic readiness record. Only unresolved exact duplicates and material conflicts that affect the provisional set block; ordinary non-material or non-selected candidates do not.
+
+Relation state persists under `<run-dir>/relations/` as `candidates.json`, `relation_ledger.json`, and `synthesis_readiness.json`. Terminal `ready_for_synthesis` / `run_complete` remains sticky; legacy terminal runs are not reopened. Native Seed and final Synthesis episodes remain deferred, as does full production role closure. The headless Judge/Relation commands remain regression/legacy paths rather than the normal App runtime.
 
 ## License
 

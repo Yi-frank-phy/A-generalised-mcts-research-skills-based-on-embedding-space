@@ -31,6 +31,8 @@ When the current Codex App main agent runs DTE research:
 
 For a Judge request, return only the granted nodes' observable scores, reasoning, risks, and optional uncertainty evidence. Never hand-fill score into graph state, embedding, density, entropy, uncertainty, UCB, allocation, graph/node revision, stopping, or synthesis fields. Never bypass submission validation or treat hidden agent count, names, routing, traces, tokens, or quota as required graph facts.
 
+For a Relation request, inspect only `relation_payload.candidate_pairs`. Classify every granted pair exactly once as `equivalent`, `complementary`, `conflict`, or `independent`; use only granted evidence references; construct one strict `RelationEpisodeResult`; submit it; then inspect `CommitOutcome`. Do not scan the graph for extra pairs, select a canonical node, merge or close nodes, edit the candidate/Relation ledger, set synthesis readiness, or write `ready_for_synthesis`. Relation is not a second Judge or a final Synthesis agent.
+
 ## Preferred implementation style
 
 - Keep code simple and explicit.

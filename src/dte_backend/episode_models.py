@@ -9,6 +9,7 @@ from typing import Any, Literal
 from pydantic import Field, model_validator
 
 from .models import DTEBaseModel
+from .relation_models import RelationEpisodeOutput, RelationEpisodePayload
 
 
 EpisodeRole = Literal["executor", "seed", "judge", "relation", "synthesis"]
@@ -166,6 +167,7 @@ class EpisodeRequest(DTEBaseModel):
     required_parent_id_on_children: bool = True
     executor_payload: ExecutorEpisodePayload | None = None
     judge_payload: JudgeEpisodePayload | None = None
+    relation_payload: RelationEpisodePayload | None = None
 
     @model_validator(mode="after")
     def validate_role_payload(self) -> "EpisodeRequest":
@@ -190,6 +192,8 @@ class EpisodeRequest(DTEBaseModel):
                 raise ValueError("Executor request must require the assigned parent ID on children")
             if self.judge_payload is not None:
                 raise ValueError("judge_payload requires role='judge'")
+            if self.relation_payload is not None:
+                raise ValueError("relation_payload requires role='relation'")
         elif self.role == "judge":
             if self.judge_payload is None:
                 raise ValueError("judge request is missing judge_payload")
@@ -208,6 +212,31 @@ class EpisodeRequest(DTEBaseModel):
                 raise ValueError("Judge payload nodes must exactly match selected_node_revisions")
             if self.allowed_output_types:
                 raise ValueError("Judge request must not grant graph output types")
+            if self.relation_payload is not None:
+                raise ValueError("relation_payload requires role='relation'")
+        elif self.role == "relation":
+            if self.relation_payload is None:
+                raise ValueError("relation request is missing relation_payload")
+            executor_fields = (
+                self.parent_node_id,
+                self.parent_node_revision,
+                self.max_returned_children,
+                self.executor_payload,
+            )
+            if any(value is not None for value in executor_fields):
+                raise ValueError("executor-specific fields require role='executor'")
+            if self.judge_payload is not None:
+                raise ValueError("judge_payload requires role='judge'")
+            if self.required_parent_id_on_children:
+                raise ValueError("Relation request must not grant child-parent authority")
+            if self.allowed_output_types:
+                raise ValueError("Relation request must not grant graph output types")
+            pair_revisions: dict[str, int] = {}
+            for pair in self.relation_payload.candidate_pairs:
+                pair_revisions[pair.left.node_id] = pair.left_node_revision
+                pair_revisions[pair.right.node_id] = pair.right_node_revision
+            if pair_revisions != self.selected_node_revisions:
+                raise ValueError("Relation payload nodes must exactly match selected_node_revisions")
         elif any(
             value is not None
             for value in (
@@ -220,6 +249,8 @@ class EpisodeRequest(DTEBaseModel):
             raise ValueError("executor-specific fields require role='executor'")
         elif self.judge_payload is not None:
             raise ValueError("judge_payload requires role='judge'")
+        elif self.relation_payload is not None:
+            raise ValueError("relation_payload requires role='relation'")
         if len(set(self.allowed_output_types)) != len(self.allowed_output_types):
             raise ValueError("allowed_output_types must not contain duplicates")
         return self
@@ -233,7 +264,7 @@ class EpisodeResult(DTEBaseModel):
     input_graph_revision: int = Field(ge=0)
     selected_node_revisions: dict[str, int]
     status: EpisodeStatus
-    structured_output: ExecutorEpisodeOutput | JudgeEpisodeOutput | None
+    structured_output: ExecutorEpisodeOutput | JudgeEpisodeOutput | RelationEpisodeOutput | None
     runtime_diagnostics: RuntimeDiagnostics
     output_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     schema_version: str = Field(min_length=1)
@@ -269,7 +300,7 @@ def canonical_json_bytes(value: Any) -> bytes:
 
 
 def compute_output_hash(
-    output: ExecutorEpisodeOutput | JudgeEpisodeOutput | None,
+    output: ExecutorEpisodeOutput | JudgeEpisodeOutput | RelationEpisodeOutput | None,
     schema_version: str,
 ) -> str:
     payload = {

@@ -49,6 +49,8 @@ The main agent may reason, use tools, and delegate native subagents inside the r
 
 `next-episode` may return a strict `role=judge` request for ordinary unscored frontier nodes. Judge every granted node exactly once and return only observable score, reasoning, risks, and optional uncertainty evidence. After a valid Judge submit, call `next-episode` again: the backend, not the main agent, computes embedding/KDE density, entropy, uncertainty, UCB, and allocation before returning an Executor grant or a terminal controller action. Normal App operation must not require the main agent to interpret `continue_controller`.
 
+Before a new Synthesis terminal action, `next-episode` may return `role=relation`. Inspect only the granted bounded `relation_payload.candidate_pairs`; classify each exactly once as `equivalent`, `complementary`, `conflict`, or `independent`; return one strict Relation result; submit it; and inspect the backend outcome. Do not add ungranted pairs, scan the full graph, apply a merge, choose a canonical node, edit Relation artifacts, set readiness, or claim final synthesis. Ordinary non-material Relation candidates do not automatically block readiness; the backend owns that decision.
+
 ## Critical real-run rule
 
 Mock adapters are smoke-test tools only. They are not research Judges, not research Relation Oracles, and not acceptable for real slash-command runs.

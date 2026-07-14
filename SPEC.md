@@ -103,6 +103,7 @@ The target default semantics are:
 ```text
 allocation_mass_per_iteration = 3
 max_children_per_iteration = 5
+max_relation_pairs_per_episode = 3
 ```
 
 For temporary input compatibility, the legacy field `total_child_budget` is accepted only as a deprecated alias for `allocation_mass_per_iteration`. Canonical serialization and schemas use the new fields.
@@ -197,6 +198,10 @@ Relation is not a mandatory blocking step for every candidate pair. Recommended 
 - unresolved material conflicts among branches selected for synthesis must either be resolved or explicitly disclosed;
 - the mere existence of a Relation candidate must not automatically forbid synthesis.
 
+The App-native implementation first selects a deterministic provisional synthesis branch set, then derives a bounded Relation queue. Candidate IDs use canonical unordered node ordering plus committed revisions. Exact duplicates and potential material conflicts inside the provisional set block a new terminal synthesis action; ordinary embedding-close, near-tie, entropy-plateau, independent, or non-selected candidates do not. Each Relation episode is capped independently by `max_relation_pairs_per_episode` (default `3`); this cap is not borrowed from Executor child allocation.
+
+Relation observations are committed through `commit_episode_result(...)` into a versioned relation ledger. Non-merge observations increment graph revision once without revising source nodes. An equivalent observation is recorded first and then backend deterministic canonicalization applies an atomic merge transition, preserves all source nodes and provenance, revises only affected nodes, and excludes absorbed aliases from provisional Synthesis selection. Material conflicts must be resolved or carried forward as an explicit disclosure obligation.
+
 ### Phase F: Synthesis
 
 Compress a DTE-selected graph checkpoint into a report or synthesis node. Synthesis reads validated graph state and recorded evidence. It must not continue open-ended research or silently fill unresolved verification gaps.
@@ -253,7 +258,7 @@ output hash
 
 Runtime thread IDs, response IDs, compaction summaries, and descendant-agent traces are optional observability or recovery metadata. They are not graph facts.
 
-The implemented P1 App-native slice uses strict `EpisodeRequest` and `EpisodeResult` envelopes with `attempt_id`, persistent Judge/Executor lifecycle, graph and per-node revisions, and role-dispatched `commit_episode_result(...)` as the only mutation path for episode output. A valid Judge result commits only observable score/reasoning/risk observations; `next-episode` then runs the existing embedding/KDE, entropy, uncertainty, UCB, and allocation functions inside the backend before granting Executor work. The current Codex App main agent performs only the bounded role episode and never interprets controller mathematics or launches a second Codex. Native Seed, Relation, and Synthesis remain deferred. See the normative `docs/specs/p1-native-ultra-agentepisode-codex-app-profile.md`.
+The implemented P1 App-native slice uses strict `EpisodeRequest` and `EpisodeResult` envelopes with `attempt_id`, persistent Judge/Executor/Relation lifecycle, graph and per-node revisions, and role-dispatched `commit_episode_result(...)` as the only mutation path for episode output. A valid Judge result commits only observable score/reasoning/risk observations; `next-episode` then runs the existing embedding/KDE, entropy, uncertainty, UCB, and allocation functions inside the backend before granting Executor work. When the controller intends to terminate, the backend selects provisional synthesis branches, schedules only blocking bounded Relation work, commits validated relation facts and permitted equivalent merges, and evaluates readiness before writing a sticky terminal action. The current Codex App main agent performs only the bounded role episode and never interprets controller mathematics or launches a second Codex. Native Seed and final Synthesis remain deferred. See the normative `docs/specs/p1-native-ultra-agentepisode-codex-app-profile.md`.
 
 ## 8. Executor output contract
 

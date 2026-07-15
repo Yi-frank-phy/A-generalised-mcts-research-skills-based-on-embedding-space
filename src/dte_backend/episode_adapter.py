@@ -253,6 +253,7 @@ def build_relation_episode_request(
                 left_node_revision=left_revision,
                 right_node_revision=right_revision,
                 candidate_reason=candidate.candidate_reason,
+                scheduling_class=candidate.scheduling_class,
                 priority=candidate.priority,
                 material_to_synthesis=candidate.material_to_synthesis,
             )

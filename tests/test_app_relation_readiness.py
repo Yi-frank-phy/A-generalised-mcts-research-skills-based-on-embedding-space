@@ -29,7 +29,10 @@ from dte_backend.episode_models import (
     compute_output_hash,
 )
 from dte_backend.models import BudgetSpec, DTERunSpec, SearchNode
-from dte_backend.relation_candidates import generate_relation_candidates
+from dte_backend.relation_candidates import (
+    generate_relation_candidates,
+    generate_relation_enrichment_candidates,
+)
 from dte_backend.relation_models import (
     RelationCandidate,
     RelationEpisodeOutput,
@@ -39,7 +42,7 @@ from dte_backend.relation_readiness import evaluate_synthesis_readiness
 from dte_backend.telemetry import EpisodeEventLog
 
 
-def spec(*, cap=3, pair_cap=3, max_iterations=1):
+def spec(*, cap=3, pair_cap=3, max_iterations=1, enrichment_cap=0):
     return DTERunSpec(
         problem="relation readiness",
         goal="reach synthesis without duplicate or undisclosed material-conflict ambiguity",
@@ -49,6 +52,7 @@ def spec(*, cap=3, pair_cap=3, max_iterations=1):
             allocation_mass_per_iteration=1,
             max_children_per_iteration=cap,
             max_relation_pairs_per_episode=pair_cap,
+            max_relation_enrichment_pairs=enrichment_cap,
             min_iterations_before_synthesis=2,
         ),
         embedding_provider="hash",
@@ -200,7 +204,7 @@ def test_candidate_generation_never_expands_to_global_all_pairs():
         provisional_synthesis_node_ids=[node.node_id for node in nodes[:8]],
         max_candidates=5,
     )
-    assert len(candidates) == 5
+    assert len(candidates) == 28
     assert len(candidates) < len(nodes) * (len(nodes) - 1) // 2
 
 
@@ -482,6 +486,7 @@ def test_nonmaterial_unresolved_candidate_does_not_block_readiness():
         left_node_revision=0,
         right_node_revision=0,
         candidate_reason="embedding_close",
+        scheduling_class="enrichment",
         priority="medium",
         material_to_synthesis=False,
         created_from_graph_revision=0,
@@ -507,6 +512,7 @@ def test_selected_exact_duplicate_blocks_but_nonselected_duplicate_does_not():
         left_node_revision=0,
         right_node_revision=0,
         candidate_reason="exact_duplicate",
+        scheduling_class="blocking",
         priority="critical",
         material_to_synthesis=True,
         created_from_graph_revision=0,
@@ -735,3 +741,335 @@ def test_writing_relation_result_file_alone_cannot_mutate_ledger(tmp_path):
     result_path = run_dir / "episodes" / request.episode_id / request.attempt_id / "result.json"
     result_path.write_text(relation_result(request).model_dump_json(indent=2), encoding="utf-8")
     assert state_snapshot(run_dir) == before
+
+
+def conflict_nodes(count=8):
+    return [
+        SearchNode(
+            node_id=f"n{i}",
+            claim=f"material conclusion {i}",
+            evidence=["shared source"],
+            score=0.9 - i * 0.01,
+        )
+        for i in range(count)
+    ]
+
+
+def test_complete_blocking_inventory_covers_all_28_pairs_across_bounded_episodes(tmp_path):
+    run_dir = tmp_path / "blocking-28"
+    create_app_run(
+        run_dir,
+        spec(pair_cap=3, enrichment_cap=0),
+        conflict_nodes(),
+        run_id="blocking-28",
+    )
+    force_stop_intent(run_dir)
+    first = next_app_episode(run_dir)
+    assert first.request.role == "relation"
+    assert len(first.request.relation_payload.candidate_pairs) == 3
+    state = app_run_status(run_dir)
+    blockers = [item for item in state.relation_candidates if item.scheduling_class == "blocking"]
+    assert len(blockers) == 28
+    assert state.synthesis_readiness.blocking_inventory_complete is True
+    assert state.synthesis_readiness.blocking_pair_count == 28
+
+    granted_pairs = []
+    current = first
+    while current.controller_action == "episode_required":
+        granted_pairs.extend(
+            (pair.left.node_id, pair.right.node_id)
+            for pair in current.request.relation_payload.candidate_pairs
+        )
+        submit_app_episode_result(run_dir, relation_result(current.request, "conflict"))
+        current = next_app_episode(run_dir)
+
+    assert current.controller_action == "ready_for_synthesis"
+    assert len(granted_pairs) == 28
+    assert len(set(granted_pairs)) == 28
+    assert len(app_run_status(run_dir).relation_ledger) == 28
+    readiness = app_run_status(run_dir).synthesis_readiness
+    assert readiness.blocking_pair_count == 28
+    assert readiness.resolved_blocking_pair_count == 28
+    assert readiness.unresolved_blocking_pair_count == 0
+    assert readiness.ready is True
+
+
+def test_all_selected_duplicate_pairs_are_inventoried_before_any_merge(tmp_path):
+    run_dir = tmp_path / "duplicates-28"
+    nodes = [SearchNode(node_id=f"n{i}", claim="same", score=0.9 - i * 0.01) for i in range(8)]
+    create_app_run(run_dir, spec(pair_cap=3, enrichment_cap=0), nodes)
+    force_stop_intent(run_dir)
+    grant = next_app_episode(run_dir)
+    state = app_run_status(run_dir)
+    blockers = [item for item in state.relation_candidates if item.scheduling_class == "blocking"]
+    assert len(blockers) == 28
+    assert all(item.candidate_reason == "exact_duplicate" for item in blockers)
+    submit_app_episode_result(run_dir, relation_result(grant.request, "equivalent"))
+    next_app_episode(run_dir)
+    state = app_run_status(run_dir)
+    assert len(state.provisional_synthesis_selection.selected_node_ids) == 5
+    assert all(
+        candidate.status == "invalidated"
+        for candidate in state.relation_candidates
+        if any(
+            node.status == "merged" and node.node_id in (candidate.left_node_id, candidate.right_node_id)
+            for node in state.nodes
+        )
+        and candidate.status != "resolved"
+    )
+
+
+def test_enrichment_generation_filters_known_pairs_before_window_truncation():
+    nodes = [SearchNode(node_id=f"n{i}", claim=f"claim {i}", score=0.8) for i in range(8)]
+    revisions = {node.node_id: 0 for node in nodes}
+    first = generate_relation_enrichment_candidates(
+        nodes,
+        node_revisions=revisions,
+        graph_revision=1,
+        provisional_synthesis_node_ids=list(revisions),
+        existing=[],
+        relation_ledger=[],
+        max_candidates=16,
+    )
+    known = [
+        item.model_copy(update={"status": "resolved", "resolved_relation_record_id": f"r{i}"})
+        for i, item in enumerate(first)
+    ]
+    second = generate_relation_enrichment_candidates(
+        nodes,
+        node_revisions=revisions,
+        graph_revision=2,
+        provisional_synthesis_node_ids=list(revisions),
+        existing=known,
+        relation_ledger=[],
+        max_candidates=16,
+    )
+    assert len(first) == 16
+    assert len(second) == 12
+    assert set(item.candidate_id for item in first).isdisjoint(
+        item.candidate_id for item in second
+    )
+
+
+def test_relation_identity_ignores_graph_revision_but_tracks_node_revision():
+    nodes = [SearchNode(node_id="a", claim="A", score=0.8), SearchNode(node_id="b", claim="B", score=0.8)]
+    first = generate_relation_enrichment_candidates(
+        nodes,
+        node_revisions={"a": 0, "b": 0},
+        graph_revision=1,
+        provisional_synthesis_node_ids=["a", "b"],
+        existing=[],
+        relation_ledger=[],
+    )[0]
+    graph_only = generate_relation_enrichment_candidates(
+        nodes,
+        node_revisions={"a": 0, "b": 0},
+        graph_revision=9,
+        provisional_synthesis_node_ids=["a", "b"],
+        existing=[],
+        relation_ledger=[],
+    )[0]
+    node_changed = generate_relation_enrichment_candidates(
+        nodes,
+        node_revisions={"a": 1, "b": 0},
+        graph_revision=10,
+        provisional_synthesis_node_ids=["a", "b"],
+        existing=[],
+        relation_ledger=[],
+    )[0]
+    assert first.candidate_id == graph_only.candidate_id
+    assert first.candidate_id != node_changed.candidate_id
+
+
+def test_invalidated_candidates_do_not_occupy_enrichment_window():
+    nodes = [SearchNode(node_id=f"n{i}", claim=f"claim {i}", score=0.8) for i in range(8)]
+    revisions = {node.node_id: 0 for node in nodes}
+    first = generate_relation_enrichment_candidates(
+        nodes,
+        node_revisions=revisions,
+        graph_revision=1,
+        provisional_synthesis_node_ids=list(revisions),
+        existing=[],
+        relation_ledger=[],
+        max_candidates=16,
+    )
+    invalidated = [item.model_copy(update={"status": "invalidated"}) for item in first]
+    regenerated = generate_relation_enrichment_candidates(
+        nodes,
+        node_revisions=revisions,
+        graph_revision=2,
+        provisional_synthesis_node_ids=list(revisions),
+        existing=invalidated,
+        relation_ledger=[],
+        max_candidates=16,
+    )
+    assert [item.candidate_id for item in regenerated] == [item.candidate_id for item in first]
+
+
+def test_nonselected_unrelated_pairs_are_not_scheduled_for_enrichment():
+    nodes = [
+        SearchNode(node_id="a", claim="selected A", score=0.8),
+        SearchNode(node_id="b", claim="selected B", score=0.8),
+        SearchNode(node_id="x", claim="unrelated X", score=0.8),
+        SearchNode(node_id="y", claim="unrelated Y", score=0.8),
+    ]
+    candidates = generate_relation_enrichment_candidates(
+        nodes,
+        node_revisions={node.node_id: 0 for node in nodes},
+        graph_revision=1,
+        provisional_synthesis_node_ids=["a", "b"],
+        existing=[],
+        relation_ledger=[],
+    )
+    assert [(item.left_node_id, item.right_node_id) for item in candidates] == [("a", "b")]
+
+
+def make_enrichment_run(tmp_path, *, budget=3, pair_cap=2, node_count=5):
+    run_dir = tmp_path / f"enrichment-{budget}-{pair_cap}-{node_count}"
+    nodes = [
+        SearchNode(node_id=f"n{i}", claim=f"distinct claim {i}", score=0.8)
+        for i in range(node_count)
+    ]
+    create_app_run(
+        run_dir,
+        spec(pair_cap=pair_cap, enrichment_cap=budget),
+        nodes,
+        run_id="enrichment-run",
+    )
+    force_stop_intent(run_dir)
+    return run_dir
+
+
+def test_zero_enrichment_budget_goes_directly_terminal_after_blockers_clear(tmp_path):
+    run_dir = make_enrichment_run(tmp_path, budget=0)
+    outcome = next_app_episode(run_dir)
+    assert outcome.controller_action == "ready_for_synthesis"
+    readiness = app_run_status(run_dir).synthesis_readiness
+    assert readiness.ready is True
+    assert readiness.enrichment_pairs_remaining == 0
+
+
+def test_run_level_enrichment_budget_is_bounded_across_episodes_and_restart(tmp_path):
+    run_dir = make_enrichment_run(tmp_path, budget=3, pair_cap=2)
+    grants = []
+    while True:
+        outcome = next_app_episode(run_dir)
+        if outcome.controller_action != "episode_required":
+            assert outcome.controller_action == "ready_for_synthesis"
+            break
+        assert {pair.scheduling_class for pair in outcome.request.relation_payload.candidate_pairs} == {
+            "enrichment"
+        }
+        grants.append(len(outcome.request.relation_payload.candidate_pairs))
+        submit_app_episode_result(run_dir, relation_result(outcome.request, "independent"))
+        app_driver.load_app_run(run_dir)  # explicit restart/reload boundary
+    assert grants == [2, 1]
+    state = app_run_status(run_dir)
+    assert len([record for record in state.relation_ledger if record.scheduling_class == "enrichment"]) == 3
+    assert state.synthesis_readiness.enrichment_pairs_committed == 3
+    assert state.synthesis_readiness.enrichment_pairs_remaining == 0
+
+
+def test_failed_enrichment_attempt_and_retry_consume_only_successful_pairs(tmp_path):
+    run_dir = make_enrichment_run(tmp_path, budget=3, pair_cap=2)
+    first = next_app_episode(run_dir, runtime_limits=RuntimeLimits(max_retries=1)).request
+    fail_app_episode(run_dir, first.episode_id, first.attempt_id, "retry")
+    assert app_driver._relation_enrichment_pairs_committed(app_run_status(run_dir)) == 0
+    retry = retry_app_episode(run_dir, first.episode_id)
+    submit_app_episode_result(run_dir, relation_result(retry.request, "independent"))
+    state = app_run_status(run_dir)
+    assert app_driver._relation_enrichment_pairs_committed(state) == len(
+        retry.request.relation_payload.candidate_pairs
+    )
+
+
+@pytest.mark.parametrize("transition", ["cancelled", "expired"])
+def test_cancelled_or_expired_enrichment_attempt_does_not_consume_budget(
+    monkeypatch, tmp_path, transition
+):
+    run_dir = make_enrichment_run(tmp_path, budget=3, pair_cap=1)
+    request = next_app_episode(
+        run_dir, runtime_limits=RuntimeLimits(wall_clock_seconds=1, max_retries=1)
+    ).request
+    if transition == "cancelled":
+        cancel_app_episode(run_dir, request.episode_id, request.attempt_id, "cancel")
+    else:
+        now = app_driver._now()
+        monkeypatch.setattr(app_driver, "_now", lambda: now + timedelta(seconds=5))
+        next_app_episode(run_dir)
+    state = app_run_status(run_dir)
+    assert app_driver._relation_enrichment_pairs_committed(state) == 0
+    ledger = json.loads(
+        (run_dir / "relations" / "relation_ledger.json").read_text(encoding="utf-8")
+    )
+    assert ledger["enrichment_pairs_committed"] == 0
+    assert ledger["enrichment_pairs_remaining"] == 3
+
+
+def test_blocking_candidates_are_always_granted_before_enrichment(tmp_path):
+    run_dir = tmp_path / "blocking-first"
+    nodes = [
+        SearchNode(node_id="a", claim="yes", evidence=["shared"], score=0.8),
+        SearchNode(node_id="b", claim="no", evidence=["shared"], score=0.8),
+        SearchNode(node_id="c", claim="other", evidence=["different"], score=0.8),
+    ]
+    create_app_run(run_dir, spec(enrichment_cap=3), nodes)
+    force_stop_intent(run_dir)
+    request = next_app_episode(run_dir).request
+    assert {pair.scheduling_class for pair in request.relation_payload.candidate_pairs} == {"blocking"}
+
+
+@pytest.mark.parametrize("relation_type", ["equivalent", "complementary", "conflict", "independent"])
+def test_enrichment_preserves_the_four_relation_semantics(tmp_path, relation_type):
+    run_dir = make_enrichment_run(tmp_path, budget=1, pair_cap=1, node_count=2)
+    request = next_app_episode(run_dir).request
+    submit_app_episode_result(run_dir, relation_result(request, relation_type))
+    state = app_run_status(run_dir)
+    assert state.relation_ledger[0].relation_type == relation_type
+    if relation_type == "equivalent":
+        assert len(state.merge_applications) == 1
+    else:
+        assert state.merge_applications == []
+    if relation_type == "conflict":
+        assert state.relation_ledger[0].disclosure_required is True
+    assert next_app_episode(run_dir).controller_action == "ready_for_synthesis"
+
+
+def test_discriminator_proposal_is_persisted_but_never_scheduled(tmp_path):
+    run_dir = make_enrichment_run(tmp_path, budget=1, pair_cap=1, node_count=2)
+    request = next_app_episode(run_dir).request
+    raw = relation_result(request, "conflict").model_dump(mode="json")
+    raw["structured_output"]["observations"][0]["discriminator_task_proposal"] = {
+        "task_type": "formal_derivation",
+        "objective": "compare assumptions",
+        "rationale": "preserve a future research question",
+        "material_to_synthesis": True,
+    }
+    output = RelationEpisodeOutput.model_validate(raw["structured_output"])
+    raw["output_hash"] = compute_output_hash(output, request.output_schema_version)
+    assert submit_app_episode_result(run_dir, raw).commit_outcome.accepted
+    state = app_run_status(run_dir)
+    assert state.relation_ledger[0].observation.discriminator_task_proposal is not None
+    outcome = next_app_episode(run_dir)
+    assert outcome.controller_action == "ready_for_synthesis"
+    assert outcome.request is None
+
+
+def test_relation_inventory_and_enrichment_telemetry_are_auditable(tmp_path):
+    run_dir = make_enrichment_run(tmp_path, budget=1, pair_cap=1, node_count=2)
+    request = next_app_episode(run_dir).request
+    submit_app_episode_result(run_dir, relation_result(request, "independent"))
+    next_app_episode(run_dir)
+    events = EpisodeEventLog(run_dir / "episode_events.jsonl").read_events()
+    types = {event["event_type"] for event in events}
+    assert {
+        "relation_blocking_inventory_evaluated",
+        "relation_blocking_inventory_completed",
+        "relation_enrichment_granted",
+        "relation_enrichment_committed",
+        "relation_enrichment_budget_exhausted",
+    }.issubset(types)
+    inventory = next(event for event in events if event["event_type"] == "relation_blocking_inventory_evaluated")
+    assert inventory["blocking_inventory_complete"] is True
+    assert inventory["role"] == "relation"
+    assert inventory["usage_source"] == "unavailable"

@@ -65,6 +65,7 @@
         "allocation_mass_per_iteration",
         "max_children_per_iteration",
         "max_relation_pairs_per_episode",
+        "max_relation_enrichment_pairs",
         "max_research_iterations"
       ],
       "properties": {
@@ -89,6 +90,12 @@
           "type": "integer",
           "minimum": 1,
           "maximum": 20,
+          "default": 3
+        },
+        "max_relation_enrichment_pairs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100,
           "default": 3
         },
         "max_research_iterations": {

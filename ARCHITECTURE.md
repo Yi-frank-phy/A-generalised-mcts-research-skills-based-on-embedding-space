@@ -233,7 +233,7 @@ Removing the physical Explorer does not permit the native runtime to collapse al
 
 ## Relation architecture
 
-Relation is semantic graph maintenance, not an evaluator.
+Relation is semantic graph maintenance, not an evaluator or verifier. It never returns correctness, pass/fail, reward, or certified-node state; backend validation checks schema, identity, revision, lifecycle, authority, and atomicity rather than scientific truth.
 
 Candidate selection may use:
 
@@ -252,11 +252,13 @@ conflict
 independent
 ```
 
-The backend converts validated output into a merge proposal or discriminator task. The model never applies the merge directly.
+The backend converts validated output into a merge proposal or persisted discriminator-task proposal. The model never applies the merge directly. Discriminator proposals are not executed in this slice and have no authority to close, reward, reject, certify, or select nodes.
 
 Relation is not a universal synchronous barrier. Exact duplicates may be handled immediately; ordinary proximity creates optional or high-priority tasks. Only unresolved material conflicts among branches selected for synthesis must be resolved or explicitly disclosed.
 
-In the App-native path, Relation is scheduled only after backend provisional Synthesis selection and before a new terminal action is committed. The persistent candidate ledger canonicalizes unordered pairs, the relation ledger stores validated epistemic edges, and the readiness record separates blockers from ordinary unresolved candidates. Existing persisted terminal runs remain sticky and are reported as legacy-unchecked rather than reopened.
+In the App-native path, Relation is scheduled only after backend provisional Synthesis selection and before a new terminal action is committed. Blocking inventory generation completely enumerates selected-selected exact duplicates and shared-evidence divergent claims over the at-most-eight-node provisional set, so it has a hard upper bound of 28 pairs. These blockers are refreshed into the persistent candidate ledger before readiness and are never truncated by the separate enrichment window. Existing persisted terminal runs remain sticky and are reported as legacy-unchecked rather than reopened.
+
+After the complete blocking inventory resolves, high-priority selected or directly selected-related semantic pairs may be scheduled as nonblocking enrichment. Current candidate/record identities are removed before the enrichment window is truncated. Enrichment can therefore progress past previously seen pairs without becoming a whole-graph all-pairs pass.
 
 Equivalent classification does not give the model merge authority. The backend selects a canonical node from committed status, information/evidence completeness, Judge value, provenance stability, and a node-ID tie-break; absorbed nodes remain auditable aliases and cannot receive future Executor allocation or be double-counted by Synthesis selection.
 
@@ -282,9 +284,10 @@ The default intended semantics are:
 allocation_mass_per_iteration = 3
 max_children_per_iteration = 5
 max_relation_pairs_per_episode = 3
+max_relation_enrichment_pairs = 3
 ```
 
-The continuous Boltzmann mass is discretized into children and may realize more than three children, but never more than the hard cap.
+The continuous Boltzmann mass is discretized into children and may realize more than three children, but never more than the hard cap. `max_relation_enrichment_pairs` is a run-level successful-pair budget reconstructed from the persistent Relation ledger; blocking work and failed, cancelled, expired, or retried-uncommitted attempts do not consume it.
 
 ### Compute budget
 

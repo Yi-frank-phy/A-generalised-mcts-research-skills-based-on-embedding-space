@@ -38,6 +38,7 @@ def spec() -> DTERunSpec:
             max_iterations=2,
             allocation_mass_per_iteration=1,
             max_children_per_iteration=2,
+            max_relation_enrichment_pairs=0,
         ),
     )
 

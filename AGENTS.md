@@ -11,7 +11,7 @@ This repository implements a fixed DTE research protocol. When acting as an agen
 3. **Executor is not the final authority.** Codex/Kimi/OpenClaw may perform local research episodes, write code, run tests, or draft candidate reasoning, but must return structured SearchNode objects.
 4. **No direct final answer from subagents.** A self-organized executor episode may produce evidence, counterexamples, candidate nodes, Judge outputs, or merge relation outputs, but the final answer must be created by DTE synthesis.
 5. **UCB is not cost-aware by default.** Exploration is stabilized by UCB/uncertainty and hard budget caps. Do not silently change the objective to penalize cost unless the user explicitly chooses an experimental profile.
-6. **Budget limits are hard.** Never increase `max_iterations`, `allocation_mass_per_iteration`, `max_children_per_iteration`, or backend model strength without explicit user instruction.
+6. **Budget limits are hard.** Never increase `max_iterations`, `allocation_mass_per_iteration`, `max_children_per_iteration`, `max_relation_enrichment_pairs`, or backend model strength without explicit user instruction.
 7. **Schema is source of truth.** Free-form Markdown or natural language cannot override the JSON/Pydantic run spec.
 8. **Use max geometry by default.** For real embedding geometry, prefer `embedding_dimension=3072`; lower dimensions are debug/fallback profiles.
 9. **Observation alone is not authority.** A model-facing agent may read and summarize checkpoints. Authority comes from user delegation plus validated `OperatorPolicy` and is exercised only through backend-validated controller commands, never direct graph/state mutation.
@@ -31,7 +31,7 @@ When the current Codex App main agent runs DTE research:
 
 For a Judge request, return only the granted nodes' observable scores, reasoning, risks, and optional uncertainty evidence. Never hand-fill score into graph state, embedding, density, entropy, uncertainty, UCB, allocation, graph/node revision, stopping, or synthesis fields. Never bypass submission validation or treat hidden agent count, names, routing, traces, tokens, or quota as required graph facts.
 
-For a Relation request, inspect only `relation_payload.candidate_pairs`. Classify every granted pair exactly once as `equivalent`, `complementary`, `conflict`, or `independent`; use only granted evidence references; construct one strict `RelationEpisodeResult`; submit it; then inspect `CommitOutcome`. Do not scan the graph for extra pairs, select a canonical node, merge or close nodes, edit the candidate/Relation ledger, set synthesis readiness, or write `ready_for_synthesis`. Relation is not a second Judge or a final Synthesis agent.
+For a Relation request, inspect only `relation_payload.candidate_pairs`. Classify every granted pair exactly once as `equivalent`, `complementary`, `conflict`, or `independent`; use only granted evidence references; construct one strict `RelationEpisodeResult`; submit it; then inspect `CommitOutcome`. Do not scan the graph for extra pairs, select a canonical node, merge or close nodes, edit the candidate/Relation ledger, set synthesis readiness, write `ready_for_synthesis`, or return correctness/pass/fail/reward state. Relation is not a second Judge, verifier, or final Synthesis agent. Discriminator proposals are persisted metadata and are not executed in the current workflow.
 
 ## Preferred implementation style
 

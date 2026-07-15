@@ -517,12 +517,15 @@ The App-native Judge → controller → Executor → Relation/readiness slice no
 - coarse append-only telemetry with App usage marked `unavailable`;
 - Skill and `AGENTS.md` instructions for the current-App loop.
 - deterministic provisional synthesis branch selection from committed non-merged nodes;
+- complete selected-set blocking Relation inventory (at most 28 pairs), never truncated by enrichment windows;
 - bounded `role=relation` requests with canonical candidate pairs and independent `max_relation_pairs_per_episode`;
+- ledger-aware high-priority Relation enrichment with run-level `max_relation_enrichment_pairs=3` successful-pair budget;
 - strict equivalent/complementary/conflict/independent observations committed through `commit_episode_result(...)`;
 - persistent candidate, Relation, merge-application, and Synthesis-readiness records;
 - backend-only canonical equivalent merge with source-node provenance preservation;
-- conditional readiness blocking for selected exact duplicates and potential material conflicts, while ordinary unresolved candidates remain nonblocking;
+- readiness invariants requiring complete inventory and zero unresolved blocking pairs, while enrichment remains logically nonblocking;
 - explicit material-conflict disclosure obligations because full discriminator Executor scheduling remains deferred;
-- Relation gating before a new sticky terminal action, without reopening legacy persisted terminal runs or incrementing controller search iteration.
+- Relation gating before a new sticky terminal action, without reopening legacy persisted terminal runs or incrementing controller search iteration;
+- semantic-only Relation outputs; discriminator proposals remain persisted and unexecuted, with no verifier/correctness/pass-fail loop.
 
-The command/subprocess adapter remains only a legacy/headless fallback and regression baseline. SDK/App Server transport, hidden App-subagent inspection, native Seed and final Synthesis episodes, full discriminator Executor scheduling, full production role closure, and precise App token/quota telemetry remain deferred.
+The command/subprocess adapter remains only a legacy/headless fallback and regression baseline. SDK/App Server transport, hidden App-subagent inspection, native Seed and final Synthesis episodes, any future discriminator research-task scheduling, full production role closure, and precise App token/quota telemetry remain deferred. A future discriminator would remain evidence-producing research work, not a correctness-certifying verifier.

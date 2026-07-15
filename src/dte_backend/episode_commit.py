@@ -421,6 +421,7 @@ def commit_episode_result(
                 left_node_id=observation.left_node_id,
                 right_node_id=observation.right_node_id,
                 relation_type=observation.relation_type,
+                scheduling_class=candidate.scheduling_class,
                 confidence=observation.confidence,
                 rationale=observation.rationale,
                 evidence_refs=list(observation.evidence_refs),
@@ -484,6 +485,9 @@ def commit_episode_result(
                 conflict_count=counts["conflict"],
                 independent_count=counts["independent"],
                 material_conflict_count=material_conflict_count,
+                enrichment_candidate_count=sum(
+                    pair.scheduling_class == "enrichment" for pair in granted_pairs.values()
+                ),
                 merge_count=len(equivalent_records),
                 schema_valid=True,
                 usage_source="unavailable",

@@ -27,6 +27,7 @@ RelationCandidateReason = Literal[
 ]
 RelationCandidatePriority = Literal["critical", "high", "medium", "low"]
 RelationCandidateStatus = Literal["pending", "granted", "resolved", "superseded", "invalidated"]
+RelationSchedulingClass = Literal["blocking", "enrichment"]
 
 
 def canonical_pair(left_node_id: str, right_node_id: str) -> tuple[str, str]:
@@ -47,6 +48,7 @@ class RelationCandidate(DTEBaseModel):
     left_node_revision: int = Field(ge=0)
     right_node_revision: int = Field(ge=0)
     candidate_reason: RelationCandidateReason
+    scheduling_class: RelationSchedulingClass
     priority: RelationCandidatePriority
     material_to_synthesis: bool
     created_from_graph_revision: int = Field(ge=0)
@@ -96,6 +98,7 @@ class RelationPairInput(DTEBaseModel):
     left_node_revision: int = Field(ge=0)
     right_node_revision: int = Field(ge=0)
     candidate_reason: RelationCandidateReason
+    scheduling_class: RelationSchedulingClass
     priority: RelationCandidatePriority
     material_to_synthesis: bool
 
@@ -213,6 +216,7 @@ class RelationRecord(DTEBaseModel):
     left_node_id: str
     right_node_id: str
     relation_type: RelationType
+    scheduling_class: RelationSchedulingClass
     confidence: float = Field(ge=0.0, le=1.0)
     rationale: str
     evidence_refs: list[str] = Field(default_factory=list)
@@ -247,14 +251,37 @@ class ProvisionalSynthesisSelection(DTEBaseModel):
 
 
 class SynthesisReadinessRecord(DTEBaseModel):
-    schema_version: Literal["synthesis-readiness.v1"] = "synthesis-readiness.v1"
+    schema_version: Literal["synthesis-readiness.v2"] = "synthesis-readiness.v2"
     graph_revision: int = Field(ge=0)
     provisional_selected_node_ids: list[str]
+    blocking_inventory_complete: bool
+    blocking_pair_count: int = Field(ge=0)
+    resolved_blocking_pair_count: int = Field(ge=0)
+    unresolved_blocking_pair_count: int = Field(ge=0)
     blocking_candidate_ids: list[str]
     unresolved_material_conflicts: list[str]
     disclosure_required_conflicts: list[str]
     unresolved_nonblocking_candidates: list[str]
     duplicate_groups: list[list[str]]
+    enrichment_budget_limit: int = Field(ge=0)
+    enrichment_pairs_committed: int = Field(ge=0)
+    enrichment_pairs_remaining: int = Field(ge=0)
+    eligible_enrichment_candidate_ids: list[str]
+    enrichment_pending: bool
     ready: bool
     reason: str
     evaluated_at: str
+
+    @model_validator(mode="after")
+    def validate_readiness_invariant(self) -> "SynthesisReadinessRecord":
+        if self.resolved_blocking_pair_count + self.unresolved_blocking_pair_count != self.blocking_pair_count:
+            raise ValueError("blocking readiness counts must partition the blocking inventory")
+        if self.enrichment_pairs_remaining != max(
+            0, self.enrichment_budget_limit - self.enrichment_pairs_committed
+        ):
+            raise ValueError("enrichment remaining budget is inconsistent")
+        if self.ready and (
+            not self.blocking_inventory_complete or self.unresolved_blocking_pair_count != 0
+        ):
+            raise ValueError("ready synthesis requires a complete blocker inventory with zero unresolved pairs")
+        return self

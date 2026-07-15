@@ -43,6 +43,7 @@ def run_spec(*, cap=2, max_iterations=2, require_final_synthesis=True):
             max_iterations=max_iterations,
             allocation_mass_per_iteration=1,
             max_children_per_iteration=cap,
+            max_relation_enrichment_pairs=0,
         ),
         embedding_provider="hash",
         embedding_dimension=8,

@@ -229,6 +229,11 @@ def build_relation_episode_request(
         raise ValueError("Relation grant requires at least one candidate")
     if len(candidates) > max_relation_pairs_per_episode:
         raise ValueError("Relation grant exceeds max_relation_pairs_per_episode")
+    used_nodes: set[str] = set()
+    for candidate in candidates:
+        if candidate.left_node_id in used_nodes or candidate.right_node_id in used_nodes:
+            raise ValueError("Relation episode candidate pairs must be node-disjoint")
+        used_nodes.update((candidate.left_node_id, candidate.right_node_id))
     selected_revisions: dict[str, int] = {}
     pair_inputs: list[RelationPairInput] = []
     for candidate in candidates:

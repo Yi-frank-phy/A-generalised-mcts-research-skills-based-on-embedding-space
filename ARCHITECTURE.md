@@ -260,6 +260,8 @@ In the App-native path, Relation is scheduled only after backend provisional Syn
 
 After the complete blocking inventory resolves, high-priority selected or directly selected-related semantic pairs may be scheduled as nonblocking enrichment. Current candidate/record identities are removed before the enrichment window is truncated. Enrichment can therefore progress past previously seen pairs without becoming a whole-graph all-pairs pass.
 
+One App-native Relation episode contains only node-disjoint candidate pairs, for both blocking and enrichment grants. The request builder and commit boundary reject overlap, and merge provenance permits only one canonical target for each absorbed node. This is a transactional merge-safety invariant, not a verification rule.
+
 Equivalent classification does not give the model merge authority. The backend selects a canonical node from committed status, information/evidence completeness, Judge value, provenance stability, and a node-ID tie-break; absorbed nodes remain auditable aliases and cannot receive future Executor allocation or be double-counted by Synthesis selection.
 
 ## Budget architecture

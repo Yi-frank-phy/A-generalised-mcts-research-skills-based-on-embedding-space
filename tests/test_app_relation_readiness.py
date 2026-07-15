@@ -16,7 +16,7 @@ from dte_backend.app_driver import (
 )
 from dte_backend.embedding import HashEmbeddingProvider
 from dte_backend.episode_adapter import build_relation_episode_request
-from dte_backend.episode_commit import EpisodeGraph
+from dte_backend.episode_commit import EpisodeGraph, commit_episode_result
 from dte_backend.episode_models import (
     EpisodeRequest,
     EpisodeResult,
@@ -32,8 +32,10 @@ from dte_backend.models import BudgetSpec, DTERunSpec, SearchNode
 from dte_backend.relation_candidates import (
     generate_relation_candidates,
     generate_relation_enrichment_candidates,
+    select_node_disjoint_relation_batch,
 )
 from dte_backend.relation_models import (
+    MergeApplicationRecord,
     RelationCandidate,
     RelationEpisodeOutput,
     RelationObservation,
@@ -938,6 +940,284 @@ def make_enrichment_run(tmp_path, *, budget=3, pair_cap=2, node_count=5):
     )
     force_stop_intent(run_dir)
     return run_dir
+
+
+def relation_candidates_for_pairs(pairs, *, scheduling_class="enrichment"):
+    return [
+        RelationCandidate(
+            candidate_id=f"candidate-{left}-{right}",
+            left_node_id=left,
+            right_node_id=right,
+            left_node_revision=0,
+            right_node_revision=0,
+            candidate_reason=(
+                "potential_material_conflict"
+                if scheduling_class == "blocking"
+                else "high_score_near_tie"
+            ),
+            scheduling_class=scheduling_class,
+            priority="critical" if scheduling_class == "blocking" else "high",
+            material_to_synthesis=scheduling_class == "blocking",
+            created_from_graph_revision=0,
+        )
+        for left, right in pairs
+    ]
+
+
+def build_relation_request_for_test(graph, candidates, *, pair_cap=3):
+    return build_relation_episode_request(
+        graph,
+        candidates,
+        run_id="relation-test",
+        problem="relation merge safety",
+        goal="preserve graph consistency",
+        constraints=["Relation is not a verifier"],
+        provisional_synthesis_node_ids=[node.node_id for node in graph.nodes],
+        max_relation_pairs_per_episode=pair_cap,
+    )
+
+
+def grant_relation_candidates(graph, candidates, request):
+    graph.relation_candidates = [
+        candidate.model_copy(
+            update={
+                "status": "granted",
+                "granted_episode_id": request.episode_id,
+                "granted_attempt_id": request.attempt_id,
+            }
+        )
+        for candidate in candidates
+    ]
+
+
+def test_node_disjoint_batch_skips_overlaps_but_preserves_order_for_later_progression():
+    candidates = relation_candidates_for_pairs([("a", "b"), ("b", "c"), ("c", "d")])
+    selected = select_node_disjoint_relation_batch(candidates, max_pairs=3)
+    assert [(item.left_node_id, item.right_node_id) for item in selected] == [
+        ("a", "b"),
+        ("c", "d"),
+    ]
+    assert [item.candidate_id for item in candidates if item not in selected] == ["candidate-b-c"]
+
+
+def test_node_disjoint_batch_allows_independent_pairs_and_obeys_pair_cap():
+    candidates = relation_candidates_for_pairs([("a", "b"), ("c", "d"), ("e", "f")])
+    assert len(select_node_disjoint_relation_batch(candidates, max_pairs=3)) == 3
+    assert len(select_node_disjoint_relation_batch(candidates, max_pairs=2)) == 2
+    assert select_node_disjoint_relation_batch(candidates, max_pairs=0) == []
+
+
+def test_enrichment_grants_are_node_disjoint_and_obey_remaining_run_budget(tmp_path):
+    run_dir = make_enrichment_run(tmp_path, budget=2, pair_cap=5, node_count=6)
+    request = next_app_episode(run_dir).request
+    granted_node_ids = [
+        node_id
+        for pair in request.relation_payload.candidate_pairs
+        for node_id in (pair.left.node_id, pair.right.node_id)
+    ]
+    assert len(granted_node_ids) == len(set(granted_node_ids))
+    assert len(request.relation_payload.candidate_pairs) == 2
+
+
+def test_overlapping_enrichment_candidate_can_be_granted_in_a_later_episode(tmp_path):
+    run_dir = make_enrichment_run(tmp_path, budget=3, pair_cap=2, node_count=4)
+    first = next_app_episode(run_dir).request
+    first_pairs = first.relation_payload.candidate_pairs
+    assert len(first_pairs) == 2
+    submit_app_episode_result(run_dir, relation_result(first, "independent"))
+    second = next_app_episode(run_dir).request
+    first_nodes = {pair.left.node_id for pair in first_pairs}.union(
+        pair.right.node_id for pair in first_pairs
+    )
+    assert any(
+        pair.left.node_id in first_nodes or pair.right.node_id in first_nodes
+        for pair in second.relation_payload.candidate_pairs
+    )
+
+
+def test_relation_request_builder_rejects_overlapping_pairs_without_dropping_them():
+    graph = EpisodeGraph(nodes=[SearchNode(node_id=node_id, claim=node_id) for node_id in "abc"])
+    candidates = relation_candidates_for_pairs([("a", "b"), ("b", "c")])
+    with pytest.raises(ValueError, match="candidate pairs must be node-disjoint"):
+        build_relation_request_for_test(graph, candidates)
+
+
+def test_relation_request_builder_accepts_node_disjoint_pairs():
+    graph = EpisodeGraph(nodes=[SearchNode(node_id=node_id, claim=node_id) for node_id in "abcd"])
+    candidates = relation_candidates_for_pairs([("a", "b"), ("c", "d")])
+    request = build_relation_request_for_test(graph, candidates)
+    assert [pair.candidate_id for pair in request.relation_payload.candidate_pairs] == [
+        candidate.candidate_id for candidate in candidates
+    ]
+
+
+@pytest.mark.parametrize("relation_type", ["equivalent", "complementary", "independent"])
+def test_commit_rejects_old_overlapping_relation_request_atomically(relation_type):
+    graph = EpisodeGraph(nodes=[SearchNode(node_id=node_id, claim=node_id) for node_id in "abc"])
+    candidates = relation_candidates_for_pairs([("a", "b"), ("b", "c")])
+    left_request = build_relation_request_for_test(graph, candidates[:1])
+    right_request = build_relation_request_for_test(graph, candidates[1:])
+    old_payload = left_request.relation_payload.model_copy(
+        update={
+            "candidate_pairs": [
+                left_request.relation_payload.candidate_pairs[0],
+                right_request.relation_payload.candidate_pairs[0],
+            ]
+        }
+    )
+    old_request = left_request.model_copy(
+        update={
+            "relation_payload": old_payload,
+            "selected_node_revisions": {"a": 0, "b": 0, "c": 0},
+        }
+    )
+    grant_relation_candidates(graph, candidates, old_request)
+    before = graph.snapshot()
+    outcome = commit_episode_result(graph, old_request, relation_result(old_request, relation_type))
+    assert outcome.accepted is False
+    assert outcome.rejection_reason == "Relation episode candidate pairs are not node-disjoint"
+    assert graph.snapshot() == before
+
+
+def test_merge_provenance_conflict_rejects_the_whole_relation_commit():
+    nodes = [
+        SearchNode(node_id="a", claim="canonical A"),
+        SearchNode(node_id="b", claim="absorbed B", status="merged"),
+        SearchNode(node_id="c", claim="canonical C"),
+    ]
+    candidate = relation_candidates_for_pairs([("b", "c")])[0]
+    graph = EpisodeGraph(
+        nodes=nodes,
+        revision=2,
+        merge_applications=[
+            MergeApplicationRecord(
+                merge_application_id="merge-b-a",
+                relation_record_id="relation-b-a",
+                canonical_node_id="a",
+                absorbed_node_ids=["b"],
+                source_node_ids=["a", "b"],
+                source_node_revisions={"a": 0, "b": 0},
+                applied_graph_revision=2,
+                applied_at="2026-01-01T00:00:00+00:00",
+            )
+        ],
+    )
+    request = build_relation_request_for_test(graph, [candidate], pair_cap=1)
+    grant_relation_candidates(graph, [candidate], request)
+    before = graph.snapshot()
+    outcome = commit_episode_result(graph, request, relation_result(request, "equivalent"))
+    assert outcome.accepted is False
+    assert outcome.rejection_reason == (
+        "merge provenance conflict: absorbed node b already maps to canonical a"
+    )
+    assert graph.snapshot() == before
+
+
+def test_two_node_disjoint_equivalent_merges_commit_atomically():
+    graph = EpisodeGraph(nodes=[SearchNode(node_id=node_id, claim=node_id) for node_id in "abcd"])
+    candidates = relation_candidates_for_pairs([("a", "b"), ("c", "d")])
+    request = build_relation_request_for_test(graph, candidates)
+    grant_relation_candidates(graph, candidates, request)
+    outcome = commit_episode_result(graph, request, relation_result(request, "equivalent"))
+    assert outcome.accepted is True
+    assert graph.revision == 2
+    assert graph.node_revisions == {"a": 1, "b": 1, "c": 1, "d": 1}
+    assert len(graph.relation_ledger) == 2
+    assert len(graph.merge_applications) == 2
+    assert {item.canonical_node_id for item in graph.merge_applications} == {"a", "c"}
+    absorbed_targets = {
+        absorbed: application.canonical_node_id
+        for application in graph.merge_applications
+        for absorbed in application.absorbed_node_ids
+    }
+    assert absorbed_targets == {"b": "a", "d": "c"}
+
+
+def test_rejected_overlapping_enrichment_retry_rebatches_without_consuming_budget(tmp_path):
+    run_dir = make_enrichment_run(tmp_path, budget=3, pair_cap=3, node_count=4)
+    granted = next_app_episode(run_dir, runtime_limits=RuntimeLimits(max_retries=1)).request
+    state = app_driver.load_app_run(run_dir)
+    first_pair = granted.relation_payload.candidate_pairs[0]
+    first_candidate = next(
+        item for item in state.relation_candidates if item.candidate_id == first_pair.candidate_id
+    )
+    overlap = next(
+        item
+        for item in state.relation_candidates
+        if item.status == "pending"
+        and first_candidate.left_node_id in (item.left_node_id, item.right_node_id)
+    )
+    overlap_request = build_relation_request_for_test(state.graph(), [overlap], pair_cap=1)
+    old_payload = granted.relation_payload.model_copy(
+        update={
+            "candidate_pairs": [
+                first_pair,
+                overlap_request.relation_payload.candidate_pairs[0],
+            ]
+        }
+    )
+    old_request = granted.model_copy(
+        update={
+            "relation_payload": old_payload,
+            "selected_node_revisions": {
+                first_candidate.left_node_id: 0,
+                first_candidate.right_node_id: 0,
+                overlap.left_node_id: 0,
+                overlap.right_node_id: 0,
+            },
+        }
+    )
+    episode = app_driver._find_episode(state, granted.episode_id)
+    episode.attempts[-1].request = old_request
+    for candidate in state.relation_candidates:
+        if candidate.candidate_id in {first_candidate.candidate_id, overlap.candidate_id}:
+            candidate.status = "granted"
+            candidate.granted_episode_id = old_request.episode_id
+            candidate.granted_attempt_id = old_request.attempt_id
+        elif candidate.status == "granted":
+            candidate.status = "pending"
+            candidate.granted_episode_id = None
+            candidate.granted_attempt_id = None
+    app_driver._save_state(run_dir, state)
+
+    before = state_snapshot(run_dir)
+    old_result = relation_result(old_request, "equivalent")
+    rejected = submit_app_episode_result(run_dir, old_result)
+    assert rejected.commit_outcome.accepted is False
+    assert rejected.commit_outcome.rejection_reason == (
+        "Relation episode candidate pairs are not node-disjoint"
+    )
+    assert state_snapshot(run_dir) == before
+    rejected_state = app_run_status(run_dir)
+    assert rejected_state.controller_action == "await_operator_decision"
+    assert app_driver._find_episode(rejected_state, old_request.episode_id).attempts[-1].status == (
+        "rejected"
+    )
+    assert app_driver._relation_enrichment_pairs_committed(rejected_state) == 0
+    rejection_events = [
+        event
+        for event in EpisodeEventLog(run_dir / "episode_events.jsonl").read_events()
+        if event["event_type"] in {"output_rejected", "relation_result_rejected"}
+        and event.get("attempt_id") == old_request.attempt_id
+    ]
+    assert {event["event_type"] for event in rejection_events} == {
+        "output_rejected",
+        "relation_result_rejected",
+    }
+    assert all("not node-disjoint" in event["rejection_reason"] for event in rejection_events)
+
+    retry = retry_app_episode(run_dir, old_request.episode_id)
+    retry_pairs = retry.request.relation_payload.candidate_pairs
+    assert len(retry_pairs) == 1
+    assert retry.attempt_id != old_request.attempt_id
+    late = submit_app_episode_result(run_dir, old_result)
+    assert late.commit_outcome.accepted is False
+    submit_app_episode_result(run_dir, relation_result(retry.request, "independent"))
+    assert app_driver._relation_enrichment_pairs_committed(app_run_status(run_dir)) == 1
+    next_request = next_app_episode(run_dir).request
+    assert overlap.candidate_id in {
+        pair.candidate_id for pair in next_request.relation_payload.candidate_pairs
+    }
 
 
 def test_zero_enrichment_budget_goes_directly_terminal_after_blockers_clear(tmp_path):

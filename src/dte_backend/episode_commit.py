@@ -17,7 +17,7 @@ from .episode_models import (
     JudgeEpisodeOutput,
     compute_output_hash,
 )
-from .merge import apply_relation_equivalent_merge
+from .merge import apply_relation_equivalent_merge, validate_merge_application_consistency
 from .models import SearchNode
 from .relation_models import (
     MergeApplicationRecord,
@@ -337,6 +337,13 @@ def commit_episode_result(
                 return reject(f"stale selected-node revision: {node_id}")
         if request.relation_payload is None:
             return reject("Relation request is missing relation_payload")
+        request_nodes = [
+            node_id
+            for pair in request.relation_payload.candidate_pairs
+            for node_id in (pair.left.node_id, pair.right.node_id)
+        ]
+        if len(request_nodes) != len(set(request_nodes)):
+            return reject("Relation episode candidate pairs are not node-disjoint")
         if not isinstance(result.structured_output, RelationEpisodeOutput):
             return reject("completed Relation result has the wrong structured output schema")
 
@@ -449,9 +456,10 @@ def commit_episode_result(
         revision_before = graph.revision
         relation_revision = revision_before + 1
         merge_revision = relation_revision + (1 if equivalent_records else 0)
-        for record in equivalent_records:
-            next_merges.append(
-                apply_relation_equivalent_merge(
+        try:
+            validate_merge_application_consistency(next_merges)
+            for record in equivalent_records:
+                application = apply_relation_equivalent_merge(
                     next_nodes,
                     next_revisions,
                     source_node_ids=[record.left_node_id, record.right_node_id],
@@ -459,7 +467,10 @@ def commit_episode_result(
                     applied_graph_revision=merge_revision,
                     applied_at=committed_at,
                 )
-            )
+                validate_merge_application_consistency([*next_merges, application])
+                next_merges.append(application)
+        except ValueError as exc:
+            return reject(str(exc))
 
         graph.nodes = next_nodes
         graph.node_revisions = next_revisions

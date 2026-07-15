@@ -39,6 +39,29 @@ def _score_for_tie(node: SearchNode) -> float:
     return node.confidence
 
 
+def select_node_disjoint_relation_batch(
+    candidates: list[RelationCandidate],
+    *,
+    max_pairs: int,
+) -> list[RelationCandidate]:
+    """Select an ordered Relation batch in which every node appears at most once."""
+
+    if max_pairs < 0:
+        raise ValueError("Relation batch max_pairs must be non-negative")
+    if max_pairs == 0:
+        return []
+    selected: list[RelationCandidate] = []
+    used_nodes: set[str] = set()
+    for candidate in candidates:
+        if candidate.left_node_id in used_nodes or candidate.right_node_id in used_nodes:
+            continue
+        selected.append(candidate)
+        used_nodes.update((candidate.left_node_id, candidate.right_node_id))
+        if len(selected) >= max_pairs:
+            break
+    return selected
+
+
 def _normalized_claim(text: str) -> str:
     return " ".join(text.casefold().strip().split())
 

@@ -14,6 +14,23 @@ from .models import MergeProposal, SearchNode
 from .relation_models import MergeApplicationRecord, stable_relation_id
 
 
+def validate_merge_application_consistency(
+    applications: list[MergeApplicationRecord],
+) -> None:
+    """Require one canonical provenance target for every absorbed node."""
+
+    canonical_by_absorbed: dict[str, str] = {}
+    for application in applications:
+        for absorbed_node_id in application.absorbed_node_ids:
+            existing = canonical_by_absorbed.get(absorbed_node_id)
+            if existing is not None and existing != application.canonical_node_id:
+                raise ValueError(
+                    "merge provenance conflict: absorbed node "
+                    f"{absorbed_node_id} already maps to canonical {existing}"
+                )
+            canonical_by_absorbed[absorbed_node_id] = application.canonical_node_id
+
+
 def normalize_claim(text: str) -> str:
     """Normalize claim text for exact-equivalence merge proposals."""
 

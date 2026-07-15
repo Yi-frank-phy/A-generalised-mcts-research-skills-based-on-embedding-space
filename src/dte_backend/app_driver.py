@@ -35,6 +35,7 @@ from .relation_candidates import (
     generate_blocking_relation_obligations,
     generate_relation_enrichment_candidates,
     refresh_relation_candidates,
+    select_node_disjoint_relation_batch,
 )
 from .relation_models import (
     MergeApplicationRecord,
@@ -629,15 +630,10 @@ def _prepare_terminal_or_relation(
             candidate.right_node_id,
         ),
     )
-    pending = []
-    used_nodes: set[str] = set()
-    for candidate in ordered_pending:
-        if candidate.left_node_id in used_nodes or candidate.right_node_id in used_nodes:
-            continue
-        pending.append(candidate)
-        used_nodes.update((candidate.left_node_id, candidate.right_node_id))
-        if len(pending) >= state.spec.budget.max_relation_pairs_per_episode:
-            break
+    pending = select_node_disjoint_relation_batch(
+        ordered_pending,
+        max_pairs=state.spec.budget.max_relation_pairs_per_episode,
+    )
     if pending:
         assert state.provisional_synthesis_selection is not None
         request = build_relation_episode_request(
@@ -681,10 +677,14 @@ def _prepare_terminal_or_relation(
             candidate.right_node_id,
             candidate.candidate_reason,
         ),
-    )[: min(
-        state.spec.budget.max_relation_pairs_per_episode,
-        readiness.enrichment_pairs_remaining,
-    )]
+    )
+    enrichment_pending = select_node_disjoint_relation_batch(
+        enrichment_pending,
+        max_pairs=min(
+            state.spec.budget.max_relation_pairs_per_episode,
+            readiness.enrichment_pairs_remaining,
+        ),
+    )
     if readiness.enrichment_pending and enrichment_pending:
         assert state.provisional_synthesis_selection is not None
         request = build_relation_episode_request(
@@ -1411,16 +1411,37 @@ def retry_app_episode(
         candidate_ids = {
             pair.candidate_id for pair in previous.request.relation_payload.candidate_pairs
         }
-        candidates = [
-            candidate
+        candidates_by_id = {
+            candidate.candidate_id: candidate
             for candidate in state.relation_candidates
             if candidate.candidate_id in candidate_ids and candidate.status == "granted"
+        }
+        candidates = [
+            candidates_by_id[pair.candidate_id]
+            for pair in previous.request.relation_payload.candidate_pairs
+            if pair.candidate_id in candidates_by_id
         ]
         if len(candidates) != len(candidate_ids):
             raise ValueError("Relation retry candidates are no longer current grants")
+        retry_cap = state.spec.budget.max_relation_pairs_per_episode
+        if all(candidate.scheduling_class == "enrichment" for candidate in candidates):
+            retry_cap = min(
+                retry_cap,
+                max(
+                    0,
+                    state.spec.budget.max_relation_enrichment_pairs
+                    - _relation_enrichment_pairs_committed(state),
+                ),
+            )
+        retry_candidates = select_node_disjoint_relation_batch(
+            candidates,
+            max_pairs=retry_cap,
+        )
+        if not retry_candidates:
+            raise ValueError("Relation retry has no node-disjoint candidates within remaining budget")
         request = build_relation_episode_request(
             graph,
-            candidates,
+            retry_candidates,
             run_id=state.run_id,
             problem=state.spec.problem,
             goal=state.spec.goal,
@@ -1435,6 +1456,12 @@ def retry_app_episode(
             tool_policy=previous.request.tool_policy,
             transport_hints=previous.request.transport_hints,
         )
+        retry_candidate_ids = {candidate.candidate_id for candidate in retry_candidates}
+        for candidate in candidates:
+            if candidate.candidate_id not in retry_candidate_ids:
+                candidate.status = "pending"
+                candidate.granted_episode_id = None
+                candidate.granted_attempt_id = None
     else:
         raise ValueError(f"retry is not implemented for role={previous.request.role}")
     # A retry is another attempt of the same logical episode.

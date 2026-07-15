@@ -65,7 +65,7 @@ DTE graph depth      = cross-iteration epistemic recursion
 native subagent work = bounded parallelism inside one episode
 ```
 
-The implemented Judge/Executor slice represents structural graph state with a monotonically increasing graph revision and a revision for every committed node. A grant snapshots both. `commit_episode_result(...)` dispatches by the committed request role, rechecks the full envelope and selected revisions, validates on a copy, then replaces graph state once. Judge commits revise only granted nodes with validated observable judgments; controller progression separately revises frontier geometry/allocation fields; Executor commits close one granted parent and add bounded children. Rejections change neither graph nor node revisions. This is intentionally not event sourcing or distributed version control.
+The implemented Judge/Executor/Relation slice represents structural graph state with a monotonically increasing graph revision and a revision for every committed node. A grant snapshots both. `commit_episode_result(...)` dispatches by the committed request role, rechecks the full envelope and selected revisions, validates on a copy, then replaces graph state once. Judge commits revise only granted nodes with validated observable judgments; controller progression separately revises frontier geometry/allocation fields; Executor commits close one granted parent and add bounded children; Relation commits add validated semantic edges and only backend-applied equivalent merges revise affected nodes. Rejections change neither graph nor node revisions. This is intentionally not event sourcing or distributed version control.
 
 The production Codex App path is a persistent driver protocol: the backend grants one request, the current App main agent performs it with native opaque orchestration, and the backend accepts one complete result. The backend does not launch another Codex process. Command/subprocess and deterministic adapters remain legacy/headless and test implementations of the transport-neutral boundary. Internal agent count, names, routing, traces, token usage, and quota remain unavailable telemetry rather than correctness conditions.
 
@@ -233,7 +233,7 @@ Removing the physical Explorer does not permit the native runtime to collapse al
 
 ## Relation architecture
 
-Relation is semantic graph maintenance, not an evaluator.
+Relation is semantic graph maintenance, not an evaluator or verifier. It never returns correctness, pass/fail, reward, or certified-node state; backend validation checks schema, identity, revision, lifecycle, authority, and atomicity rather than scientific truth.
 
 Candidate selection may use:
 
@@ -252,9 +252,17 @@ conflict
 independent
 ```
 
-The backend converts validated output into a merge proposal or discriminator task. The model never applies the merge directly.
+The backend converts validated output into a merge proposal or persisted discriminator-task proposal. The model never applies the merge directly. Discriminator proposals are not executed in this slice and have no authority to close, reward, reject, certify, or select nodes.
 
 Relation is not a universal synchronous barrier. Exact duplicates may be handled immediately; ordinary proximity creates optional or high-priority tasks. Only unresolved material conflicts among branches selected for synthesis must be resolved or explicitly disclosed.
+
+In the App-native path, Relation is scheduled only after backend provisional Synthesis selection and before a new terminal action is committed. Blocking inventory generation completely enumerates selected-selected exact duplicates and shared-evidence divergent claims over the at-most-eight-node provisional set, so it has a hard upper bound of 28 pairs. These blockers are refreshed into the persistent candidate ledger before readiness and are never truncated by the separate enrichment window. Existing persisted terminal runs remain sticky and are reported as legacy-unchecked rather than reopened.
+
+After the complete blocking inventory resolves, high-priority selected or directly selected-related semantic pairs may be scheduled as nonblocking enrichment. Current candidate/record identities are removed before the enrichment window is truncated. Enrichment can therefore progress past previously seen pairs without becoming a whole-graph all-pairs pass.
+
+One App-native Relation episode contains only node-disjoint candidate pairs, for both blocking and enrichment grants. The request builder and commit boundary reject overlap, and merge provenance permits only one canonical target for each absorbed node. This is a transactional merge-safety invariant, not a verification rule.
+
+Equivalent classification does not give the model merge authority. The backend selects a canonical node from committed status, information/evidence completeness, Judge value, provenance stability, and a node-ID tie-break; absorbed nodes remain auditable aliases and cannot receive future Executor allocation or be double-counted by Synthesis selection.
 
 ## Budget architecture
 
@@ -277,9 +285,11 @@ The default intended semantics are:
 ```text
 allocation_mass_per_iteration = 3
 max_children_per_iteration = 5
+max_relation_pairs_per_episode = 3
+max_relation_enrichment_pairs = 3
 ```
 
-The continuous Boltzmann mass is discretized into children and may realize more than three children, but never more than the hard cap.
+The continuous Boltzmann mass is discretized into children and may realize more than three children, but never more than the hard cap. `max_relation_enrichment_pairs` is a run-level successful-pair budget reconstructed from the persistent Relation ledger; blocking work and failed, cancelled, expired, or retried-uncommitted attempts do not consume it.
 
 ### Compute budget
 

@@ -14,7 +14,11 @@ from pathlib import Path
 from dte_backend.adapter import validate_adapter_output
 from dte_backend.guards import enforce_run_spec_guard
 from dte_backend.models import DTERunSpec, SearchNode
-from dte_backend.oracle_validation import validate_judge_output, validate_relation_output
+from dte_backend.oracle_validation import (
+    validate_judge_output,
+    validate_relation_episode_output,
+    validate_relation_output,
+)
 
 
 def load_json(path: str):
@@ -42,10 +46,16 @@ def cmd_judge(args: argparse.Namespace) -> None:
 
 
 def cmd_relation(args: argparse.Namespace) -> None:
-    nodes = [SearchNode.model_validate(item) for item in load_json(args.nodes)]
     raw_output = load_json(args.output)
+    if args.request:
+        validate_relation_episode_output(load_json(args.request), raw_output)
+        print("DTE guard ok: App-native relation episode output")
+        return
+    if not args.nodes:
+        raise ValueError("legacy relation guard requires --nodes when --request is absent")
+    nodes = [SearchNode.model_validate(item) for item in load_json(args.nodes)]
     validate_relation_output(nodes, raw_output)
-    print("DTE guard ok: relation output")
+    print("DTE guard ok: legacy relation output")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -68,7 +78,8 @@ def build_parser() -> argparse.ArgumentParser:
     judge.set_defaults(func=cmd_judge)
 
     relation = sub.add_parser("relation")
-    relation.add_argument("--nodes", required=True)
+    relation.add_argument("--nodes")
+    relation.add_argument("--request")
     relation.add_argument("--output", required=True)
     relation.set_defaults(func=cmd_relation)
 

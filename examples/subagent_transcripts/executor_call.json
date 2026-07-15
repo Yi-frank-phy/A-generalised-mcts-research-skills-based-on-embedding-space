@@ -36,6 +36,8 @@
         "max_iterations": 2,
         "allocation_mass_per_iteration": 3,
         "max_children_per_iteration": 5,
+        "max_relation_pairs_per_episode": 3,
+        "max_relation_enrichment_pairs": 3,
         "max_research_iterations": 1
       },
       "allow_self_organized_executor": true,

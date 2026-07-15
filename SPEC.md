@@ -103,6 +103,8 @@ The target default semantics are:
 ```text
 allocation_mass_per_iteration = 3
 max_children_per_iteration = 5
+max_relation_pairs_per_episode = 3
+max_relation_enrichment_pairs = 3
 ```
 
 For temporary input compatibility, the legacy field `total_child_budget` is accepted only as a deprecated alias for `allocation_mass_per_iteration`. Canonical serialization and schemas use the new fields.
@@ -197,6 +199,14 @@ Relation is not a mandatory blocking step for every candidate pair. Recommended 
 - unresolved material conflicts among branches selected for synthesis must either be resolved or explicitly disclosed;
 - the mere existence of a Relation candidate must not automatically forbid synthesis.
 
+The App-native implementation first selects a deterministic provisional synthesis branch set (at most eight nodes), completely enumerates every selected-selected exact-duplicate and potential-material-conflict obligation, and persists that blocking inventory before evaluating readiness. This is a bounded selected-set pass of at most $\binom{8}{2}=28$ pairs, not a whole-graph Cartesian scan. Blocking obligations are never mixed into or truncated by the enrichment candidate window.
+
+After blockers are cleared, the controller may schedule high-priority semantic enrichment for selected or directly selected-related pairs. Enrichment is ledger-aware before truncation and is capped by the run-level `max_relation_enrichment_pairs` budget (default `3`, `0` disables enrichment). Only a successfully committed nonblocking Relation observation consumes one pair; retry, failure, cancellation, and expiry do not. Blocking work never consumes this budget. Each Relation episode remains independently capped by `max_relation_pairs_per_episode` (default `3`), and every blocking or enrichment grant is node-disjoint: one node may occur in at most one pair in the episode. Candidate identity uses the canonical unordered pair, current node revisions, and scheduling class/reason; a graph revision change alone does not reschedule an already covered pair.
+
+Readiness is true only when the complete current blocking inventory is registered, its unresolved count is zero, confirmed equivalent merges have been applied, and every material conflict is resolved or represented by an explicit disclosure obligation. Readiness may be true while bounded enrichment remains pending; the sticky terminal action is written only after eligible enrichment is exhausted, absent, or disabled.
+
+Relation observations are committed through `commit_episode_result(...)` into a versioned relation ledger. Non-merge observations increment graph revision once without revising source nodes. An equivalent observation is recorded first and then backend deterministic canonicalization applies an atomic merge transition, preserves all source nodes and provenance, revises only affected nodes, and excludes absorbed aliases from provisional Synthesis selection. A request/result with overlapping pairs, or a merge transition that would map one absorbed node to different canonical nodes, is rejected as a whole. This is a transactional merge-safety invariant, not a verification rule. Material conflicts must be resolved or carried forward as an explicit disclosure obligation. `DiscriminatorTaskProposal` remains persisted metadata only: this implementation does not schedule a discriminator, source checker, proof checker, verifier, correctness verdict, reward, or pass/fail gate. Relation classifies semantic relationships; backend validation checks only protocol and transaction legality.
+
 ### Phase F: Synthesis
 
 Compress a DTE-selected graph checkpoint into a report or synthesis node. Synthesis reads validated graph state and recorded evidence. It must not continue open-ended research or silently fill unresolved verification gaps.
@@ -253,7 +263,7 @@ output hash
 
 Runtime thread IDs, response IDs, compaction summaries, and descendant-agent traces are optional observability or recovery metadata. They are not graph facts.
 
-The implemented P1 App-native slice uses strict `EpisodeRequest` and `EpisodeResult` envelopes with `attempt_id`, persistent Judge/Executor lifecycle, graph and per-node revisions, and role-dispatched `commit_episode_result(...)` as the only mutation path for episode output. A valid Judge result commits only observable score/reasoning/risk observations; `next-episode` then runs the existing embedding/KDE, entropy, uncertainty, UCB, and allocation functions inside the backend before granting Executor work. The current Codex App main agent performs only the bounded role episode and never interprets controller mathematics or launches a second Codex. Native Seed, Relation, and Synthesis remain deferred. See the normative `docs/specs/p1-native-ultra-agentepisode-codex-app-profile.md`.
+The implemented P1 App-native slice uses strict `EpisodeRequest` and `EpisodeResult` envelopes with `attempt_id`, persistent Judge/Executor/Relation lifecycle, graph and per-node revisions, and role-dispatched `commit_episode_result(...)` as the only mutation path for episode output. A valid Judge result commits only observable score/reasoning/risk observations; `next-episode` then runs the existing embedding/KDE, entropy, uncertainty, UCB, and allocation functions inside the backend before granting Executor work. When the controller intends to terminate, the backend selects provisional synthesis branches, completely inventories blocking Relation obligations, commits validated relation facts and permitted equivalent merges, evaluates readiness, optionally spends a bounded run-level semantic-enrichment budget, and only then writes a sticky terminal action. The current Codex App main agent performs only the bounded role episode and never interprets controller mathematics or launches a second Codex. Native Seed and final Synthesis remain deferred. See the normative `docs/specs/p1-native-ultra-agentepisode-codex-app-profile.md`.
 
 ## 8. Executor output contract
 

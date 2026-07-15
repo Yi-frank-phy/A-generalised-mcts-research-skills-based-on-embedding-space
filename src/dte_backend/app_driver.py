@@ -20,13 +20,32 @@ from pydantic import Field
 from .control import authorize_synthesis_control
 from .embedding import EmbeddingProvider, get_embedding_provider
 from .entropy import evaluate_entropy_state
-from .episode_adapter import build_executor_episode_request, build_judge_episode_request
+from .episode_adapter import (
+    build_executor_episode_request,
+    build_judge_episode_request,
+    build_relation_episode_request,
+)
 from .episode_commit import EpisodeGraph, commit_episode_result
 from .episode_models import CommitOutcome, EpisodeRequest, EpisodeResult, RuntimeLimits
 from .file_cache import FileDTECache
 from .math_engine import allocate_frontier
 from .models import DTEBaseModel, DTERunSpec, SearchNode, SynthesisControlRequest
 from .novelty import estimate_frontier_kde_state
+from .relation_candidates import (
+    generate_blocking_relation_obligations,
+    generate_relation_enrichment_candidates,
+    refresh_relation_candidates,
+    select_node_disjoint_relation_batch,
+)
+from .relation_models import (
+    MergeApplicationRecord,
+    ProvisionalSynthesisSelection,
+    RelationCandidate,
+    RelationRecord,
+    SynthesisReadinessRecord,
+)
+from .relation_readiness import evaluate_synthesis_readiness
+from .synthesis import select_provisional_synthesis_nodes
 from .telemetry import EpisodeEventLog
 
 
@@ -97,6 +116,14 @@ class AppRunState(DTEBaseModel):
     synthesis_request: SynthesisControlRequest | None = None
     controller_iteration: int = Field(default=0, ge=0)
     previous_spatial_entropy: float | None = None
+    relation_candidates: list[RelationCandidate] = Field(default_factory=list)
+    relation_ledger: list[RelationRecord] = Field(default_factory=list)
+    merge_applications: list[MergeApplicationRecord] = Field(default_factory=list)
+    provisional_synthesis_selection: ProvisionalSynthesisSelection | None = None
+    synthesis_readiness: SynthesisReadinessRecord | None = None
+    relation_readiness_status: Literal["not_evaluated", "evaluated", "legacy_unchecked"] = "not_evaluated"
+    pending_terminal_action: Literal["ready_for_synthesis", "run_complete"] | None = None
+    pending_terminal_reason: str | None = None
     created_at: str
     updated_at: str
 
@@ -105,12 +132,18 @@ class AppRunState(DTEBaseModel):
             nodes=[node.model_copy(deep=True) for node in self.nodes],
             revision=self.graph_revision,
             node_revisions=dict(self.node_revisions),
+            relation_candidates=[item.model_copy(deep=True) for item in self.relation_candidates],
+            relation_ledger=[item.model_copy(deep=True) for item in self.relation_ledger],
+            merge_applications=[item.model_copy(deep=True) for item in self.merge_applications],
         )
 
     def replace_graph(self, graph: EpisodeGraph) -> None:
         self.nodes = [node.model_copy(deep=True) for node in graph.nodes]
         self.graph_revision = graph.revision
         self.node_revisions = dict(graph.node_revisions)
+        self.relation_candidates = [item.model_copy(deep=True) for item in graph.relation_candidates]
+        self.relation_ledger = [item.model_copy(deep=True) for item in graph.relation_ledger]
+        self.merge_applications = [item.model_copy(deep=True) for item in graph.merge_applications]
 
 
 class NextEpisodeOutcome(DTEBaseModel):
@@ -165,6 +198,69 @@ def _write_json_atomic(path: Path, payload: Any) -> None:
 def _save_state(run_dir: str | Path, state: AppRunState) -> None:
     state.updated_at = _iso()
     _write_json_atomic(_state_path(run_dir), state.model_dump(mode="json"))
+    _write_relation_artifacts(run_dir, state)
+
+
+def _write_relation_artifacts(run_dir: str | Path, state: AppRunState) -> None:
+    relation_dir = Path(run_dir) / "relations"
+    enrichment_committed = _relation_enrichment_pairs_committed(state)
+    enrichment_remaining = max(
+        0, state.spec.budget.max_relation_enrichment_pairs - enrichment_committed
+    )
+    _write_json_atomic(
+        relation_dir / "candidates.json",
+        {
+            "schema_version": "relation-candidates.v2",
+            "run_id": state.run_id,
+            "blocking_candidate_count": sum(
+                item.scheduling_class == "blocking" for item in state.relation_candidates
+            ),
+            "enrichment_candidate_count": sum(
+                item.scheduling_class == "enrichment" for item in state.relation_candidates
+            ),
+            "candidates": [item.model_dump(mode="json") for item in state.relation_candidates],
+        },
+    )
+    _write_json_atomic(
+        relation_dir / "relation_ledger.json",
+        {
+            "schema_version": "relation-ledger.v2",
+            "run_id": state.run_id,
+            "enrichment_budget_limit": state.spec.budget.max_relation_enrichment_pairs,
+            "enrichment_pairs_committed": enrichment_committed,
+            "enrichment_pairs_remaining": enrichment_remaining,
+            "records": [item.model_dump(mode="json") for item in state.relation_ledger],
+            "merge_applications": [item.model_dump(mode="json") for item in state.merge_applications],
+        },
+    )
+    _write_json_atomic(
+        relation_dir / "synthesis_readiness.json",
+        {
+            "schema_version": "synthesis-readiness-artifact.v2",
+            "run_id": state.run_id,
+            "status": state.relation_readiness_status,
+            "selection": (
+                None
+                if state.provisional_synthesis_selection is None
+                else state.provisional_synthesis_selection.model_dump(mode="json")
+            ),
+            "readiness": (
+                None if state.synthesis_readiness is None else state.synthesis_readiness.model_dump(mode="json")
+            ),
+        },
+    )
+
+
+def _relation_enrichment_pairs_committed(state: AppRunState) -> int:
+    """Rebuild the run-level successful enrichment spend from durable ledger facts."""
+
+    return len(
+        {
+            record.candidate_id
+            for record in state.relation_ledger
+            if record.scheduling_class == "enrichment"
+        }
+    )
 
 
 def load_app_run(run_dir: str | Path) -> AppRunState:
@@ -370,6 +466,277 @@ def _progress_controller(
     return terminal_action, "controller produced no positive expandable frontier allocation"
 
 
+def _evaluate_relation_gate(
+    run_dir: str | Path,
+    state: AppRunState,
+    *,
+    entropy_plateau: bool,
+) -> SynthesisReadinessRecord:
+    selection = select_provisional_synthesis_nodes(
+        state.nodes,
+        graph_revision=state.graph_revision,
+        synthesis_request=state.synthesis_request,
+    )
+    blocking_inventory = generate_blocking_relation_obligations(
+        state.nodes,
+        node_revisions=state.node_revisions,
+        graph_revision=state.graph_revision,
+        provisional_synthesis_node_ids=selection.selected_node_ids,
+    )
+    previous_ids = {candidate.candidate_id for candidate in state.relation_candidates}
+    state.relation_candidates = refresh_relation_candidates(
+        state.relation_candidates,
+        blocking_inventory,
+        nodes=state.nodes,
+        node_revisions=state.node_revisions,
+        relation_ledger=state.relation_ledger,
+    )
+    enrichment = generate_relation_enrichment_candidates(
+        state.nodes,
+        node_revisions=state.node_revisions,
+        graph_revision=state.graph_revision,
+        provisional_synthesis_node_ids=selection.selected_node_ids,
+        existing=state.relation_candidates,
+        relation_ledger=state.relation_ledger,
+        entropy_plateau=entropy_plateau,
+        max_candidates=max(16, state.spec.budget.max_relation_pairs_per_episode * 4),
+    )
+    state.relation_candidates = refresh_relation_candidates(
+        state.relation_candidates,
+        enrichment,
+        nodes=state.nodes,
+        node_revisions=state.node_revisions,
+        relation_ledger=state.relation_ledger,
+    )
+    added_count = sum(candidate.candidate_id not in previous_ids for candidate in state.relation_candidates)
+    enrichment_committed = _relation_enrichment_pairs_committed(state)
+    eligible_enrichment_ids = [
+        candidate.candidate_id
+        for candidate in state.relation_candidates
+        if candidate.scheduling_class == "enrichment"
+        and candidate.priority == "high"
+        and candidate.status == "pending"
+    ]
+    readiness = evaluate_synthesis_readiness(
+        graph_revision=state.graph_revision,
+        provisional_selected_node_ids=selection.selected_node_ids,
+        candidates=state.relation_candidates,
+        relation_ledger=state.relation_ledger,
+        merge_applications=state.merge_applications,
+        evaluated_at=_iso(),
+        blocking_inventory_candidate_ids=[item.candidate_id for item in blocking_inventory],
+        blocking_inventory_complete=True,
+        enrichment_budget_limit=state.spec.budget.max_relation_enrichment_pairs,
+        enrichment_pairs_committed=enrichment_committed,
+        eligible_enrichment_candidate_ids=eligible_enrichment_ids,
+    )
+    state.provisional_synthesis_selection = selection
+    state.synthesis_readiness = readiness
+    state.relation_readiness_status = "evaluated"
+    log = _event_log(run_dir)
+    if added_count:
+        log.emit(
+            "relation_candidates_generated",
+            run_id=state.run_id,
+            status="committed",
+            input_graph_revision=state.graph_revision,
+            selected_pair_count=added_count,
+            blocking_candidate_count=len(readiness.blocking_candidate_ids),
+            enrichment_candidate_count=len(readiness.eligible_enrichment_candidate_ids),
+            usage_source="unavailable",
+        )
+    inventory_fields = dict(
+        run_id=state.run_id,
+        role="relation",
+        status="complete" if readiness.blocking_inventory_complete else "incomplete",
+        input_graph_revision=state.graph_revision,
+        graph_revision=state.graph_revision,
+        selected_node_count=len(selection.selected_node_ids),
+        provisional_selected_node_count=len(selection.selected_node_ids),
+        blocking_pair_count=readiness.blocking_pair_count,
+        resolved_blocking_pair_count=readiness.resolved_blocking_pair_count,
+        unresolved_blocking_pair_count=readiness.unresolved_blocking_pair_count,
+        blocking_inventory_complete=readiness.blocking_inventory_complete,
+        enrichment_candidate_count=len(readiness.eligible_enrichment_candidate_ids),
+        enrichment_pairs_committed=readiness.enrichment_pairs_committed,
+        enrichment_pairs_remaining=readiness.enrichment_pairs_remaining,
+        selected_pair_count=readiness.blocking_pair_count,
+        usage_source="unavailable",
+    )
+    log.emit("relation_blocking_inventory_evaluated", **inventory_fields)
+    if readiness.blocking_inventory_complete:
+        log.emit("relation_blocking_inventory_completed", **inventory_fields)
+    log.emit(
+        "synthesis_readiness_evaluated",
+        run_id=state.run_id,
+        status="ready" if readiness.ready else "blocked",
+        input_graph_revision=state.graph_revision,
+        selected_node_count=len(selection.selected_node_ids),
+        blocking_candidate_count=len(readiness.blocking_candidate_ids),
+        material_conflict_count=len(readiness.unresolved_material_conflicts),
+        graph_revision=state.graph_revision,
+        provisional_selected_node_count=len(selection.selected_node_ids),
+        blocking_pair_count=readiness.blocking_pair_count,
+        resolved_blocking_pair_count=readiness.resolved_blocking_pair_count,
+        unresolved_blocking_pair_count=readiness.unresolved_blocking_pair_count,
+        blocking_inventory_complete=readiness.blocking_inventory_complete,
+        enrichment_candidate_count=len(readiness.eligible_enrichment_candidate_ids),
+        enrichment_pairs_committed=readiness.enrichment_pairs_committed,
+        enrichment_pairs_remaining=readiness.enrichment_pairs_remaining,
+        role="relation",
+        usage_source="unavailable",
+    )
+    if not readiness.ready:
+        log.emit(
+            "synthesis_blocked_by_relation",
+            run_id=state.run_id,
+            status="blocked",
+            input_graph_revision=state.graph_revision,
+            blocking_candidate_count=(
+                len(readiness.blocking_candidate_ids)
+                + len(readiness.unresolved_material_conflicts)
+            ),
+            usage_source="unavailable",
+        )
+    return readiness
+
+
+def _prepare_terminal_or_relation(
+    run_dir: str | Path,
+    state: AppRunState,
+    *,
+    terminal_action: Literal["ready_for_synthesis", "run_complete"],
+    terminal_reason: str,
+    runtime_limits: RuntimeLimits,
+    profile: Literal["legacy-explicit", "native-guided", "native-autonomous"],
+    entropy_plateau: bool = False,
+) -> NextEpisodeOutcome:
+    """Run the Relation gate before committing a new sticky terminal action."""
+
+    state.pending_terminal_action = terminal_action
+    state.pending_terminal_reason = terminal_reason
+    readiness = _evaluate_relation_gate(run_dir, state, entropy_plateau=entropy_plateau)
+    blocking_ids = set(readiness.blocking_candidate_ids)
+    pending = [
+        candidate
+        for candidate in state.relation_candidates
+        if candidate.candidate_id in blocking_ids and candidate.status == "pending"
+    ]
+    ordered_pending = sorted(
+        pending,
+        key=lambda candidate: (
+            {"critical": 0, "high": 1, "medium": 2, "low": 3}[candidate.priority],
+            candidate.left_node_id,
+            candidate.right_node_id,
+        ),
+    )
+    pending = select_node_disjoint_relation_batch(
+        ordered_pending,
+        max_pairs=state.spec.budget.max_relation_pairs_per_episode,
+    )
+    if pending:
+        assert state.provisional_synthesis_selection is not None
+        request = build_relation_episode_request(
+            state.graph(),
+            pending,
+            run_id=state.run_id,
+            problem=state.spec.problem,
+            goal=state.spec.goal,
+            constraints=list(state.spec.constraints),
+            provisional_synthesis_node_ids=state.provisional_synthesis_selection.selected_node_ids,
+            max_relation_pairs_per_episode=state.spec.budget.max_relation_pairs_per_episode,
+            native_orchestration_allowed=True,
+            runtime_limits=runtime_limits,
+            transport_hints={"profile": profile, "runtime": "current-codex-app"},
+        )
+        for candidate in pending:
+            candidate.status = "granted"
+            candidate.granted_episode_id = request.episode_id
+            candidate.granted_attempt_id = request.attempt_id
+        return _grant_new_episode(run_dir, state, request, profile=profile)
+
+    if not readiness.ready:
+        state.controller_action = "await_operator_decision"
+        _save_state(run_dir, state)
+        return NextEpisodeOutcome(
+            run_id=state.run_id,
+            controller_action="await_operator_decision",
+            reason=readiness.reason,
+        )
+
+    enrichment_ids = set(readiness.eligible_enrichment_candidate_ids)
+    enrichment_pending = [
+        candidate
+        for candidate in state.relation_candidates
+        if candidate.candidate_id in enrichment_ids and candidate.status == "pending"
+    ]
+    enrichment_pending = sorted(
+        enrichment_pending,
+        key=lambda candidate: (
+            candidate.left_node_id,
+            candidate.right_node_id,
+            candidate.candidate_reason,
+        ),
+    )
+    enrichment_pending = select_node_disjoint_relation_batch(
+        enrichment_pending,
+        max_pairs=min(
+            state.spec.budget.max_relation_pairs_per_episode,
+            readiness.enrichment_pairs_remaining,
+        ),
+    )
+    if readiness.enrichment_pending and enrichment_pending:
+        assert state.provisional_synthesis_selection is not None
+        request = build_relation_episode_request(
+            state.graph(),
+            enrichment_pending,
+            run_id=state.run_id,
+            problem=state.spec.problem,
+            goal=state.spec.goal,
+            constraints=list(state.spec.constraints),
+            provisional_synthesis_node_ids=state.provisional_synthesis_selection.selected_node_ids,
+            max_relation_pairs_per_episode=state.spec.budget.max_relation_pairs_per_episode,
+            native_orchestration_allowed=True,
+            runtime_limits=runtime_limits,
+            transport_hints={"profile": profile, "runtime": "current-codex-app"},
+        )
+        for candidate in enrichment_pending:
+            candidate.status = "granted"
+            candidate.granted_episode_id = request.episode_id
+            candidate.granted_attempt_id = request.attempt_id
+        return _grant_new_episode(run_dir, state, request, profile=profile)
+
+    if readiness.enrichment_pairs_remaining == 0:
+        _event_log(run_dir).emit(
+            "relation_enrichment_budget_exhausted",
+            run_id=state.run_id,
+            role="relation",
+            status="exhausted",
+            input_graph_revision=state.graph_revision,
+            graph_revision=state.graph_revision,
+            provisional_selected_node_count=len(readiness.provisional_selected_node_ids),
+            blocking_pair_count=readiness.blocking_pair_count,
+            resolved_blocking_pair_count=readiness.resolved_blocking_pair_count,
+            unresolved_blocking_pair_count=readiness.unresolved_blocking_pair_count,
+            blocking_inventory_complete=readiness.blocking_inventory_complete,
+            enrichment_candidate_count=len(readiness.eligible_enrichment_candidate_ids),
+            enrichment_pairs_committed=readiness.enrichment_pairs_committed,
+            enrichment_pairs_remaining=0,
+            selected_pair_count=0,
+            usage_source="unavailable",
+        )
+
+    state.pending_terminal_action = None
+    state.pending_terminal_reason = None
+    state.controller_action = terminal_action
+    _save_state(run_dir, state)
+    return NextEpisodeOutcome(
+        run_id=state.run_id,
+        controller_action=terminal_action,
+        reason=terminal_reason,
+    )
+
+
 def _request_artifact_path(run_dir: str | Path, request: EpisodeRequest) -> Path:
     return Path(run_dir) / "episodes" / request.episode_id / request.attempt_id / "request.json"
 
@@ -430,6 +797,54 @@ def _grant_new_episode(
     log = _event_log(run_dir)
     log.emit("episode_granted", status="granted", **common)
     log.emit("episode_started", status="in_progress", **common)
+    if request.role == "relation":
+        scheduling_classes = {
+            pair.scheduling_class
+            for pair in (request.relation_payload.candidate_pairs if request.relation_payload else [])
+        }
+        log.emit(
+            "relation_episode_granted",
+            status="granted",
+            selected_pair_count=(
+                0 if request.relation_payload is None else len(request.relation_payload.candidate_pairs)
+            ),
+            **common,
+        )
+        if scheduling_classes == {"enrichment"}:
+            committed = _relation_enrichment_pairs_committed(state)
+            log.emit(
+                "relation_enrichment_granted",
+                status="granted",
+                selected_pair_count=len(request.relation_payload.candidate_pairs),
+                graph_revision=state.graph_revision,
+                provisional_selected_node_count=len(
+                    request.relation_payload.provisional_synthesis_node_ids
+                ),
+                blocking_pair_count=(
+                    None if state.synthesis_readiness is None else state.synthesis_readiness.blocking_pair_count
+                ),
+                resolved_blocking_pair_count=(
+                    None
+                    if state.synthesis_readiness is None
+                    else state.synthesis_readiness.resolved_blocking_pair_count
+                ),
+                unresolved_blocking_pair_count=(
+                    None
+                    if state.synthesis_readiness is None
+                    else state.synthesis_readiness.unresolved_blocking_pair_count
+                ),
+                blocking_inventory_complete=(
+                    None
+                    if state.synthesis_readiness is None
+                    else state.synthesis_readiness.blocking_inventory_complete
+                ),
+                enrichment_candidate_count=len(state.synthesis_readiness.eligible_enrichment_candidate_ids),
+                enrichment_pairs_committed=committed,
+                enrichment_pairs_remaining=max(
+                    0, state.spec.budget.max_relation_enrichment_pairs - committed
+                ),
+                **common,
+            )
     return NextEpisodeOutcome(
         run_id=state.run_id,
         controller_action="episode_required",
@@ -479,18 +894,19 @@ def next_app_episode(
             controller_action="await_operator_decision",
             reason="the previous attempt requires an explicit retry or operator decision",
         )
-    if state.synthesis_request is not None:
-        state.controller_action = "ready_for_synthesis"
-        _save_state(run_dir, state)
-        return NextEpisodeOutcome(
-            run_id=state.run_id,
-            controller_action="ready_for_synthesis",
-            reason="authorized synthesis request is pending",
-        )
-
     # The loop consumes backend-only transitions. It never asks the App main
     # agent to interpret `continue_controller` or run controller mathematics.
     while True:
+        if state.pending_terminal_action is not None:
+            return _prepare_terminal_or_relation(
+                run_dir,
+                state,
+                terminal_action=state.pending_terminal_action,
+                terminal_reason=state.pending_terminal_reason or "controller intends to terminate",
+                runtime_limits=limits,
+                profile=profile,
+            )
+
         parent = _select_executor_parent(state)
         if parent is not None:
             request = build_executor_episode_request(
@@ -510,16 +926,27 @@ def next_app_episode(
             )
             return _grant_new_episode(run_dir, state, request, profile=profile)
 
+        if state.synthesis_request is not None:
+            return _prepare_terminal_or_relation(
+                run_dir,
+                state,
+                terminal_action="ready_for_synthesis",
+                terminal_reason="authorized synthesis request is pending",
+                runtime_limits=limits,
+                profile=profile,
+            )
+
         if state.controller_iteration >= state.spec.budget.max_iterations:
             terminal_action: ControllerAction = (
                 "ready_for_synthesis" if state.spec.require_final_synthesis else "run_complete"
             )
-            state.controller_action = terminal_action
-            _save_state(run_dir, state)
-            return NextEpisodeOutcome(
-                run_id=state.run_id,
-                controller_action=terminal_action,
-                reason="maximum controller iterations reached",
+            return _prepare_terminal_or_relation(
+                run_dir,
+                state,
+                terminal_action=terminal_action,
+                terminal_reason="maximum controller iterations reached",
+                runtime_limits=limits,
+                profile=profile,
             )
 
         unjudged = _select_unjudged_frontier(state)
@@ -542,14 +969,18 @@ def next_app_episode(
             state,
             embedding_provider=embedding_provider,
         )
+        if action != "continue_controller":
+            return _prepare_terminal_or_relation(
+                run_dir,
+                state,
+                terminal_action=action,
+                terminal_reason=reason,
+                runtime_limits=limits,
+                profile=profile,
+                entropy_plateau="entropy" in reason.casefold(),
+            )
         state.controller_action = action
         _save_state(run_dir, state)
-        if action != "continue_controller":
-            return NextEpisodeOutcome(
-                run_id=state.run_id,
-                controller_action=action,
-                reason=reason,
-            )
 
 
 def _result_payload(raw_result: Any) -> dict[str, Any] | None:
@@ -709,11 +1140,31 @@ def submit_app_episode_result(
             accepted_node_count=0,
             selected_node_count=len(attempt.request.selected_node_revisions),
             returned_observation_count=returned_observation_count,
-            accepted_observation_count=0 if episode.role == "judge" else None,
+            accepted_observation_count=0 if episode.role in {"judge", "relation"} else None,
             rejection_reason=reason,
             schema_valid=None,
             usage_source="unavailable",
         )
+        if episode.role == "relation":
+            log.emit(
+                "relation_result_rejected",
+                run_id=state.run_id,
+                episode_id=episode_id,
+                attempt_id=attempt_id,
+                role=episode.role,
+                status="rejected",
+                input_graph_revision=attempt.request.input_graph_revision,
+                selected_pair_count=(
+                    0
+                    if attempt.request.relation_payload is None
+                    else len(attempt.request.relation_payload.candidate_pairs)
+                ),
+                returned_observation_count=returned_observation_count,
+                accepted_observation_count=0,
+                rejection_reason=reason,
+                schema_valid=None,
+                usage_source="unavailable",
+            )
         _write_attempt_artifacts(run_dir, attempt)
         _save_state(run_dir, state)
         return SubmitEpisodeOutcome(
@@ -753,11 +1204,53 @@ def submit_app_episode_result(
             selected_node_count=len(attempt.request.selected_node_revisions),
             returned_node_count=outcome.accepted_node_count if episode.role == "executor" else None,
             accepted_node_count=outcome.accepted_node_count,
-            returned_observation_count=outcome.accepted_node_count if episode.role == "judge" else None,
-            accepted_observation_count=outcome.accepted_node_count if episode.role == "judge" else None,
+            returned_observation_count=(
+                outcome.accepted_node_count if episode.role in {"judge", "relation"} else None
+            ),
+            accepted_observation_count=(
+                outcome.accepted_node_count if episode.role in {"judge", "relation"} else None
+            ),
             usage_source="unavailable",
             schema_valid=True,
         )
+        if episode.role == "relation" and attempt.request.relation_payload is not None:
+            enrichment_count = sum(
+                pair.scheduling_class == "enrichment"
+                for pair in attempt.request.relation_payload.candidate_pairs
+            )
+            if enrichment_count:
+                committed = _relation_enrichment_pairs_committed(state)
+                readiness = state.synthesis_readiness
+                log.emit(
+                    "relation_enrichment_committed",
+                    run_id=state.run_id,
+                    episode_id=episode_id,
+                    attempt_id=attempt_id,
+                    role="relation",
+                    status="committed",
+                    input_graph_revision=attempt.request.input_graph_revision,
+                    graph_revision=state.graph_revision,
+                    provisional_selected_node_count=len(
+                        attempt.request.relation_payload.provisional_synthesis_node_ids
+                    ),
+                    blocking_pair_count=(None if readiness is None else readiness.blocking_pair_count),
+                    resolved_blocking_pair_count=(
+                        None if readiness is None else readiness.resolved_blocking_pair_count
+                    ),
+                    unresolved_blocking_pair_count=(
+                        None if readiness is None else readiness.unresolved_blocking_pair_count
+                    ),
+                    blocking_inventory_complete=(
+                        None if readiness is None else readiness.blocking_inventory_complete
+                    ),
+                    enrichment_candidate_count=enrichment_count,
+                    enrichment_pairs_committed=committed,
+                    enrichment_pairs_remaining=max(
+                        0, state.spec.budget.max_relation_enrichment_pairs - committed
+                    ),
+                    selected_pair_count=enrichment_count,
+                    usage_source="unavailable",
+                )
     else:
         attempt.status = "rejected"
         state.active_episode_id = None
@@ -912,10 +1405,76 @@ def retry_app_episode(
             tool_policy=previous.request.tool_policy,
             transport_hints=previous.request.transport_hints,
         )
+    elif previous.request.role == "relation":
+        if previous.request.relation_payload is None:
+            raise ValueError("Relation retry is missing relation_payload")
+        candidate_ids = {
+            pair.candidate_id for pair in previous.request.relation_payload.candidate_pairs
+        }
+        candidates_by_id = {
+            candidate.candidate_id: candidate
+            for candidate in state.relation_candidates
+            if candidate.candidate_id in candidate_ids and candidate.status == "granted"
+        }
+        candidates = [
+            candidates_by_id[pair.candidate_id]
+            for pair in previous.request.relation_payload.candidate_pairs
+            if pair.candidate_id in candidates_by_id
+        ]
+        if len(candidates) != len(candidate_ids):
+            raise ValueError("Relation retry candidates are no longer current grants")
+        retry_cap = state.spec.budget.max_relation_pairs_per_episode
+        if all(candidate.scheduling_class == "enrichment" for candidate in candidates):
+            retry_cap = min(
+                retry_cap,
+                max(
+                    0,
+                    state.spec.budget.max_relation_enrichment_pairs
+                    - _relation_enrichment_pairs_committed(state),
+                ),
+            )
+        retry_candidates = select_node_disjoint_relation_batch(
+            candidates,
+            max_pairs=retry_cap,
+        )
+        if not retry_candidates:
+            raise ValueError("Relation retry has no node-disjoint candidates within remaining budget")
+        request = build_relation_episode_request(
+            graph,
+            retry_candidates,
+            run_id=state.run_id,
+            problem=state.spec.problem,
+            goal=state.spec.goal,
+            constraints=list(state.spec.constraints),
+            provisional_synthesis_node_ids=(
+                previous.request.relation_payload.provisional_synthesis_node_ids
+            ),
+            max_relation_pairs_per_episode=state.spec.budget.max_relation_pairs_per_episode,
+            rubric_version=previous.request.relation_payload.rubric_version,
+            native_orchestration_allowed=previous.request.native_orchestration_allowed,
+            runtime_limits=limits,
+            tool_policy=previous.request.tool_policy,
+            transport_hints=previous.request.transport_hints,
+        )
+        retry_candidate_ids = {candidate.candidate_id for candidate in retry_candidates}
+        for candidate in candidates:
+            if candidate.candidate_id not in retry_candidate_ids:
+                candidate.status = "pending"
+                candidate.granted_episode_id = None
+                candidate.granted_attempt_id = None
     else:
         raise ValueError(f"retry is not implemented for role={previous.request.role}")
     # A retry is another attempt of the same logical episode.
     request.episode_id = episode_id
+    if request.role == "relation":
+        assert request.relation_payload is not None
+        retry_candidate_ids = {
+            pair.candidate_id for pair in request.relation_payload.candidate_pairs
+        }
+        for candidate in state.relation_candidates:
+            if candidate.candidate_id in retry_candidate_ids:
+                candidate.granted_episode_id = episode_id
+                candidate.granted_attempt_id = request.attempt_id
     granted_at = _now()
     deadline = None
     if limits.wall_clock_seconds is not None:
@@ -981,7 +1540,9 @@ def request_app_synthesis(
         raise ValueError("synthesis cannot be requested while an episode attempt is active")
     authorize_synthesis_control(state.spec, request)
     state.synthesis_request = request
-    state.controller_action = "ready_for_synthesis"
+    # The authorization records stop intent.  `next-episode` performs the
+    # Relation readiness gate before a new sticky terminal action is committed.
+    state.controller_action = "continue_controller"
     _save_state(run_dir, state)
     return state
 
@@ -993,4 +1554,11 @@ def app_run_status(run_dir: str | Path) -> AppRunState:
         _mark_expired(run_dir, state, active[1])
         _write_attempt_artifacts(run_dir, active[1])
         _save_state(run_dir, state)
+    if (
+        state.controller_action in {"ready_for_synthesis", "run_complete"}
+        and state.synthesis_readiness is None
+    ):
+        # Persisted pre-Relation terminal runs remain sticky and are never
+        # migrated or reopened.  The status response labels the missing gate.
+        state.relation_readiness_status = "legacy_unchecked"
     return state

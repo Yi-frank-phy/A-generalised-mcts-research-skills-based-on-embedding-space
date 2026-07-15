@@ -43,6 +43,7 @@ def run_spec(*, cap=2, max_iterations=2, require_final_synthesis=True):
             max_iterations=max_iterations,
             allocation_mass_per_iteration=1,
             max_children_per_iteration=cap,
+            max_relation_enrichment_pairs=0,
         ),
         embedding_provider="hash",
         embedding_dimension=8,
@@ -497,8 +498,8 @@ def test_app_progression_reuses_file_backed_embedding_cache_across_calls(tmp_pat
 
     second_provider = TrackingEmbeddingProvider()
     next_grant = next_app_episode(run_dir, embedding_provider=second_provider)
-    assert next_grant.controller_action == "ready_for_synthesis"
-    assert next_grant.request is None
+    assert next_grant.controller_action == "episode_required"
+    assert next_grant.request.role == "relation"
     assert second_provider.calls == 0
 
     cache = FileDTECache(run_dir / "dte_cache.json")

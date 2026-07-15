@@ -4,7 +4,7 @@ This document describes how Codex should expose the DTE backend without becoming
 
 ## Production boundary
 
-The only production entrypoint that may be described as a DTE real run is:
+The compatible headless production entrypoint is:
 
 ```bash
 python -m dte_backend strict-run \
@@ -15,11 +15,11 @@ python -m dte_backend strict-run \
   --judge-command "python scripts/codex_judge_adapter.py"
 ```
 
-Equivalently, the production command is `python -m dte_backend strict-run --mode real` with the required arguments.
+In Codex App / Work, the normal native production path is the persistent `create-run` / `next-episode` / current-App work / `submit-episode-result` loop. Repository code does not launch a second Codex process.
 
 The model-facing main agent must not manually replay Judge → controller → Executor → Relation, hand-compute controller fields, claim algorithmic convergence, mutate the graph, or commit synthesis. It may supervise the production backend and issue a synthesis request through its validated command interface when `OperatorPolicy` authorizes it. Standalone role commands and guards are development interfaces, not a second production mode.
 
-The future transport-neutral `AgentEpisodeAdapter: EpisodeRequest -> EpisodeResult` direction remains defined in `SPEC.md` and `ARCHITECTURE.md`. Until that backend-enforced boundary exists, a manual model-orchestrated harness is not a production DTE mode, has no hard anti-bypass guarantee, and must not be selected by default or emit `strict-run --mode real` truth labels.
+The transport-neutral `EpisodeRequest -> EpisodeResult` boundary is backend-enforced for App-native Judge, Executor, and Relation roles. A free-form model-orchestrated harness remains non-production because it bypasses the persistent lifecycle and commit boundary.
 
 ## Control ownership
 
@@ -64,6 +64,8 @@ During a run, Codex may read and summarize:
 - `strict_run_status.json`;
 - `relation_candidates.md`;
 - `human_questions.md`.
+
+App-native Relation state is persisted separately under `<run-dir>/relations/` as candidate, relation-ledger, and synthesis-readiness JSON artifacts. They are controller-owned observations; direct file editing has no commit effect.
 
 ```text
 observation != authority
@@ -119,6 +121,12 @@ python hooks/dte_guard.py spec examples/run_spec.json
 python hooks/dte_guard.py judge --nodes examples/frontier_nodes.json --output examples/judge_output.json
 python hooks/dte_guard.py relation --nodes examples/frontier_nodes.json --output examples/relation_output.json
 python hooks/dte_guard.py executor --parent examples/executor_parent.json --output examples/executor_output.json --child-count 1
+```
+
+For App-native Relation output, pass the exact granted request instead of a free-standing node list:
+
+```bash
+python hooks/dte_guard.py relation --request <request.json> --output <result.json>
 ```
 
 The standalone `judge-oracle`, `relation-oracle`, `validate-executor`, and flexible `run` helpers are not production outer controllers. A main agent must not compose them into a manual real-run state machine.

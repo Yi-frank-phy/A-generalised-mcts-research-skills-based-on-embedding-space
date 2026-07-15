@@ -23,6 +23,8 @@ class BudgetSpec(DTEBaseModel):
     max_iterations: int = Field(default=2, ge=1, le=20)
     allocation_mass_per_iteration: int = Field(default=3, ge=1, le=50)
     max_children_per_iteration: int = Field(default=5, ge=1, le=50)
+    max_relation_pairs_per_episode: int = Field(default=3, ge=1, le=20)
+    max_relation_enrichment_pairs: int = Field(default=3, ge=0, le=100)
     max_research_iterations: int = Field(default=1, ge=0, le=5)
     min_iterations_before_synthesis: int = Field(default=2, ge=1, le=20)
     entropy_change_threshold: float = Field(default=0.05, ge=0.0, le=1.0)

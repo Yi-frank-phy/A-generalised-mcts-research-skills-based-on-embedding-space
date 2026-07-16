@@ -12,6 +12,11 @@ ACTIVE_RUNTIME_DOCS = [
     ROOT / "AGENTS.md",
 ]
 ACTIVE_RUNTIME_CODE = list((ROOT / "src" / "dte_backend").glob("*.py"))
+PUBLIC_SKILL_SURFACES = [
+    ROOT / "SKILL.md",
+    ROOT / "agents" / "openai.yaml",
+    ROOT / "hooks" / "dte_prompt_guard.py",
+]
 
 
 def _joined(paths: list[Path]) -> str:
@@ -27,6 +32,16 @@ def test_production_docs_expose_only_strict_real_entrypoint():
     assert "python -m dte_backend strict-run --mode real" in skill
     assert "strict-run --mode real" in metadata
     assert "main agent is the orchestrator" not in skill.casefold()
+
+
+def test_public_skill_surfaces_expose_only_canonical_name():
+    public_surfaces = _joined(PUBLIC_SKILL_SURFACES)
+    old_alias = "dte-" + "extreme-research"
+
+    assert old_alias not in public_surfaces
+    assert "name: evolving-frontier-research" in public_surfaces
+    assert "$evolving-frontier-research" in public_surfaces
+    assert "`evolving-frontier-research` skill" in public_surfaces
 
 
 def test_active_runtime_routes_main_agent_authority_through_operator_policy():

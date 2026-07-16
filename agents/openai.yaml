@@ -1,4 +1,4 @@
 interface:
-  display_name: "DTE Extreme Research"
+  display_name: "Evolving Frontier Research"
   short_description: "Run research through the backend-controlled DTE workflow."
-  default_prompt: "Use $dte-extreme-research and the production entrypoint strict-run --mode real; keep DTE as the only outer controller."
+  default_prompt: "Use $evolving-frontier-research and the production entrypoint strict-run --mode real; keep DTE as the only outer controller."

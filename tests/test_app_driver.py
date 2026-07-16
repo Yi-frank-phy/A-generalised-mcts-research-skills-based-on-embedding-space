@@ -21,11 +21,14 @@ from dte_backend.episode_models import (
     EpisodeResult,
     ExecutorEpisodeOutput,
     ExecutorNodeCandidate,
+    JudgeEpisodeOutput,
+    JudgeObservation,
     RuntimeDiagnostics,
     RuntimeLimits,
     compute_output_hash,
 )
 from dte_backend.control import OperatorAuthorizationError
+from dte_backend.embedding import HashEmbeddingProvider
 from dte_backend.models import BudgetSpec, DTERunSpec, SearchNode, SynthesisControlRequest
 from dte_backend.telemetry import EpisodeEventLog
 
@@ -40,22 +43,61 @@ def spec() -> DTERunSpec:
             max_children_per_iteration=2,
             max_relation_enrichment_pairs=0,
         ),
+        embedding_provider="hash",
+        embedding_dimension=8,
     )
 
 
 def parent() -> SearchNode:
-    return SearchNode(
-        node_id="parent",
-        claim="committed parent",
-        expansion_budget=1,
-        ucb_score=0.7,
-    )
+    return SearchNode(node_id="parent", claim="committed parent")
 
 
 def create_run(tmp_path):
     run_dir = tmp_path / "run"
     create_app_run(run_dir, spec(), [parent()], run_id="run-1")
+    judge = next_app_episode(run_dir).request
+    submit_app_episode_result(run_dir, judge_result_for(judge))
+    state = app_driver.load_app_run(run_dir)
+    action, _ = app_driver._progress_controller(
+        run_dir,
+        state,
+        embedding_provider=HashEmbeddingProvider(dim=state.spec.embedding_dimension),
+    )
+    state.controller_action = action
+    app_driver._save_state(run_dir, state)
     return run_dir
+
+
+def judge_result_for(request):
+    output = JudgeEpisodeOutput(
+        observations=[
+            JudgeObservation(
+                node_id=node_id,
+                score=0.8,
+                reasoning="bounded Judge observation",
+                risks=[],
+            )
+            for node_id in request.selected_node_revisions
+        ]
+    )
+    return EpisodeResult(
+        episode_id=request.episode_id,
+        attempt_id=request.attempt_id,
+        run_id=request.run_id,
+        role="judge",
+        input_graph_revision=request.input_graph_revision,
+        selected_node_revisions=request.selected_node_revisions,
+        status="completed",
+        structured_output=output,
+        runtime_diagnostics=RuntimeDiagnostics(
+            adapter_name="codex-app-main-agent",
+            transport_name="current-app-runtime",
+            profile="native-autonomous",
+            usage_source="unavailable",
+        ),
+        output_hash=compute_output_hash(output, request.output_schema_version),
+        schema_version=request.output_schema_version,
+    )
 
 
 def result_for(request, *, children=1, node_id_prefix="child", status="completed"):
@@ -101,6 +143,10 @@ def graph_snapshot(run_dir):
     }
 
 
+def lifecycle_for(state, episode_id):
+    return next(episode for episode in state.episodes if episode.episode_id == episode_id)
+
+
 def test_next_episode_creates_one_bounded_persistent_grant_without_subprocess(monkeypatch, tmp_path):
     run_dir = create_run(tmp_path)
 
@@ -124,11 +170,10 @@ def test_next_episode_creates_one_bounded_persistent_grant_without_subprocess(mo
         / "request.json"
     )
     assert request_path.exists()
-    assert [event["event_type"] for event in EpisodeEventLog(run_dir / "episode_events.jsonl").read_events()] == [
-        "run_created",
-        "episode_granted",
-        "episode_started",
-    ]
+    assert [
+        event["event_type"]
+        for event in EpisodeEventLog(run_dir / "episode_events.jsonl").read_events()
+    ][-2:] == ["episode_granted", "episode_started"]
 
 
 def test_next_episode_resumes_existing_attempt_instead_of_double_grant(tmp_path):
@@ -138,20 +183,21 @@ def test_next_episode_resumes_existing_attempt_instead_of_double_grant(tmp_path)
     assert second.resumed_existing_attempt is True
     assert second.request.attempt_id == first.request.attempt_id
     events = EpisodeEventLog(run_dir / "episode_events.jsonl").read_events()
-    assert [event["event_type"] for event in events].count("episode_granted") == 1
+    assert [event["event_type"] for event in events].count("episode_granted") == 2
 
 
 def test_valid_app_result_commits_and_backend_selects_next_action(tmp_path):
     run_dir = create_run(tmp_path)
     request = next_app_episode(run_dir).request
+    revision_before = app_run_status(run_dir).graph_revision
     outcome = submit_app_episode_result(run_dir, result_for(request))
     assert outcome.commit_outcome.accepted is True
     assert outcome.next_controller_action == "continue_controller"
     state = app_run_status(run_dir)
-    assert state.graph_revision == 1
+    assert state.graph_revision == revision_before + 1
     assert [node.node_id for node in state.nodes] == ["parent", "child-0"]
     assert state.nodes[0].status == "closed"
-    assert state.episodes[0].committed_attempt_id == request.attempt_id
+    assert lifecycle_for(state, request.episode_id).committed_attempt_id == request.attempt_id
 
 
 def test_valid_zero_child_app_result(tmp_path):
@@ -191,7 +237,8 @@ def test_expired_attempt_cannot_commit(monkeypatch, tmp_path):
     assert outcome.commit_outcome.accepted is False
     assert "expired" in outcome.commit_outcome.rejection_reason
     assert graph_snapshot(run_dir) == before
-    assert app_run_status(run_dir).episodes[0].attempts[0].status == "expired"
+    state = app_run_status(run_dir)
+    assert lifecycle_for(state, request.episode_id).attempts[0].status == "expired"
 
 
 def test_retry_creates_new_attempt_and_supersedes_old_result(tmp_path):
@@ -211,8 +258,9 @@ def test_retry_creates_new_attempt_and_supersedes_old_result(tmp_path):
     new_outcome = submit_app_episode_result(run_dir, result_for(retry.request))
     assert new_outcome.commit_outcome.accepted is True
     state = app_run_status(run_dir)
-    assert state.episodes[0].attempts[0].status == "superseded"
-    assert state.episodes[0].attempts[1].status == "committed"
+    episode = lifecycle_for(state, first.episode_id)
+    assert episode.attempts[0].status == "superseded"
+    assert episode.attempts[1].status == "committed"
 
 
 def test_retry_limit_is_enforced(tmp_path):
@@ -238,7 +286,8 @@ def test_only_one_attempt_can_commit(tmp_path):
     assert second.commit_outcome.accepted is False
     assert "status=committed" in second.commit_outcome.rejection_reason
     assert graph_snapshot(run_dir) == snapshot
-    assert app_run_status(run_dir).episodes[0].attempts[0].commit_outcome.accepted is True
+    state = app_run_status(run_dir)
+    assert lifecycle_for(state, request.episode_id).attempts[0].commit_outcome.accepted is True
 
 
 def test_result_artifact_is_not_graph_state_until_submit(tmp_path):
@@ -270,7 +319,7 @@ def test_app_driver_preserves_operator_policy_authority(tmp_path):
     restricted_data = spec().model_dump()
     restricted_data["operator_policy"] = {"main_agent_may_request_synthesis": False}
     restricted = DTERunSpec.model_validate(restricted_data)
-    create_app_run(run_dir, restricted, [SearchNode(node_id="closed", claim="done", status="closed")])
+    create_app_run(run_dir, restricted, [SearchNode(node_id="closed", claim="done")])
     main_request = SynthesisControlRequest(
         action="force_synthesis_after_current_task",
         requested_by="main_agent",
@@ -278,6 +327,13 @@ def test_app_driver_preserves_operator_policy_authority(tmp_path):
     )
     with pytest.raises(OperatorAuthorizationError):
         request_app_synthesis(run_dir, main_request)
+    judge = next_app_episode(run_dir).request
+    submit_app_episode_result(run_dir, judge_result_for(judge))
+    executor = next_app_episode(
+        run_dir,
+        embedding_provider=HashEmbeddingProvider(dim=restricted.embedding_dimension),
+    ).request
+    submit_app_episode_result(run_dir, result_for(executor, children=0))
     user_request = main_request.model_copy(update={"requested_by": "user"})
     state = request_app_synthesis(run_dir, user_request)
     assert state.controller_action == "continue_controller"
@@ -331,8 +387,9 @@ def test_app_driver_cli_round_trip(tmp_path):
     )
     granted = command("next-episode", "--run-dir", str(run_dir))
     request = next_app_episode(run_dir).request
+    assert request.role == "judge"
     assert granted["request"]["attempt_id"] == request.attempt_id
-    result_path.write_text(result_for(request).model_dump_json(indent=2), encoding="utf-8")
+    result_path.write_text(judge_result_for(request).model_dump_json(indent=2), encoding="utf-8")
     submitted = command(
         "submit-episode-result",
         "--run-dir",

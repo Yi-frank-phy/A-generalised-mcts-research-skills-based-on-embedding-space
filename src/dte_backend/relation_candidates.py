@@ -242,6 +242,78 @@ def _record_pair_revision(record: RelationRecord) -> tuple[str, str, int, int] |
     return (record.left_node_id, record.right_node_id, left_revision, right_revision)
 
 
+def relation_record_covers_candidate(
+    record: RelationRecord,
+    candidate: RelationCandidate,
+) -> bool:
+    """Return whether a durable record covers this exact candidate identity."""
+
+    return bool(
+        record.candidate_id == candidate.candidate_id
+        and record.left_node_id == candidate.left_node_id
+        and record.right_node_id == candidate.right_node_id
+        and record.scheduling_class == candidate.scheduling_class
+        and record.material_to_synthesis == candidate.material_to_synthesis
+        and _record_pair_revision(record) == _candidate_pair_revision(candidate)
+    )
+
+
+def expected_relation_candidate_id(candidate: RelationCandidate) -> str:
+    """Recompute the stable identity from immutable pair/revision facts."""
+
+    return stable_relation_id(
+        "relcand",
+        candidate.left_node_id,
+        candidate.right_node_id,
+        candidate.left_node_revision,
+        candidate.right_node_revision,
+        candidate.scheduling_class,
+        candidate.candidate_reason,
+    )
+
+
+def _candidate_identity_fields(candidate: RelationCandidate) -> tuple[object, ...]:
+    """Fields which a shared stable candidate ID is required to bind."""
+
+    return (
+        candidate.left_node_id,
+        candidate.right_node_id,
+        candidate.left_node_revision,
+        candidate.right_node_revision,
+        candidate.candidate_reason,
+        candidate.scheduling_class,
+        candidate.priority,
+    )
+
+
+def promote_pending_enrichment_materiality(
+    candidates: list[RelationCandidate],
+    *,
+    provisional_synthesis_node_ids: list[str],
+) -> list[RelationCandidate]:
+    """Promote pending enrichment when both endpoints enter Synthesis scope.
+
+    Candidate identity deliberately excludes this contextual flag. A pair may
+    therefore be discovered while only one endpoint is selected and become
+    material later without either node revision changing.
+    """
+
+    selected = set(provisional_synthesis_node_ids)
+    promoted: list[RelationCandidate] = []
+    for candidate in candidates:
+        current = candidate.model_copy(deep=True)
+        if (
+            current.scheduling_class == "enrichment"
+            and current.status == "pending"
+            and not current.material_to_synthesis
+            and current.left_node_id in selected
+            and current.right_node_id in selected
+        ):
+            current.material_to_synthesis = True
+        promoted.append(current)
+    return promoted
+
+
 def _directly_related(left: SearchNode, right: SearchNode) -> bool:
     return bool(
         left.node_id in right.parent_ids
@@ -274,10 +346,30 @@ def generate_relation_enrichment_candidates(
     if len(selected) < 1:
         return []
 
+    promoted_existing = promote_pending_enrichment_materiality(
+        existing,
+        provisional_synthesis_node_ids=provisional_synthesis_node_ids,
+    )
+    materiality_promotions = [
+        promoted
+        for current, promoted in zip(existing, promoted_existing, strict=True)
+        if current.material_to_synthesis != promoted.material_to_synthesis
+    ]
+
+    # A pending nonmaterial candidate must be regenerated when both endpoints
+    # have since entered the provisional set. Its stable ID is intentionally
+    # unchanged; refresh_relation_candidates promotes the durable candidate.
     known_pair_revisions = {
         _candidate_pair_revision(candidate)
         for candidate in existing
         if candidate.status in {"pending", "granted", "resolved"}
+        and not (
+            candidate.scheduling_class == "enrichment"
+            and candidate.status == "pending"
+            and not candidate.material_to_synthesis
+            and candidate.left_node_id in selected_ids
+            and candidate.right_node_id in selected_ids
+        )
     }
     known_pair_revisions.update(
         pair for record in relation_ledger if (pair := _record_pair_revision(record)) is not None
@@ -291,10 +383,21 @@ def generate_relation_enrichment_candidates(
         for node in eligible
         if node.node_id in selected_ids or any(_directly_related(node, item) for item in selected)
     ]
-    ranked = sorted(
-        selected_related,
-        key=lambda node: (node.node_id not in selected_ids, -_score_for_tie(node), node.node_id),
-    )[:12]
+    known_degree: dict[str, int] = defaultdict(int)
+    for left_id, right_id, _, _ in known_pair_revisions:
+        known_degree[left_id] += 1
+        known_degree[right_id] += 1
+    selected_ranked = sorted(
+        (node for node in selected_related if node.node_id in selected_ids),
+        key=lambda node: (-_score_for_tie(node), node.node_id),
+    )
+    related_ranked = sorted(
+        (node for node in selected_related if node.node_id not in selected_ids),
+        # Previously covered nodes rotate behind unseen directly-related nodes
+        # before the bounded node window is truncated.
+        key=lambda node: (known_degree[node.node_id], -_score_for_tie(node), node.node_id),
+    )
+    ranked = selected_ranked + related_ranked[: max(0, 12 - len(selected_ranked))]
     distances: dict[tuple[str, str], float] = {}
     embedded = [node for node in ranked if node.local_embedding]
     if len(embedded) >= 2:
@@ -337,7 +440,7 @@ def generate_relation_enrichment_candidates(
 
     # Truncation happens only after current candidates and committed records
     # have been removed, so known pairs can never hide unseen pairs.
-    return sorted(
+    newly_generated = sorted(
         generated.values(),
         key=lambda item: (
             reason_order[item.candidate_reason],
@@ -345,6 +448,9 @@ def generate_relation_enrichment_candidates(
             item.right_node_id,
         ),
     )[:max_candidates]
+    # Promotions update existing identities and therefore do not consume the
+    # bounded window for genuinely new candidate work.
+    return materiality_promotions + newly_generated
 
 
 def generate_relation_candidates(
@@ -387,6 +493,10 @@ def refresh_relation_candidates(
 ) -> list[RelationCandidate]:
     """Invalidate stale work and add generated candidates with current coverage."""
 
+    for candidate in [*existing, *generated]:
+        if candidate.candidate_id != expected_relation_candidate_id(candidate):
+            raise ValueError("Relation candidate ID disagrees with its immutable identity")
+
     by_id = {node.node_id: node for node in nodes}
     refreshed = [candidate.model_copy(deep=True) for candidate in existing]
     for candidate in refreshed:
@@ -418,17 +528,28 @@ def refresh_relation_candidates(
         ):
             candidate.status = "invalidated"
 
-    existing_ids = {candidate.candidate_id for candidate in refreshed}
-    records_by_pair = {
-        pair: record
-        for record in relation_ledger or []
-        if (pair := _record_pair_revision(record)) is not None
-    }
+    existing_by_id = {candidate.candidate_id: candidate for candidate in refreshed}
+    existing_ids = set(existing_by_id)
+    records_by_candidate_id = {record.candidate_id: record for record in relation_ledger or []}
     for candidate in generated:
         if candidate.candidate_id in existing_ids:
+            current = existing_by_id[candidate.candidate_id]
+            if _candidate_identity_fields(current) != _candidate_identity_fields(candidate):
+                raise ValueError(
+                    "Relation candidates sharing an ID disagree on immutable identity fields"
+                )
+            if (
+                current.scheduling_class == "enrichment"
+                and current.status == "pending"
+                and not current.material_to_synthesis
+                and candidate.material_to_synthesis
+            ):
+                current.material_to_synthesis = True
             continue
-        covering_record = records_by_pair.get(_candidate_pair_revision(candidate))
-        if covering_record is not None:
+        covering_record = records_by_candidate_id.get(candidate.candidate_id)
+        if covering_record is not None and relation_record_covers_candidate(
+            covering_record, candidate
+        ):
             candidate = candidate.model_copy(
                 update={
                     "status": "resolved",
@@ -437,4 +558,5 @@ def refresh_relation_candidates(
             )
         refreshed.append(candidate)
         existing_ids.add(candidate.candidate_id)
+        existing_by_id[candidate.candidate_id] = candidate
     return refreshed

@@ -178,7 +178,12 @@ def run_frontier_search(
                     node.judge_reasoning = result.reasoning
                     break
 
-        frontier, kde_state = estimate_frontier_kde_state(nodes, cache=cache, provider=embedding_provider)
+        frontier, kde_state = estimate_frontier_kde_state(
+            nodes,
+            cache=cache,
+            provider=embedding_provider,
+            expected_dimension=spec.embedding_dimension,
+        )
         for node, uncertainty in zip(frontier, kde_state.uncertainty):
             node.uncertainty = uncertainty
 

@@ -29,20 +29,28 @@ def validate_judge_output(nodes: list[SearchNode], raw_output: str | Any) -> lis
     if not isinstance(results, list):
         raise ValueError("judge oracle must return a list or {'results': [...]} object")
 
-    allowed_ids = {node.node_id for node in nodes}
+    node_ids = [node.node_id for node in nodes]
+    if len(node_ids) != len(set(node_ids)):
+        raise ValueError("judge oracle input contains duplicate node IDs")
+    allowed_ids = set(node_ids)
     seen: set[str] = set()
     parsed: list[JudgeOracleResult] = []
-    forbidden = {"embedding", "uncertainty", "ucb_score", "expansion_budget", "node_type", "claim"}
+    allowed_fields = {"node_id", "score", "reasoning", "risks"}
 
     for item in results:
         if not isinstance(item, dict):
             raise ValueError("judge oracle result entries must be objects")
-        overlap = forbidden.intersection(item)
-        if overlap:
-            raise ValueError(f"judge oracle returned forbidden fields: {sorted(overlap)}")
+        unexpected = set(item) - allowed_fields
+        if unexpected:
+            raise ValueError(f"judge oracle returned forbidden fields: {sorted(unexpected)}")
         node_id = str(item.get("node_id", ""))
         if node_id not in allowed_ids:
             raise ValueError(f"judge oracle returned unknown node_id: {node_id}")
+        if node_id in seen:
+            raise ValueError(f"judge oracle returned duplicate node_id: {node_id}")
+        reasoning = item.get("reasoning")
+        if not isinstance(reasoning, str) or not reasoning.strip():
+            raise ValueError("judge oracle reasoning must be a non-empty string")
         score = float(item.get("score"))
         if not 0.0 <= score <= 1.0:
             raise ValueError("judge score must be in [0, 1]")
@@ -53,7 +61,7 @@ def validate_judge_output(nodes: list[SearchNode], raw_output: str | Any) -> lis
             JudgeOracleResult(
                 node_id=node_id,
                 score=score,
-                reasoning=str(item.get("reasoning", "")),
+                reasoning=reasoning,
                 risks=[str(r) for r in risks],
             )
         )
@@ -71,13 +79,32 @@ def validate_relation_output(nodes: list[SearchNode], raw_output: str | Any) -> 
     data = parse_json_output(raw_output)
     if not isinstance(data, dict):
         raise ValueError("relation oracle must return an object")
+    allowed_fields = {
+        "relation",
+        "source_node_ids",
+        "rationale",
+        "discriminator_question",
+    }
+    unexpected = set(data) - allowed_fields
+    if unexpected:
+        raise ValueError(f"relation oracle returned forbidden fields: {sorted(unexpected)}")
     relation = data.get("relation")
     if relation not in {"equivalent", "complementary", "conflict", "independent"}:
         raise ValueError("invalid relation oracle relation")
-    source_ids = [str(x) for x in data.get("source_node_ids", [])]
-    allowed_ids = {node.node_id for node in nodes}
-    if len(source_ids) < 2 or not set(source_ids).issubset(allowed_ids):
+    raw_source_ids = data.get("source_node_ids", [])
+    if not isinstance(raw_source_ids, list):
+        raise ValueError("relation oracle source_node_ids must be a list")
+    source_ids = [str(x) for x in raw_source_ids]
+    node_ids = [node.node_id for node in nodes]
+    if len(node_ids) != len(set(node_ids)):
+        raise ValueError("relation oracle input contains duplicate node IDs")
+    allowed_ids = set(node_ids)
+    if len(source_ids) < 2:
         raise ValueError("relation oracle source_node_ids must contain at least two known nodes")
+    if len(source_ids) != len(set(source_ids)):
+        raise ValueError("relation oracle source_node_ids must not contain duplicate node IDs")
+    if not set(source_ids).issubset(allowed_ids):
+        raise ValueError("relation oracle source_node_ids must contain only known nodes")
     return RelationOracleResult(
         relation=relation,
         source_node_ids=source_ids,
@@ -92,8 +119,16 @@ def validate_relation_episode_output(
 ) -> EpisodeResult:
     """Validate the App-native Relation envelope without mutating graph state."""
 
-    parsed_request = request if isinstance(request, EpisodeRequest) else EpisodeRequest.model_validate(request)
-    result = raw_output if isinstance(raw_output, EpisodeResult) else EpisodeResult.model_validate(raw_output)
+    request_payload = (
+        request.model_dump(mode="json") if isinstance(request, EpisodeRequest) else request
+    )
+    result_payload = (
+        raw_output.model_dump(mode="json")
+        if isinstance(raw_output, EpisodeResult)
+        else raw_output
+    )
+    parsed_request = EpisodeRequest.model_validate(request_payload)
+    result = EpisodeResult.model_validate(result_payload)
     if parsed_request.role != "relation" or parsed_request.relation_payload is None:
         raise ValueError("Relation episode guard requires role='relation' request")
     if result.role != "relation" or not isinstance(result.structured_output, RelationEpisodeOutput):

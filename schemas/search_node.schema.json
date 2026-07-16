@@ -1,21 +1,198 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "SearchNode",
-  "type": "object",
   "additionalProperties": false,
-  "required": ["node_id", "node_type", "claim"],
+  "description": "A node in the DTE search graph/frontier.",
   "properties": {
-    "node_id": {"type": "string"},
-    "node_type": {"enum": ["candidate", "evidence", "counterexample", "merge", "synthesis"]},
-    "claim": {"type": "string", "minLength": 1},
-    "rationale": {"type": "string"},
-    "assumptions": {"type": "array", "items": {"type": "string"}},
-    "evidence": {"type": "array", "items": {"type": "string"}},
-    "risks": {"type": "array", "items": {"type": "string"}},
-    "parent_ids": {"type": "array", "items": {"type": "string"}},
-    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
-    "score": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
-    "uncertainty": {"type": ["number", "null"], "minimum": 0},
-    "status": {"enum": ["frontier", "closed", "archived", "merged", "synthesis"]}
-  }
+    "node_id": {
+      "title": "Node Id",
+      "type": "string"
+    },
+    "node_type": {
+      "default": "candidate",
+      "enum": [
+        "candidate",
+        "evidence",
+        "counterexample",
+        "merge",
+        "synthesis"
+      ],
+      "title": "Node Type",
+      "type": "string"
+    },
+    "claim": {
+      "minLength": 1,
+      "title": "Claim",
+      "type": "string"
+    },
+    "rationale": {
+      "default": "",
+      "title": "Rationale",
+      "type": "string"
+    },
+    "assumptions": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Assumptions",
+      "type": "array"
+    },
+    "evidence": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Evidence",
+      "type": "array"
+    },
+    "risks": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Risks",
+      "type": "array"
+    },
+    "parent_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Parent Ids",
+      "type": "array"
+    },
+    "confidence": {
+      "default": 0.5,
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Confidence",
+      "type": "number"
+    },
+    "local_embedding": {
+      "anyOf": [
+        {
+          "items": {
+            "type": "number"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Local Embedding"
+    },
+    "judge_reasoning": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Judge Reasoning"
+    },
+    "judge_risks": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Judge Risks",
+      "type": "array"
+    },
+    "judge_uncertainty_evidence": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Judge Uncertainty Evidence",
+      "type": "array"
+    },
+    "judge_result_provenance": {
+      "anyOf": [
+        {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Judge Result Provenance"
+    },
+    "score": {
+      "anyOf": [
+        {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Score"
+    },
+    "density": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Density"
+    },
+    "uncertainty": {
+      "anyOf": [
+        {
+          "minimum": 0.0,
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Uncertainty"
+    },
+    "ucb_score": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Ucb Score"
+    },
+    "expansion_budget": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Expansion Budget",
+      "type": "integer"
+    },
+    "status": {
+      "default": "frontier",
+      "enum": [
+        "frontier",
+        "closed",
+        "archived",
+        "merged",
+        "synthesis"
+      ],
+      "title": "Status",
+      "type": "string"
+    }
+  },
+  "required": [
+    "node_id",
+    "claim"
+  ],
+  "title": "SearchNode",
+  "type": "object"
 }

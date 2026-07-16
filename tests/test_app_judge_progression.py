@@ -222,6 +222,25 @@ def test_judge_score_range_is_rejected_without_mutation(tmp_path):
     assert graph_snapshot(run_dir) == before
 
 
+def test_mutated_judge_result_instance_is_revalidated_before_commit():
+    graph = EpisodeGraph(nodes=[SearchNode(node_id="n", claim="claim")])
+    request = build_judge_episode_request(
+        graph,
+        graph.nodes,
+        run_id="run",
+        problem="p",
+        goal="g",
+    )
+    result = judge_result(request)
+    result.structured_output.observations[0].score = 1.1
+    result.output_hash = compute_output_hash(result.structured_output, request.output_schema_version)
+    before = graph.snapshot()
+    outcome = commit_episode_result(graph, request, result)
+    assert outcome.accepted is False
+    assert "result schema validation failed" in outcome.rejection_reason
+    assert graph.snapshot() == before
+
+
 @pytest.mark.parametrize("case", ["missing", "extra", "duplicate"])
 def test_judge_grant_membership_is_exact_and_atomic(tmp_path, case):
     run_dir = make_run(tmp_path, node_count=2)
@@ -410,38 +429,27 @@ def test_judge_telemetry_is_coarse_with_unavailable_usage(tmp_path):
 
 
 @pytest.mark.parametrize("terminal_action", ["ready_for_synthesis", "run_complete"])
-def test_terminal_controller_actions_are_sticky_even_with_positive_budget(tmp_path, terminal_action):
+def test_premature_terminal_controller_actions_with_forged_budget_are_rejected(
+    tmp_path,
+    terminal_action,
+):
     run_dir = make_run(tmp_path)
+    state_path = run_dir / "app_run_state.json"
+    state_before = state_path.read_text(encoding="utf-8")
     state = app_driver.load_app_run(run_dir)
     state.nodes[0].expansion_budget = 1
     state.nodes[0].ucb_score = 1.0
     state.controller_action = terminal_action
-    app_driver._save_state(run_dir, state)
-
-    state_path = run_dir / "app_run_state.json"
-    event_path = run_dir / "episode_events.jsonl"
-    state_before = state_path.read_text(encoding="utf-8")
-    events_before = event_path.read_text(encoding="utf-8")
-
-    for _ in range(3):
-        outcome = next_app_episode(run_dir)
-        assert outcome.controller_action == terminal_action
-        assert outcome.request is None
-
+    with pytest.raises(ValueError):
+        app_driver._save_state(run_dir, state)
     assert state_path.read_text(encoding="utf-8") == state_before
-    assert event_path.read_text(encoding="utf-8") == events_before
-    persisted = app_run_status(run_dir)
-    assert persisted.graph_revision == state.graph_revision
-    assert persisted.node_revisions == state.node_revisions
-    assert persisted.nodes[0].expansion_budget == 1
-    assert persisted.episodes == []
 
 
 @pytest.mark.parametrize(
     ("require_final_synthesis", "terminal_action"),
     [(True, "ready_for_synthesis"), (False, "run_complete")],
 )
-def test_max_iterations_stops_before_judging_final_executor_child(
+def test_max_iterations_judges_final_authorized_executor_child_before_terminal(
     tmp_path,
     require_final_synthesis,
     terminal_action,
@@ -463,11 +471,20 @@ def test_max_iterations_stops_before_judging_final_executor_child(
         for event in events_before
         if event["role"] == "judge" and event["event_type"] in {"episode_granted", "episode_started"}
     ]
+    # A restart must not let the iteration cap revoke already-authorized child
+    # accounting. The committed child still needs its bounded Judge episode.
+    app_driver.load_app_run(run_dir)
+    child_judge = next_app_episode(run_dir)
+    assert child_judge.controller_action == "episode_required"
+    assert child_judge.request.role == "judge"
+    assert list(child_judge.request.selected_node_revisions) == ["final-child"]
+    submit_app_episode_result(run_dir, judge_result(child_judge.request))
+
     outcome = next_app_episode(run_dir)
     assert outcome.controller_action == terminal_action
     assert outcome.request is None
     assert app_run_status(run_dir).nodes[-1].node_id == "final-child"
-    assert app_run_status(run_dir).nodes[-1].score is None
+    assert app_run_status(run_dir).nodes[-1].score is not None
 
     events_after = EpisodeEventLog(run_dir / "episode_events.jsonl").read_events()
     judge_grants_after = [
@@ -475,7 +492,7 @@ def test_max_iterations_stops_before_judging_final_executor_child(
         for event in events_after
         if event["role"] == "judge" and event["event_type"] in {"episode_granted", "episode_started"}
     ]
-    assert judge_grants_after == judge_grants_before
+    assert len(judge_grants_after) == len(judge_grants_before) + 2
 
 
 def test_app_progression_reuses_file_backed_embedding_cache_across_calls(tmp_path):
@@ -499,7 +516,7 @@ def test_app_progression_reuses_file_backed_embedding_cache_across_calls(tmp_pat
     second_provider = TrackingEmbeddingProvider()
     next_grant = next_app_episode(run_dir, embedding_provider=second_provider)
     assert next_grant.controller_action == "episode_required"
-    assert next_grant.request.role == "relation"
+    assert next_grant.request.role == "executor"
     assert second_provider.calls == 0
 
     cache = FileDTECache(run_dir / "dte_cache.json")

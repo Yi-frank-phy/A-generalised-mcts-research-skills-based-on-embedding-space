@@ -325,7 +325,7 @@ def test_strict_real_mode_executes_with_compliant_oracles(monkeypatch, tmp_path)
     monkeypatch.setenv("GEMINI_API_KEY", "test-key")
     monkeypatch.setattr(
         "dte_backend.runner.get_embedding_provider",
-        lambda name, dim: HashEmbeddingProvider(dim=8),
+        lambda name, dim: HashEmbeddingProvider(dim=dim),
     )
     spec = DTERunSpec(
         problem="p",

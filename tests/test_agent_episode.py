@@ -116,6 +116,63 @@ def test_valid_zero_child_result_closes_assigned_parent():
     assert graph.node_by_id("parent").status == "closed"
 
 
+def test_mutated_request_instance_is_revalidated_before_commit():
+    graph = make_graph()
+    request = make_request(graph)
+    result = make_result(request, make_output(child()))
+    request.max_returned_children = -1
+    assert_rejected_unchanged(graph, request, result, "request schema validation failed")
+
+
+def test_executor_child_duplicate_parent_ids_are_rejected_atomically():
+    graph = make_graph()
+    request = make_request(graph)
+    result = make_result(
+        request,
+        make_output(child().model_copy(update={"parent_ids": ["parent", "parent"]})),
+    )
+    assert_rejected_unchanged(graph, request, result, "duplicate parent IDs")
+
+
+def test_model_construct_result_cannot_bypass_nested_candidate_validation():
+    graph = make_graph()
+    request = make_request(graph)
+    invalid_candidate = ExecutorNodeCandidate.model_construct(
+        node_id="child",
+        claim="candidate",
+        parent_ids=["parent"],
+        confidence=1.5,
+    )
+    invalid_output = ExecutorEpisodeOutput.model_construct(
+        nodes=[invalid_candidate],
+        episode_summary="constructed without validation",
+        unresolved_questions=[],
+    )
+    valid_result = make_result(request, make_output(child()))
+    result = EpisodeResult.model_construct(
+        episode_id=valid_result.episode_id,
+        attempt_id=valid_result.attempt_id,
+        run_id=valid_result.run_id,
+        role=valid_result.role,
+        input_graph_revision=valid_result.input_graph_revision,
+        selected_node_revisions=valid_result.selected_node_revisions,
+        status=valid_result.status,
+        structured_output=invalid_output,
+        runtime_diagnostics=valid_result.runtime_diagnostics,
+        output_hash=compute_output_hash(invalid_output, request.output_schema_version),
+        schema_version=valid_result.schema_version,
+    )
+    assert_rejected_unchanged(graph, request, result, "result schema validation failed")
+
+
+def test_result_serialization_failure_becomes_atomic_rejection():
+    graph = make_graph()
+    request = make_request(graph)
+    result = make_result(request, make_output(child()))
+    result.runtime_diagnostics.internal_subagent_metadata = {"not_json": object()}
+    assert_rejected_unchanged(graph, request, result, "result schema validation failed")
+
+
 def test_child_count_exceeds_grant():
     graph = make_graph()
     request = make_request(graph, grant=1)
@@ -158,6 +215,49 @@ def test_child_must_reference_assigned_parent():
     request = make_request(graph)
     result = make_result(request, make_output(child(parent_id="other")))
     assert_rejected_unchanged(graph, request, result, "assigned parent")
+
+
+def test_child_cannot_reference_unknown_parent_even_with_assigned_parent():
+    graph = make_graph()
+    request = make_request(graph)
+    candidate = child()
+    candidate.parent_ids.append("missing")
+    result = make_result(request, make_output(candidate))
+    assert_rejected_unchanged(graph, request, result, "uncommitted parent")
+
+
+def test_child_cannot_reference_itself_as_parent():
+    graph = make_graph()
+    request = make_request(graph)
+    candidate = child()
+    candidate.parent_ids.append(candidate.node_id)
+    result = make_result(request, make_output(candidate))
+    assert_rejected_unchanged(graph, request, result, "itself as parent")
+
+
+def test_child_cannot_reference_sibling_from_same_result_as_parent():
+    graph = make_graph()
+    request = make_request(graph)
+    first = child("first")
+    second = child("second")
+    second.parent_ids.append(first.node_id)
+    result = make_result(request, make_output(first, second))
+    assert_rejected_unchanged(graph, request, result, "sibling result node")
+
+
+def test_child_may_reference_additional_preexisting_parent():
+    graph = EpisodeGraph(
+        nodes=[
+            SearchNode(node_id="parent", claim="assigned parent"),
+            SearchNode(node_id="existing", claim="preexisting supporting parent"),
+        ]
+    )
+    request = make_request(graph)
+    candidate = child()
+    candidate.parent_ids.append("existing")
+    outcome = commit_episode_result(graph, request, make_result(request, make_output(candidate)))
+    assert outcome.accepted is True
+    assert graph.node_by_id("child").parent_ids == ["parent", "existing"]
 
 
 @pytest.mark.parametrize(
@@ -241,6 +341,29 @@ def test_event_emission_for_rejection(tmp_path):
     assert outcome.accepted is False
     assert log.read_events()[-1]["event_type"] == "output_rejected"
     assert "exceeds grant" in log.read_events()[-1]["rejection_reason"]
+
+
+@pytest.mark.parametrize(("grant", "accepted"), [(1, True), (0, False)])
+def test_commit_and_rejection_outcomes_survive_telemetry_io_failure(grant, accepted):
+    class UnavailableTelemetry:
+        def emit(self, event_type, **fields):
+            raise OSError("telemetry storage unavailable")
+
+    graph = make_graph()
+    request = make_request(graph, grant=grant)
+    before = graph.snapshot()
+    outcome = commit_episode_result(
+        graph,
+        request,
+        make_result(request, make_output(child())),
+        telemetry=UnavailableTelemetry(),
+    )
+    assert outcome.accepted is accepted
+    if accepted:
+        assert graph.revision == before["revision"] + 1
+        assert graph.node_by_id("child") is not None
+    else:
+        assert graph.snapshot() == before
 
 
 def test_runtime_failure_emits_failed_and_rejected_events(tmp_path):

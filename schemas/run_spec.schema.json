@@ -1,127 +1,153 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "DTERunSpec",
-  "type": "object",
-  "required": [
-    "problem",
-    "goal",
-    "mode",
-    "budget"
-  ],
-  "properties": {
-    "problem": {
-      "type": "string",
-      "minLength": 1
-    },
-    "goal": {
-      "type": "string",
-      "minLength": 1
-    },
-    "constraints": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      }
-    },
-    "mode": {
-      "const": "mandatory_frontier"
-    },
-    "operator_policy": {
-      "type": "object",
+  "$defs": {
+    "BudgetSpec": {
       "additionalProperties": false,
+      "description": "Hard budget limits for one DTE run.",
       "properties": {
-        "main_agent_may_request_synthesis": {
-          "type": "boolean",
-          "default": true
+        "max_iterations": {
+          "default": 2,
+          "maximum": 20,
+          "minimum": 1,
+          "title": "Max Iterations",
+          "type": "integer"
+        },
+        "allocation_mass_per_iteration": {
+          "default": 3,
+          "maximum": 50,
+          "minimum": 1,
+          "title": "Allocation Mass Per Iteration",
+          "type": "integer"
+        },
+        "max_children_per_iteration": {
+          "default": 5,
+          "maximum": 50,
+          "minimum": 1,
+          "title": "Max Children Per Iteration",
+          "type": "integer"
+        },
+        "max_relation_pairs_per_episode": {
+          "default": 3,
+          "maximum": 20,
+          "minimum": 1,
+          "title": "Max Relation Pairs Per Episode",
+          "type": "integer"
+        },
+        "max_relation_enrichment_pairs": {
+          "default": 3,
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Max Relation Enrichment Pairs",
+          "type": "integer"
+        },
+        "max_research_iterations": {
+          "default": 1,
+          "maximum": 5,
+          "minimum": 0,
+          "title": "Max Research Iterations",
+          "type": "integer"
+        },
+        "min_iterations_before_synthesis": {
+          "default": 2,
+          "maximum": 20,
+          "minimum": 1,
+          "title": "Min Iterations Before Synthesis",
+          "type": "integer"
+        },
+        "entropy_change_threshold": {
+          "default": 0.05,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Entropy Change Threshold",
+          "type": "number"
+        },
+        "t_max": {
+          "default": 1.0,
+          "exclusiveMinimum": 0.0,
+          "maximum": 10.0,
+          "title": "T Max",
+          "type": "number"
         }
       },
-      "default": {
-        "main_agent_may_request_synthesis": true
-      }
+      "title": "BudgetSpec",
+      "type": "object"
+    },
+    "OperatorPolicy": {
+      "additionalProperties": false,
+      "description": "Narrow delegation policy for privileged controller commands.",
+      "properties": {
+        "main_agent_may_request_synthesis": {
+          "default": true,
+          "title": "Main Agent May Request Synthesis",
+          "type": "boolean"
+        }
+      },
+      "title": "OperatorPolicy",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Top-level run specification.\n\nThis is the source of truth. Free-form Markdown or prompt text cannot\noverride this object after validation.",
+  "properties": {
+    "problem": {
+      "minLength": 1,
+      "title": "Problem",
+      "type": "string"
+    },
+    "goal": {
+      "minLength": 1,
+      "title": "Goal",
+      "type": "string"
+    },
+    "constraints": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Constraints",
+      "type": "array"
+    },
+    "mode": {
+      "const": "mandatory_frontier",
+      "default": "mandatory_frontier",
+      "title": "Mode",
+      "type": "string"
+    },
+    "budget": {
+      "$ref": "#/$defs/BudgetSpec"
+    },
+    "operator_policy": {
+      "$ref": "#/$defs/OperatorPolicy"
     },
     "allow_self_organized_executor": {
+      "default": true,
+      "title": "Allow Self Organized Executor",
       "type": "boolean"
     },
     "require_final_synthesis": {
+      "default": true,
+      "title": "Require Final Synthesis",
       "type": "boolean"
     },
     "embedding_provider": {
+      "default": "hash",
       "enum": [
         "hash",
         "gemini-embedding-2"
       ],
-      "default": "hash"
+      "title": "Embedding Provider",
+      "type": "string"
     },
     "embedding_dimension": {
-      "type": "integer",
-      "minimum": 8,
+      "default": 3072,
       "maximum": 3072,
-      "default": 3072
-    },
-    "budget": {
-      "type": "object",
-      "required": [
-        "max_iterations",
-        "allocation_mass_per_iteration",
-        "max_children_per_iteration",
-        "max_relation_pairs_per_episode",
-        "max_relation_enrichment_pairs",
-        "max_research_iterations"
-      ],
-      "properties": {
-        "max_iterations": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 20
-        },
-        "allocation_mass_per_iteration": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 50,
-          "default": 3
-        },
-        "max_children_per_iteration": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 50,
-          "default": 5
-        },
-        "max_relation_pairs_per_episode": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 20,
-          "default": 3
-        },
-        "max_relation_enrichment_pairs": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 100,
-          "default": 3
-        },
-        "max_research_iterations": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 5
-        },
-        "min_iterations_before_synthesis": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 20,
-          "default": 2
-        },
-        "entropy_change_threshold": {
-          "type": "number",
-          "minimum": 0.0,
-          "maximum": 1.0,
-          "default": 0.05
-        },
-        "t_max": {
-          "type": "number",
-          "exclusiveMinimum": 0.0,
-          "maximum": 10.0,
-          "default": 1.0
-        }
-      }
+      "minimum": 8,
+      "title": "Embedding Dimension",
+      "type": "integer"
     }
-  }
+  },
+  "required": [
+    "problem",
+    "goal"
+  ],
+  "title": "DTERunSpec",
+  "type": "object"
 }

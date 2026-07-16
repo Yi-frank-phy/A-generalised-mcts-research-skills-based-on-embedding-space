@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from collections import defaultdict
 
+from .merge import resolve_merge_aliases
+from .relation_candidates import relation_record_covers_candidate
 from .relation_models import (
     MergeApplicationRecord,
     RelationCandidate,
@@ -56,6 +58,26 @@ def evaluate_synthesis_readiness(
     """Evaluate a complete current blocker inventory and separate enrichment."""
 
     selected = set(provisional_selected_node_ids)
+    alias_map = resolve_merge_aliases(merge_applications)
+
+    def canonical_record_endpoints(record: RelationRecord) -> tuple[str, str]:
+        left_node_id = alias_map.get(record.left_node_id, record.left_node_id)
+        right_node_id = alias_map.get(record.right_node_id, record.right_node_id)
+        return tuple(sorted((left_node_id, right_node_id)))
+
+    def selected_record_endpoints(record: RelationRecord) -> bool:
+        left_node_id, right_node_id = canonical_record_endpoints(record)
+        return left_node_id in selected and right_node_id in selected
+
+    def derived_disclosure_required(record: RelationRecord) -> bool:
+        """Carry a formerly nonmaterial conflict forward once both ends matter."""
+
+        return bool(
+            record.relation_type == "conflict"
+            and selected_record_endpoints(record)
+            and (record.disclosure_required or not record.material_to_synthesis)
+        )
+
     expected_ids = set(
         blocking_inventory_candidate_ids
         if blocking_inventory_candidate_ids is not None
@@ -85,27 +107,40 @@ def evaluate_synthesis_readiness(
         record
         for record in relation_ledger
         if record.relation_type == "equivalent"
-        and record.left_node_id in selected
-        and record.right_node_id in selected
+        and selected_record_endpoints(record)
         and record.relation_record_id not in applied_relation_ids
     ]
+    # A later blocking reclassification of the same canonical pair supersedes
+    # an older nonmaterial enrichment record for readiness disclosure. Keep one
+    # strongest current obligation per pair rather than duplicating it.
+    conflict_by_pair: dict[tuple[str, str], RelationRecord] = {}
+    for record in relation_ledger:
+        if record.relation_type != "conflict" or not selected_record_endpoints(record):
+            continue
+        pair = canonical_record_endpoints(record)
+        current = conflict_by_pair.get(pair)
+        if current is None or (
+            record.material_to_synthesis,
+            record.disclosure_required,
+            record.committed_at,
+            record.relation_record_id,
+        ) > (
+            current.material_to_synthesis,
+            current.disclosure_required,
+            current.committed_at,
+            current.relation_record_id,
+        ):
+            conflict_by_pair[pair] = record
+    current_conflicts = list(conflict_by_pair.values())
     unresolved_conflicts = [
         record
-        for record in relation_ledger
-        if record.relation_type == "conflict"
-        and record.material_to_synthesis
-        and record.left_node_id in selected
-        and record.right_node_id in selected
-        and not record.disclosure_required
+        for record in current_conflicts
+        if record.material_to_synthesis and not derived_disclosure_required(record)
     ]
     disclosure_conflicts = [
         record.relation_record_id
-        for record in relation_ledger
-        if record.relation_type == "conflict"
-        and record.material_to_synthesis
-        and record.left_node_id in selected
-        and record.right_node_id in selected
-        and record.disclosure_required
+        for record in current_conflicts
+        if derived_disclosure_required(record)
     ]
 
     unresolved_candidate_ids: set[str] = set()
@@ -119,6 +154,8 @@ def evaluate_synthesis_readiness(
             continue
         record = records_by_id.get(candidate.resolved_relation_record_id)
         if record is None:
+            unresolved_candidate_ids.add(candidate_id)
+        elif not relation_record_covers_candidate(record, candidate):
             unresolved_candidate_ids.add(candidate_id)
         elif record.relation_type == "equivalent" and record.relation_record_id not in applied_relation_ids:
             unresolved_candidate_ids.add(candidate_id)

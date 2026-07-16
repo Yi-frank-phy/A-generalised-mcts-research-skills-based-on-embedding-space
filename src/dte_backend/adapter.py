@@ -58,12 +58,23 @@ def validate_adapter_output(parent: SearchNode, child_count: int, raw_output: st
         raise ValueError(f"executor adapter returned {len(raw_nodes)} nodes for budget {child_count}")
 
     nodes: list[SearchNode] = []
+    seen_node_ids: set[str] = set()
     for raw in raw_nodes:
         for field_name in sorted(_FORBIDDEN_CONTROLLER_FIELDS):
             if field_name in raw:
                 raise ValueError(f"executor adapter may not provide controller-owned field: {field_name}")
 
         node = SearchNode.model_validate(raw)
+        if not node.node_id.strip():
+            raise ValueError("executor adapter child node_id must be non-empty")
+        if node.node_id == parent.node_id:
+            raise ValueError("executor adapter child node_id conflicts with its parent")
+        if node.node_id in seen_node_ids:
+            raise ValueError(f"executor adapter returned duplicate node_id: {node.node_id}")
+        if len(node.parent_ids) != len(set(node.parent_ids)):
+            raise ValueError("executor adapter child contains duplicate parent IDs")
+        if node.node_id in node.parent_ids:
+            raise ValueError("executor adapter child may not parent itself")
         if node.node_type == "synthesis" or node.status == "synthesis":
             raise ValueError("executor adapter may not produce synthesis nodes")
         if node.status != "frontier":
@@ -71,6 +82,7 @@ def validate_adapter_output(parent: SearchNode, child_count: int, raw_output: st
         if parent.node_id not in node.parent_ids:
             raise ValueError("executor adapter child must include the expanded parent id")
         nodes.append(node)
+        seen_node_ids.add(node.node_id)
 
     return nodes
 

@@ -14,7 +14,7 @@ from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 class DTEBaseModel(BaseModel):
     """Strict base model for DTE machine-facing contracts."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
 
 
 class BudgetSpec(DTEBaseModel):

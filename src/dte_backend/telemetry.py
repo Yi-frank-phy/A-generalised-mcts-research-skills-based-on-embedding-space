@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -47,11 +48,83 @@ class EpisodeEventLog:
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
 
+    @staticmethod
+    def _decode_event_line(line: bytes) -> dict[str, Any] | None:
+        """Decode one JSONL record without letting damaged bytes escape."""
+
+        if line.endswith(b"\r"):
+            line = line[:-1]
+        if not line:
+            return None
+        try:
+            event = json.loads(line.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return None
+        return event if isinstance(event, dict) else None
+
+    def _replace_contents(self, payload: bytes) -> None:
+        """Durably stage repaired bytes before atomically installing them."""
+
+        temporary = self.path.with_suffix(self.path.suffix + ".repair.tmp")
+        with temporary.open("wb") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        temporary.replace(self.path)
+
+    def _repair_incomplete_tail(self) -> None:
+        """Restore JSONL framing after a crashed/short append.
+
+        A complete final JSON object which only lacks its newline is preserved.
+        A malformed partial tail is quarantined and removed from the live log
+        before durable outbox replay appends the complete event.
+        """
+
+        if not self.path.exists():
+            return
+        raw = self.path.read_bytes()
+        if not raw:
+            return
+
+        # Ignore only empty physical lines at EOF while locating the final
+        # record. A whitespace-only or non-object JSON line is damaged data,
+        # not an empty JSONL separator.
+        tail_end = len(raw)
+        while tail_end > 0 and raw[tail_end - 1 : tail_end] == b"\n":
+            tail_end -= 1
+            if tail_end > 0 and raw[tail_end - 1 : tail_end] == b"\r":
+                tail_end -= 1
+        if tail_end == 0:
+            return
+        tail_start = raw.rfind(b"\n", 0, tail_end) + 1
+        tail_line = raw[tail_start:tail_end]
+
+        if self._decode_event_line(tail_line) is not None:
+            if not raw.endswith(b"\n"):
+                self._replace_contents(raw + b"\n")
+            return
+
+        # A short write can leave either an unterminated fragment or a
+        # malformed line whose newline reached disk. Remove the entire final
+        # physical record in both cases so every live non-empty line remains
+        # valid JSON. Preserve the bytes separately for diagnosis.
+        corrupt_tail = raw[tail_start:]
+        quarantine = self.path.with_suffix(self.path.suffix + ".corrupt")
+        quarantine.parent.mkdir(parents=True, exist_ok=True)
+        with quarantine.open("ab") as handle:
+            handle.write(corrupt_tail)
+            if not corrupt_tail.endswith(b"\n"):
+                handle.write(b"\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        self._replace_contents(raw[:tail_start])
+
     def emit(self, event_type: str, **fields: Any) -> None:
         if event_type not in EVENT_TYPES:
             raise ValueError(f"unsupported episode event type: {event_type}")
         record = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
+            "event_id": None,
             "event_type": event_type,
             "run_id": None,
             "episode_id": None,
@@ -110,10 +183,39 @@ class EpisodeEventLog:
             raise ValueError(f"unsupported telemetry fields: {sorted(unknown)}")
         record.update(fields)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        with self.path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+        self._repair_incomplete_tail()
+        event_id = record["event_id"]
+        if event_id is not None and self.path.exists():
+            # AppRunState uses event IDs as a tiny durable outbox. If a
+            # process dies after append but before clearing the outbox, replay
+            # must not duplicate an already-published fact.
+            for line in self.path.read_bytes().split(b"\n"):
+                existing = self._decode_event_line(line)
+                if existing is None:
+                    continue
+                if existing.get("event_id") == event_id:
+                    return
+        encoded = (
+            json.dumps(
+                record,
+                ensure_ascii=False,
+                sort_keys=True,
+                allow_nan=False,
+            )
+            + "\n"
+        ).encode("utf-8")
+        with self.path.open("ab") as handle:
+            handle.write(encoded)
+            handle.flush()
+            os.fsync(handle.fileno())
 
     def read_events(self) -> list[dict[str, Any]]:
         if not self.path.exists():
             return []
-        return [json.loads(line) for line in self.path.read_text(encoding="utf-8").splitlines() if line]
+        self._repair_incomplete_tail()
+        events: list[dict[str, Any]] = []
+        for line in self.path.read_bytes().split(b"\n"):
+            event = self._decode_event_line(line)
+            if event is not None:
+                events.append(event)
+        return events

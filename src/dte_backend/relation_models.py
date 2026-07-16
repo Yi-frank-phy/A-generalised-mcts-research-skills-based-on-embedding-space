@@ -232,6 +232,32 @@ class RelationRecord(DTEBaseModel):
     schema_version: str
     committed_at: str
 
+    @model_validator(mode="after")
+    def validate_observation_consistency(self) -> "RelationRecord":
+        observation = self.observation
+        copied_fields = (
+            "candidate_id",
+            "left_node_id",
+            "right_node_id",
+            "relation_type",
+            "confidence",
+            "rationale",
+            "evidence_refs",
+            "materiality_assessment",
+        )
+        for field_name in copied_fields:
+            if getattr(self, field_name) != getattr(observation, field_name):
+                raise ValueError(
+                    f"Relation record {field_name} must match its nested observation"
+                )
+        if self.disclosure_required and self.relation_type != "conflict":
+            raise ValueError("Relation record disclosure_required is only valid for conflicts")
+        if observation.disclosure_required and not self.disclosure_required:
+            raise ValueError(
+                "Relation record cannot remove disclosure required by its nested observation"
+            )
+        return self
+
 
 class MergeApplicationRecord(DTEBaseModel):
     merge_application_id: str

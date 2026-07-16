@@ -1,6 +1,14 @@
 import dte_backend
 import dte_backend.app_driver as app_driver
 
+from dte_backend.embedding import HashEmbeddingProvider
+from dte_backend.episode_models import (
+    EpisodeResult,
+    JudgeEpisodeOutput,
+    JudgeObservation,
+    RuntimeDiagnostics,
+    compute_output_hash,
+)
 from dte_backend.models import BudgetSpec, DTERunSpec, SearchNode
 from dte_backend.telemetry import EpisodeEventLog
 
@@ -16,14 +24,51 @@ def _create_run(tmp_path):
             max_children_per_iteration=1,
             max_relation_enrichment_pairs=0,
         ),
+        embedding_provider="hash",
+        embedding_dimension=8,
     )
-    parent = SearchNode(
-        node_id="parent",
-        claim="committed parent",
-        expansion_budget=1,
-        ucb_score=0.8,
-    )
+    parent = SearchNode(node_id="parent", claim="committed parent")
     app_driver.create_app_run(run_dir, spec, [parent], run_id="guard-run")
+    judge = app_driver.next_app_episode(run_dir).request
+    output = JudgeEpisodeOutput(
+        observations=[
+            JudgeObservation(
+                node_id="parent",
+                score=0.8,
+                reasoning="bounded Judge observation",
+                risks=[],
+            )
+        ]
+    )
+    app_driver.submit_app_episode_result(
+        run_dir,
+        EpisodeResult(
+            episode_id=judge.episode_id,
+            attempt_id=judge.attempt_id,
+            run_id=judge.run_id,
+            role="judge",
+            input_graph_revision=judge.input_graph_revision,
+            selected_node_revisions=judge.selected_node_revisions,
+            status="completed",
+            structured_output=output,
+            runtime_diagnostics=RuntimeDiagnostics(
+                adapter_name="codex-app-main-agent",
+                transport_name="current-app-runtime",
+                profile="native-autonomous",
+                usage_source="unavailable",
+            ),
+            output_hash=compute_output_hash(output, judge.output_schema_version),
+            schema_version=judge.output_schema_version,
+        ),
+    )
+    state = app_driver.load_app_run(run_dir)
+    action, _ = app_driver._progress_controller(
+        run_dir,
+        state,
+        embedding_provider=HashEmbeddingProvider(dim=8),
+    )
+    state.controller_action = action
+    app_driver._save_state(run_dir, state)
     request = app_driver.next_app_episode(run_dir).request
     assert request is not None
     return run_dir, request

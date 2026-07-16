@@ -447,6 +447,16 @@ def run_and_commit_episode(
 ) -> CommitOutcome:
     """Emit lifecycle events, run one adapter call, then use the sole commit boundary."""
 
+    try:
+        request = EpisodeRequest.model_validate(request.model_dump(mode="json"))
+    except Exception as exc:
+        return CommitOutcome(
+            accepted=False,
+            episode_id=str(getattr(request, "episode_id", "")),
+            graph_revision_before=graph.revision,
+            graph_revision_after=graph.revision,
+            rejection_reason=f"invalid episode request before runtime call: {exc}",
+        )
     adapter_name = getattr(adapter, "adapter_name", adapter.__class__.__name__)
     transport_name = getattr(adapter, "transport_name", "unknown")
     if telemetry is not None:
@@ -508,6 +518,32 @@ def run_and_commit_episode(
             graph_revision_before=graph.revision,
             graph_revision_after=graph.revision,
             rejection_reason=f"runtime call failed: {exc}",
+        )
+
+    try:
+        result = EpisodeResult.model_validate(result.model_dump(mode="json"))
+    except Exception as exc:
+        if telemetry is not None:
+            telemetry.emit(
+                "output_rejected",
+                run_id=request.run_id,
+                episode_id=request.episode_id,
+                attempt_id=request.attempt_id,
+                role=request.role,
+                adapter_name=adapter_name,
+                transport_name=transport_name,
+                status="rejected",
+                input_graph_revision=request.input_graph_revision,
+                accepted_node_count=0,
+                rejection_reason=f"invalid runtime result: {exc}",
+                schema_valid=False,
+            )
+        return CommitOutcome(
+            accepted=False,
+            episode_id=request.episode_id,
+            graph_revision_before=graph.revision,
+            graph_revision_after=graph.revision,
+            rejection_reason=f"invalid runtime result: {exc}",
         )
 
     diagnostics = result.runtime_diagnostics

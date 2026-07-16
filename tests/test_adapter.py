@@ -55,6 +55,33 @@ def test_validate_adapter_output_still_accepts_legal_output():
     assert [child.node_id for child in children] == ["child"]
 
 
+@pytest.mark.parametrize(
+    "nodes,reason",
+    [
+        (
+            [
+                {"node_id": "child", "claim": "one", "parent_ids": ["p"]},
+                {"node_id": "child", "claim": "two", "parent_ids": ["p"]},
+            ],
+            "duplicate node_id",
+        ),
+        ([{"node_id": "p", "claim": "collision", "parent_ids": ["p"]}], "conflicts"),
+        (
+            [{"node_id": "child", "claim": "duplicate parents", "parent_ids": ["p", "p"]}],
+            "duplicate parent",
+        ),
+        (
+            [{"node_id": "child", "claim": "self", "parent_ids": ["p", "child"]}],
+            "parent itself",
+        ),
+    ],
+)
+def test_validate_adapter_output_rejects_identity_and_ancestry_violations(nodes, reason):
+    parent = SearchNode(node_id="p", claim="parent")
+    with pytest.raises(ValueError, match=reason):
+        validate_adapter_output(parent, child_count=2, raw_output={"nodes": nodes})
+
+
 def test_mock_subprocess_adapter_boundary():
     parent = SearchNode(node_id="p", claim="parent")
     adapter = build_subprocess_adapter([sys.executable, "examples/mock_executor_adapter.py"])

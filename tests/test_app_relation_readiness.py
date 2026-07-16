@@ -11,10 +11,12 @@ from dte_backend.app_driver import (
     create_app_run,
     fail_app_episode,
     next_app_episode,
+    request_app_synthesis,
     retry_app_episode,
     submit_app_episode_result,
 )
 from dte_backend.embedding import HashEmbeddingProvider
+from dte_backend.context_envelope import semantic_embedding_text
 from dte_backend.episode_adapter import build_relation_episode_request
 from dte_backend.episode_commit import EpisodeGraph, commit_episode_result
 from dte_backend.episode_models import (
@@ -28,10 +30,17 @@ from dte_backend.episode_models import (
     RuntimeLimits,
     compute_output_hash,
 )
-from dte_backend.models import BudgetSpec, DTERunSpec, SearchNode
+from dte_backend.merge import (
+    apply_relation_equivalent_merge,
+    resolve_merge_aliases,
+    validate_alias_projected_node_ancestry,
+    validate_merge_application_relation_provenance,
+)
+from dte_backend.models import BudgetSpec, DTERunSpec, SearchNode, SynthesisControlRequest
 from dte_backend.relation_candidates import (
     generate_relation_candidates,
     generate_relation_enrichment_candidates,
+    promote_pending_enrichment_materiality,
     select_node_disjoint_relation_batch,
 )
 from dte_backend.relation_models import (
@@ -39,6 +48,7 @@ from dte_backend.relation_models import (
     RelationCandidate,
     RelationEpisodeOutput,
     RelationObservation,
+    RelationRecord,
 )
 from dte_backend.relation_readiness import evaluate_synthesis_readiness
 from dte_backend.telemetry import EpisodeEventLog
@@ -73,8 +83,115 @@ def diagnostics():
 
 def force_stop_intent(run_dir):
     state = app_driver.load_app_run(run_dir)
-    state.controller_iteration = state.spec.budget.max_iterations
+    assert state.controller_iteration >= state.spec.budget.max_iterations
+
+
+def create_controller_checkpoint_run(run_dir, run_spec, nodes, *, run_id="relation-run"):
+    """Reach a real Judge/controller checkpoint for gate-only tests."""
+
+    producer_nodes = [
+        node.model_copy(
+            update={
+                "local_embedding": None,
+                "judge_reasoning": None,
+                "judge_risks": [],
+                "judge_uncertainty_evidence": [],
+                "judge_result_provenance": None,
+                "score": None,
+                "density": None,
+                "uncertainty": None,
+                "ucb_score": None,
+                "expansion_budget": 0,
+                "status": "frontier",
+            },
+            deep=True,
+        )
+        for node in nodes
+    ]
+    create_app_run(run_dir, run_spec, producer_nodes, run_id=run_id)
+    source_by_id = {node.node_id: node for node in nodes}
+    while any(node.score is None for node in app_run_status(run_dir).nodes):
+        judge = next_app_episode(run_dir).request
+        assert judge.role == "judge"
+        judge_output = JudgeEpisodeOutput(
+            observations=[
+                JudgeObservation(
+                    node_id=node_id,
+                    score=(
+                        source_by_id[node_id].score
+                        if source_by_id[node_id].score is not None
+                        else source_by_id[node_id].confidence
+                    ),
+                    reasoning="trusted gate fixture Judge observation",
+                    risks=[],
+                )
+                for node_id in judge.selected_node_revisions
+            ]
+        )
+        submit_app_episode_result(
+            run_dir,
+            EpisodeResult(
+                episode_id=judge.episode_id,
+                attempt_id=judge.attempt_id,
+                run_id=judge.run_id,
+                role="judge",
+                input_graph_revision=judge.input_graph_revision,
+                selected_node_revisions=judge.selected_node_revisions,
+                status="completed",
+                structured_output=judge_output,
+                runtime_diagnostics=diagnostics(),
+                output_hash=compute_output_hash(judge_output, judge.output_schema_version),
+                schema_version=judge.output_schema_version,
+            ),
+        )
+
+    desired_embeddings = {
+        semantic_embedding_text(producer): list(source.local_embedding)
+        for producer, source in zip(producer_nodes, nodes)
+        if source.local_embedding is not None
+    }
+
+    class FixtureEmbeddingProvider:
+        dim = run_spec.embedding_dimension
+        name = "fixture"
+
+        def embed_texts(self, texts):
+            fallback = HashEmbeddingProvider(dim=self.dim).embed_texts(texts)
+            return [
+                list(desired_embeddings.get(text, fallback[index]))
+                for index, text in enumerate(texts)
+            ]
+
+    state = app_driver.load_app_run(run_dir)
+    app_driver._progress_controller(
+        run_dir,
+        state,
+        embedding_provider=FixtureEmbeddingProvider(),
+    )
+    state.controller_action = "continue_controller"
     app_driver._save_state(run_dir, state)
+    while app_driver._select_executor_parent(app_driver.load_app_run(run_dir)) is not None:
+        outcome = next_app_episode(run_dir)
+        assert outcome.request is not None and outcome.request.role == "executor"
+        request = outcome.request
+        output = ExecutorEpisodeOutput(nodes=[])
+        submit_app_episode_result(
+            run_dir,
+            EpisodeResult(
+                episode_id=request.episode_id,
+                attempt_id=request.attempt_id,
+                run_id=request.run_id,
+                role="executor",
+                input_graph_revision=request.input_graph_revision,
+                selected_node_revisions=request.selected_node_revisions,
+                status="completed",
+                structured_output=output,
+                runtime_diagnostics=diagnostics(),
+                output_hash=compute_output_hash(output, request.output_schema_version),
+                schema_version=request.output_schema_version,
+            ),
+        )
+    assert app_run_status(run_dir).controller_iteration == run_spec.budget.max_iterations
 
 
 def relation_result(request, relation_type="independent", *, disclosure_required=False):
@@ -143,7 +260,12 @@ def make_duplicate_gate_run(tmp_path, *, pair_cap=3, nodes=None):
         SearchNode(node_id="a", claim="Same claim", score=0.8, evidence=["source a"]),
         SearchNode(node_id="b", claim=" same   CLAIM ", score=0.7, evidence=["source b"]),
     ]
-    create_app_run(run_dir, spec(pair_cap=pair_cap), nodes, run_id="relation-run")
+    create_controller_checkpoint_run(
+        run_dir,
+        spec(pair_cap=pair_cap),
+        nodes,
+        run_id="relation-run",
+    )
     force_stop_intent(run_dir)
     return run_dir
 
@@ -363,9 +485,24 @@ def test_relation_attempt_lifecycle_rejects_late_results(monkeypatch, tmp_path, 
         retry = retry_app_episode(run_dir, request.episode_id)
         assert retry.attempt_id != request.attempt_id
     before = state_snapshot(run_dir)
+    before_submitted_at = next(
+        attempt.submitted_at
+        for episode in app_driver.load_app_run(run_dir).episodes
+        if episode.episode_id == request.episode_id
+        for attempt in episode.attempts
+        if attempt.attempt_id == request.attempt_id
+    )
     outcome = submit_app_episode_result(run_dir, relation_result(request))
     assert outcome.commit_outcome.accepted is False
     assert state_snapshot(run_dir) == before
+    after_submitted_at = next(
+        attempt.submitted_at
+        for episode in app_driver.load_app_run(run_dir).episodes
+        if episode.episode_id == request.episode_id
+        for attempt in episode.attempts
+        if attempt.attempt_id == request.attempt_id
+    )
+    assert after_submitted_at == before_submitted_at
 
 
 def test_relation_retry_gets_new_attempt_and_only_one_can_commit(tmp_path):
@@ -385,28 +522,26 @@ def test_relation_retry_gets_new_attempt_and_only_one_can_commit(tmp_path):
 def test_stale_relation_node_revision_rejected_without_ledger_mutation(tmp_path, side):
     run_dir = make_duplicate_gate_run(tmp_path)
     request = next_app_episode(run_dir).request
+    state_path = run_dir / "app_run_state.json"
+    durable_before = state_path.read_text(encoding="utf-8")
     state = app_driver.load_app_run(run_dir)
     target = getattr(request.relation_payload.candidate_pairs[0], side).node_id
     state.node_revisions[target] += 1
-    app_driver._save_state(run_dir, state)
-    before = state_snapshot(run_dir)
-    outcome = submit_app_episode_result(run_dir, relation_result(request))
-    assert outcome.commit_outcome.accepted is False
-    assert "stale selected-node revision" in outcome.commit_outcome.rejection_reason
-    assert state_snapshot(run_dir) == before
+    with pytest.raises(ValueError, match="node revisions disagree"):
+        app_driver._save_state(run_dir, state)
+    assert state_path.read_text(encoding="utf-8") == durable_before
 
 
 def test_stale_relation_graph_revision_rejected_without_ledger_mutation(tmp_path):
     run_dir = make_duplicate_gate_run(tmp_path)
-    request = next_app_episode(run_dir).request
+    next_app_episode(run_dir)
+    state_path = run_dir / "app_run_state.json"
+    durable_before = state_path.read_text(encoding="utf-8")
     state = app_driver.load_app_run(run_dir)
     state.graph_revision += 1
-    app_driver._save_state(run_dir, state)
-    before = state_snapshot(run_dir)
-    outcome = submit_app_episode_result(run_dir, relation_result(request))
-    assert outcome.commit_outcome.accepted is False
-    assert "stale graph revision" in outcome.commit_outcome.rejection_reason
-    assert state_snapshot(run_dir) == before
+    with pytest.raises(ValueError, match="graph revision is not backed"):
+        app_driver._save_state(run_dir, state)
+    assert state_path.read_text(encoding="utf-8") == durable_before
 
 
 def test_equivalent_commit_uses_backend_canonical_merge_and_preserves_provenance(tmp_path):
@@ -419,15 +554,15 @@ def test_equivalent_commit_uses_backend_canonical_merge_and_preserves_provenance
             assumptions=["unique assumption"],
             evidence=["unique evidence"],
             risks=["unique risk"],
-            parent_ids=["origin"],
         ),
     ]
     run_dir = make_duplicate_gate_run(tmp_path, nodes=nodes)
     request = next_app_episode(run_dir).request
+    revision_before = app_run_status(run_dir).graph_revision
     outcome = submit_app_episode_result(run_dir, relation_result(request, "equivalent"))
     assert outcome.commit_outcome.accepted is True
     state = app_run_status(run_dir)
-    assert state.graph_revision == 2
+    assert state.graph_revision == revision_before + 2
     assert len(state.relation_ledger) == 1
     assert len(state.merge_applications) == 1
     merge = state.merge_applications[0]
@@ -435,9 +570,151 @@ def test_equivalent_commit_uses_backend_canonical_merge_and_preserves_provenance
     assert next(node for node in state.nodes if node.node_id == "a").status == "merged"
     canonical = next(node for node in state.nodes if node.node_id == "b")
     assert canonical.evidence == ["unique evidence"]
-    assert merge.source_node_revisions == {"a": 0, "b": 0}
+    assert merge.source_node_revisions == request.selected_node_revisions
+    validate_merge_application_relation_provenance(merge, state.relation_ledger[0])
+    bad_revision_provenance = merge.model_copy(
+        update={"source_node_revisions": {"a": 1, "b": 0}}
+    )
+    with pytest.raises(ValueError, match="source revisions disagree"):
+        validate_merge_application_relation_provenance(
+            bad_revision_provenance,
+            state.relation_ledger[0],
+        )
     assert next_app_episode(run_dir).controller_action == "ready_for_synthesis"
     assert app_run_status(run_dir).provisional_synthesis_selection.selected_node_ids == ["b"]
+
+
+def test_parent_child_equivalent_merge_removes_internal_parent_links(tmp_path):
+    nodes = [
+        SearchNode(
+            node_id="a",
+            claim="same",
+            score=0.9,
+            evidence=["canonical information"],
+        ),
+        SearchNode(
+            node_id="b",
+            claim=" SAME ",
+            score=0.8,
+            parent_ids=["a"],
+        ),
+    ]
+    run_dir = make_duplicate_gate_run(tmp_path, nodes=nodes)
+    request = next_app_episode(run_dir).request
+    assert submit_app_episode_result(
+        run_dir, relation_result(request, "equivalent")
+    ).commit_outcome.accepted
+
+    state = app_run_status(run_dir)
+    merge = state.merge_applications[0]
+    canonical = next(
+        node for node in state.nodes if node.node_id == merge.canonical_node_id
+    )
+    assert canonical.status in {"frontier", "closed"}
+    assert canonical.parent_ids == []
+    assert not set(state.merge_applications[0].source_node_ids).intersection(canonical.parent_ids)
+
+
+def test_chained_equivalent_merge_cleans_alias_projected_self_parent_atomically():
+    nodes = [
+        SearchNode(node_id="a", claim="same"),
+        SearchNode(node_id="b", claim="same", rationale="first canonical"),
+        SearchNode(
+            node_id="c",
+            claim="same",
+            parent_ids=["a"],
+            evidence=["second canonical"],
+        ),
+    ]
+    revisions = {node.node_id: 0 for node in nodes}
+    first = apply_relation_equivalent_merge(
+        nodes,
+        revisions,
+        source_node_ids=["a", "b"],
+        relation_record_id="relation-a-b",
+        applied_graph_revision=2,
+        applied_at="2026-01-01T00:00:00+00:00",
+    )
+    graph = EpisodeGraph(
+        nodes=nodes,
+        revision=2,
+        node_revisions=revisions,
+        merge_applications=[first],
+    )
+    candidate = RelationCandidate(
+        candidate_id="candidate-b-c",
+        left_node_id="b",
+        right_node_id="c",
+        left_node_revision=revisions["b"],
+        right_node_revision=revisions["c"],
+        candidate_reason="exact_duplicate",
+        scheduling_class="blocking",
+        priority="critical",
+        material_to_synthesis=True,
+        created_from_graph_revision=2,
+    )
+    request = build_relation_request_for_test(graph, [candidate], pair_cap=1)
+    grant_relation_candidates(graph, [candidate], request)
+
+    outcome = commit_episode_result(graph, request, relation_result(request, "equivalent"))
+
+    assert outcome.accepted is True
+    validate_alias_projected_node_ancestry(graph.nodes, graph.merge_applications)
+    aliases = resolve_merge_aliases(
+        graph.merge_applications,
+        committed_node_ids={node.node_id for node in graph.nodes},
+    )
+    canonical = next(
+        node
+        for node in graph.nodes
+        if node.node_id == graph.merge_applications[-1].canonical_node_id
+    )
+    assert canonical.node_id not in [aliases.get(parent, parent) for parent in canonical.parent_ids]
+
+
+def test_chained_equivalent_merge_rejects_alias_projected_cycle_atomically():
+    nodes = [
+        SearchNode(node_id="a", claim="same"),
+        SearchNode(node_id="b", claim="same", rationale="first canonical"),
+        SearchNode(node_id="c", claim="same", parent_ids=["x"], evidence=["more"]),
+        SearchNode(node_id="x", claim="bridge", parent_ids=["b"]),
+    ]
+    revisions = {node.node_id: 0 for node in nodes}
+    first = apply_relation_equivalent_merge(
+        nodes,
+        revisions,
+        source_node_ids=["a", "b"],
+        relation_record_id="relation-a-b",
+        applied_graph_revision=2,
+        applied_at="2026-01-01T00:00:00+00:00",
+    )
+    graph = EpisodeGraph(
+        nodes=nodes,
+        revision=2,
+        node_revisions=revisions,
+        merge_applications=[first],
+    )
+    candidate = RelationCandidate(
+        candidate_id="candidate-b-c",
+        left_node_id="b",
+        right_node_id="c",
+        left_node_revision=revisions["b"],
+        right_node_revision=revisions["c"],
+        candidate_reason="exact_duplicate",
+        scheduling_class="blocking",
+        priority="critical",
+        material_to_synthesis=True,
+        created_from_graph_revision=2,
+    )
+    request = build_relation_request_for_test(graph, [candidate], pair_cap=1)
+    grant_relation_candidates(graph, [candidate], request)
+    before = graph.snapshot()
+
+    outcome = commit_episode_result(graph, request, relation_result(request, "equivalent"))
+
+    assert outcome.accepted is False
+    assert "merge-projected ancestry contains a cycle" in outcome.rejection_reason
+    assert graph.snapshot() == before
 
 
 @pytest.mark.parametrize("relation_type", ["complementary", "independent"])
@@ -448,13 +725,16 @@ def test_nonmerge_relations_preserve_nodes_and_permit_readiness(tmp_path, relati
     ]
     run_dir = make_duplicate_gate_run(tmp_path, nodes=nodes)
     request = next_app_episode(run_dir).request
-    before_revisions = dict(app_run_status(run_dir).node_revisions)
+    before_state = app_run_status(run_dir)
+    before_revisions = dict(before_state.node_revisions)
+    before_statuses = {node.node_id: node.status for node in before_state.nodes}
+    revision_before = before_state.graph_revision
     submit = submit_app_episode_result(run_dir, relation_result(request, relation_type))
     assert submit.commit_outcome.accepted
     state = app_run_status(run_dir)
-    assert state.graph_revision == 1
+    assert state.graph_revision == revision_before + 1
     assert state.node_revisions == before_revisions
-    assert all(node.status == "frontier" for node in state.nodes)
+    assert {node.node_id: node.status for node in state.nodes} == before_statuses
     assert not state.merge_applications
     assert next_app_episode(run_dir).controller_action == "ready_for_synthesis"
     assert set(app_run_status(run_dir).provisional_synthesis_selection.selected_node_ids) == {"a", "b"}
@@ -469,15 +749,402 @@ def test_material_conflict_is_preserved_as_explicit_disclosure_obligation(tmp_pa
     grant = next_app_episode(run_dir)
     assert grant.request.role == "relation"
     assert app_run_status(run_dir).synthesis_readiness.ready is False
+    statuses_before = {
+        node.node_id: node.status for node in app_run_status(run_dir).nodes
+    }
     submit_app_episode_result(run_dir, relation_result(grant.request, "conflict", disclosure_required=False))
     state = app_run_status(run_dir)
     assert state.relation_ledger[0].relation_type == "conflict"
     assert state.relation_ledger[0].disclosure_required is True
-    assert all(node.status == "frontier" for node in state.nodes)
+    assert {node.node_id: node.status for node in state.nodes} == statuses_before
     assert next_app_episode(run_dir).controller_action == "ready_for_synthesis"
     readiness = app_run_status(run_dir).synthesis_readiness
     assert readiness.unresolved_material_conflicts == []
     assert readiness.disclosure_required_conflicts == [state.relation_ledger[0].relation_record_id]
+
+
+def test_pending_enrichment_becomes_material_when_merge_expands_selection(tmp_path):
+    run_dir = tmp_path / "pending-materiality-promotion"
+    nodes = [
+        SearchNode(
+            node_id="a",
+            claim="route A",
+            score=0.99,
+            local_embedding=[1.0] + [0.0] * 7,
+        ),
+        SearchNode(node_id="c", claim="duplicate", score=0.89),
+        SearchNode(
+            node_id="d",
+            claim=" DUPLICATE ",
+            score=0.79,
+            evidence=["richer canonical"],
+        ),
+        SearchNode(node_id="e", claim="e", score=0.69),
+        SearchNode(node_id="f", claim="f", score=0.59),
+        SearchNode(node_id="g", claim="g", score=0.49),
+        SearchNode(node_id="h", claim="h", score=0.39),
+        SearchNode(node_id="i", claim="i", score=0.29),
+        SearchNode(
+            node_id="b",
+            claim="route B",
+            score=0.19,
+            parent_ids=["a"],
+            local_embedding=[1.0] + [0.0] * 7,
+        ),
+    ]
+    create_controller_checkpoint_run(
+        run_dir,
+        spec(pair_cap=1, max_iterations=1, enrichment_cap=1),
+        nodes,
+    )
+    force_stop_intent(run_dir)
+
+    blocking = next_app_episode(run_dir).request
+    assert {
+        blocking.relation_payload.candidate_pairs[0].left.node_id,
+        blocking.relation_payload.candidate_pairs[0].right.node_id,
+    } == {"c", "d"}
+    assert submit_app_episode_result(
+        run_dir,
+        relation_result(blocking, "equivalent"),
+    ).commit_outcome.accepted
+
+    enrichment = next_app_episode(run_dir).request
+    pair = enrichment.relation_payload.candidate_pairs[0]
+    assert {pair.left.node_id, pair.right.node_id} == {"a", "b"}
+    assert pair.scheduling_class == "enrichment"
+    assert pair.material_to_synthesis is True
+    assert submit_app_episode_result(
+        run_dir,
+        relation_result(enrichment, "conflict"),
+    ).commit_outcome.accepted
+
+    assert next_app_episode(run_dir).controller_action == "ready_for_synthesis"
+    state = app_run_status(run_dir)
+    assert {"a", "b"}.issubset(state.provisional_synthesis_selection.selected_node_ids)
+    assert state.synthesis_readiness.disclosure_required_conflicts == [
+        next(
+            record.relation_record_id
+            for record in state.relation_ledger
+            if {record.left_node_id, record.right_node_id} == {"a", "b"}
+        )
+    ]
+
+
+def test_resolved_nonmaterial_conflict_is_disclosed_if_both_endpoints_later_selected():
+    nodes = [
+        SearchNode(
+            node_id="a",
+            claim="route A",
+            score=0.8,
+            local_embedding=[1.0, 0.0],
+        ),
+        SearchNode(
+            node_id="b",
+            claim="route B",
+            score=0.7,
+            parent_ids=["a"],
+            local_embedding=[1.0, 0.0],
+        ),
+    ]
+    candidate = generate_relation_enrichment_candidates(
+        nodes,
+        node_revisions={"a": 0, "b": 0},
+        graph_revision=1,
+        provisional_synthesis_node_ids=["a"],
+        existing=[],
+        relation_ledger=[],
+    )[0]
+    assert candidate.material_to_synthesis is False
+    observation = RelationObservation(
+        candidate_id=candidate.candidate_id,
+        left_node_id="a",
+        right_node_id="b",
+        relation_type="conflict",
+        confidence=0.9,
+        rationale="the routes conflict",
+        materiality_assessment="non_material",
+        conflict_summary="the routes conflict",
+        disclosure_required=False,
+    )
+    record = RelationRecord(
+        relation_record_id="relation-a-b",
+        candidate_id=candidate.candidate_id,
+        left_node_id="a",
+        right_node_id="b",
+        relation_type="conflict",
+        scheduling_class="enrichment",
+        confidence=0.9,
+        rationale="the routes conflict",
+        material_to_synthesis=False,
+        materiality_assessment="non_material",
+        observation=observation,
+        disclosure_required=False,
+        episode_id="episode",
+        attempt_id="attempt",
+        input_graph_revision=1,
+        selected_node_revisions={"a": 0, "b": 0},
+        output_hash="hash",
+        schema_version="relation-output.v1",
+        committed_at="2026-01-01T00:00:00+00:00",
+    )
+    candidate = candidate.model_copy(
+        update={
+            "status": "resolved",
+            "resolved_relation_record_id": record.relation_record_id,
+        }
+    )
+
+    readiness = evaluate_synthesis_readiness(
+        graph_revision=2,
+        provisional_selected_node_ids=["a", "b"],
+        candidates=[candidate],
+        relation_ledger=[record],
+        merge_applications=[],
+        evaluated_at="2026-01-01T00:01:00+00:00",
+        blocking_inventory_candidate_ids=[],
+        enrichment_budget_limit=1,
+        enrichment_pairs_committed=1,
+    )
+
+    assert readiness.ready is True
+    assert readiness.unresolved_material_conflicts == []
+    assert readiness.disclosure_required_conflicts == [record.relation_record_id]
+
+
+def test_materiality_promotion_helper_changes_only_pending_enrichment():
+    base = RelationCandidate(
+        candidate_id="candidate-a-b",
+        left_node_id="a",
+        right_node_id="b",
+        left_node_revision=0,
+        right_node_revision=0,
+        candidate_reason="embedding_close",
+        scheduling_class="enrichment",
+        priority="high",
+        material_to_synthesis=False,
+        created_from_graph_revision=1,
+    )
+    resolved = base.model_copy(
+        update={
+            "candidate_id": "candidate-c-d",
+            "left_node_id": "c",
+            "right_node_id": "d",
+            "status": "resolved",
+            "resolved_relation_record_id": "relation-c-d",
+        }
+    )
+
+    promoted = promote_pending_enrichment_materiality(
+        [base, resolved],
+        provisional_synthesis_node_ids=["a", "b", "c", "d"],
+    )
+
+    assert promoted[0].material_to_synthesis is True
+    assert promoted[1].material_to_synthesis is False
+    assert base.material_to_synthesis is False
+
+    entropy_only = base.model_copy(update={"candidate_reason": "entropy_plateau"})
+    updates = generate_relation_enrichment_candidates(
+        [
+            SearchNode(node_id="a", claim="A", score=0.9),
+            SearchNode(node_id="b", claim="B", score=0.1),
+        ],
+        node_revisions={"a": 0, "b": 0},
+        graph_revision=2,
+        provisional_synthesis_node_ids=["a", "b"],
+        existing=[entropy_only],
+        relation_ledger=[],
+        entropy_plateau=False,
+    )
+    assert [(item.candidate_id, item.material_to_synthesis) for item in updates] == [
+        (entropy_only.candidate_id, True)
+    ]
+
+
+def test_enrichment_record_does_not_cover_a_new_blocking_obligation(tmp_path):
+    run_dir = tmp_path / "enrichment-promoted-to-blocking"
+    nodes = [
+        SearchNode(node_id="root", claim="shared committed parent", score=0.1),
+        SearchNode(
+            node_id="a",
+            claim="condition is sufficient",
+            evidence=["shared source"],
+            score=0.8,
+            local_embedding=[1.0] + [0.0] * 7,
+            parent_ids=["root"],
+        ),
+        SearchNode(
+            node_id="b",
+            claim="condition is not sufficient",
+            evidence=["shared source"],
+            score=0.7,
+            local_embedding=[1.0] + [0.0] * 7,
+            parent_ids=["root"],
+        ),
+    ]
+    create_controller_checkpoint_run(run_dir, spec(pair_cap=1, enrichment_cap=1), nodes)
+    force_stop_intent(run_dir)
+    request_app_synthesis(
+        run_dir,
+        SynthesisControlRequest(
+            action="force_synthesis_after_current_task",
+            requested_by="main_agent",
+            reason="first inspect only a",
+            scope="node_ids",
+            node_ids=["a"],
+        ),
+    )
+    enrichment = next_app_episode(run_dir).request
+    first_pair = enrichment.relation_payload.candidate_pairs[0]
+    assert first_pair.scheduling_class == "enrichment"
+    assert first_pair.material_to_synthesis is False
+    submit_app_episode_result(run_dir, relation_result(enrichment, "conflict"))
+
+    request_app_synthesis(
+        run_dir,
+        SynthesisControlRequest(
+            action="force_synthesis_after_current_task",
+            requested_by="main_agent",
+            reason="include both now-selected branches",
+            scope="node_ids",
+            node_ids=["a", "b"],
+        ),
+    )
+    blocking = next_app_episode(run_dir)
+    assert blocking.request.role == "relation"
+    second_pair = blocking.request.relation_payload.candidate_pairs[0]
+    assert second_pair.scheduling_class == "blocking"
+    assert second_pair.candidate_reason == "potential_material_conflict"
+    assert second_pair.candidate_id != first_pair.candidate_id
+
+    submit_app_episode_result(run_dir, relation_result(blocking.request, "conflict"))
+    assert next_app_episode(run_dir).controller_action == "ready_for_synthesis"
+    state = app_run_status(run_dir)
+    blocking_record = next(
+        record for record in state.relation_ledger if record.scheduling_class == "blocking"
+    )
+    assert state.synthesis_readiness.disclosure_required_conflicts == [
+        blocking_record.relation_record_id
+    ]
+
+
+def test_material_conflict_disclosure_survives_later_equivalent_alias_merge(tmp_path):
+    run_dir = tmp_path / "conflict-then-alias"
+    nodes = [
+        SearchNode(node_id="a", claim="route A", score=0.80, local_embedding=[1.0] + [0.0] * 7),
+        SearchNode(node_id="b", claim="route A", score=0.79),
+        SearchNode(
+            node_id="c",
+            claim="richer equivalent of A",
+            score=0.20,
+            local_embedding=[1.0] + [0.0] * 7,
+            assumptions=["more complete canonical context"],
+        ),
+    ]
+    create_controller_checkpoint_run(run_dir, spec(pair_cap=1, enrichment_cap=2), nodes)
+    force_stop_intent(run_dir)
+
+    conflict = next_app_episode(run_dir).request
+    assert [
+        (pair.left.node_id, pair.right.node_id)
+        for pair in conflict.relation_payload.candidate_pairs
+    ] == [("a", "b")]
+    submit_app_episode_result(run_dir, relation_result(conflict, "conflict"))
+    conflict_record_id = app_run_status(run_dir).relation_ledger[0].relation_record_id
+
+    equivalent = next_app_episode(run_dir).request
+    assert [
+        (pair.left.node_id, pair.right.node_id)
+        for pair in equivalent.relation_payload.candidate_pairs
+    ] == [("a", "c")]
+    submit_app_episode_result(run_dir, relation_result(equivalent, "equivalent"))
+
+    terminal = next_app_episode(run_dir)
+    while terminal.controller_action == "episode_required":
+        assert terminal.request.role == "relation"
+        submit_app_episode_result(
+            run_dir,
+            relation_result(terminal.request, "independent"),
+        )
+        terminal = next_app_episode(run_dir)
+    assert terminal.controller_action == "ready_for_synthesis"
+    state = app_run_status(run_dir)
+    assert next(node for node in state.nodes if node.node_id == "a").status == "merged"
+    assert state.merge_applications[-1].canonical_node_id == "c"
+    assert state.synthesis_readiness.disclosure_required_conflicts == [conflict_record_id]
+
+
+def test_targeted_synthesis_follows_equivalent_merge_alias(tmp_path):
+    run_dir = tmp_path / "targeted-alias"
+    nodes = [
+        SearchNode(node_id="root", claim="shared parent", score=0.10),
+        SearchNode(
+            node_id="a",
+            claim="targeted route",
+            parent_ids=["root"],
+            score=0.80,
+            local_embedding=[1.0] + [0.0] * 7,
+        ),
+        SearchNode(
+            node_id="c",
+            claim="richer equivalent route",
+            parent_ids=["root"],
+            score=0.20,
+            local_embedding=[1.0] + [0.0] * 7,
+            assumptions=["canonical context retained"],
+        ),
+    ]
+    create_controller_checkpoint_run(
+        run_dir,
+        spec(pair_cap=1, enrichment_cap=1),
+        nodes,
+    )
+    force_stop_intent(run_dir)
+    request_app_synthesis(
+        run_dir,
+        SynthesisControlRequest(
+            action="force_synthesis_after_current_task",
+            requested_by="main_agent",
+            reason="synthesize the explicitly selected route",
+            scope="node_ids",
+            node_ids=["a"],
+        ),
+    )
+
+    relation = next_app_episode(run_dir).request
+    assert relation.role == "relation"
+    assert [
+        (pair.left.node_id, pair.right.node_id)
+        for pair in relation.relation_payload.candidate_pairs
+    ] == [("a", "c")]
+    submit_app_episode_result(run_dir, relation_result(relation, "equivalent"))
+
+    terminal = next_app_episode(run_dir)
+    assert terminal.controller_action == "ready_for_synthesis"
+    state = app_run_status(run_dir)
+    assert state.synthesis_request.node_ids == ["c"]
+    assert state.provisional_synthesis_selection.selected_node_ids == ["c"]
+
+
+def test_load_rejects_resolved_candidate_with_stale_ledger_identity(tmp_path):
+    run_dir = make_duplicate_gate_run(tmp_path)
+    request = next_app_episode(run_dir).request
+    assert submit_app_episode_result(
+        run_dir,
+        relation_result(request, "equivalent"),
+    ).commit_outcome.accepted
+    state = app_driver.load_app_run(run_dir)
+    record = state.relation_ledger[0]
+    record.selected_node_revisions[record.left_node_id] += 1
+    # Bypass the validated writer to simulate a legacy/hand-edited artifact.
+    (run_dir / "app_run_state.json").write_text(
+        state.model_dump_json(indent=2),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="inconsistent ledger link"):
+        app_driver.load_app_run(run_dir)
 
 
 def test_nonmaterial_unresolved_candidate_does_not_block_readiness():
@@ -592,18 +1259,17 @@ def test_material_conflict_requires_resolution_or_disclosure(tmp_path):
     assert ready.disclosure_required_conflicts == [disclosed.relation_record_id]
 
 
-def test_legacy_persisted_terminal_is_sticky_and_marked_unchecked(tmp_path):
+def test_legacy_persisted_terminal_without_audit_record_is_rejected(tmp_path):
     run_dir = tmp_path / "legacy"
     create_app_run(run_dir, spec(), [SearchNode(node_id="a", claim="A")])
-    state = app_driver.load_app_run(run_dir)
-    state.controller_action = "ready_for_synthesis"
-    state.synthesis_readiness = None
-    app_driver._save_state(run_dir, state)
-    before = (run_dir / "app_run_state.json").read_text(encoding="utf-8")
-    outcome = next_app_episode(run_dir)
-    assert outcome.controller_action == "ready_for_synthesis"
-    assert app_run_status(run_dir).relation_readiness_status == "legacy_unchecked"
-    assert (run_dir / "app_run_state.json").read_text(encoding="utf-8") == before
+    state_path = run_dir / "app_run_state.json"
+    payload = json.loads(state_path.read_text(encoding="utf-8"))
+    payload["controller_action"] = "ready_for_synthesis"
+    payload["synthesis_readiness"] = None
+    state_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="terminal App state lacks"):
+        app_driver.load_app_run(run_dir)
 
 
 def judge_result(request):
@@ -684,6 +1350,10 @@ def test_end_to_end_judge_executor_relation_equivalent_to_ready(tmp_path):
         evidence=[["e1"], ["e2"]],
     )
     assert app_run_status(run_dir).controller_iteration == 1
+    final_children_judge = next_app_episode(run_dir)
+    assert final_children_judge.request.role == "judge"
+    assert set(final_children_judge.request.selected_node_revisions) == set(children)
+    submit_app_episode_result(run_dir, judge_result(final_children_judge.request))
     relation = next_app_episode(run_dir)
     assert relation.request.role == "relation"
     submit_app_episode_result(run_dir, relation_result(relation.request, "equivalent"))
@@ -701,11 +1371,15 @@ def test_end_to_end_judge_executor_material_conflict_to_disclosed_ready(tmp_path
         spec(cap=2, pair_cap=2),
         [SearchNode(node_id="p0", claim="parent A"), SearchNode(node_id="p1", claim="parent B")],
     )
-    drive_two_executor_children(
+    children = drive_two_executor_children(
         run_dir,
         claims=["condition is sufficient", "condition is not sufficient"],
         evidence=[["shared source"], ["shared source"]],
     )
+    final_children_judge = next_app_episode(run_dir)
+    assert final_children_judge.request.role == "judge"
+    assert set(final_children_judge.request.selected_node_revisions) == set(children)
+    submit_app_episode_result(run_dir, judge_result(final_children_judge.request))
     relation = next_app_episode(run_dir)
     assert relation.request.role == "relation"
     assert app_run_status(run_dir).synthesis_readiness.ready is False
@@ -759,7 +1433,7 @@ def conflict_nodes(count=8):
 
 def test_complete_blocking_inventory_covers_all_28_pairs_across_bounded_episodes(tmp_path):
     run_dir = tmp_path / "blocking-28"
-    create_app_run(
+    create_controller_checkpoint_run(
         run_dir,
         spec(pair_cap=3, enrichment_cap=0),
         conflict_nodes(),
@@ -799,7 +1473,7 @@ def test_complete_blocking_inventory_covers_all_28_pairs_across_bounded_episodes
 def test_all_selected_duplicate_pairs_are_inventoried_before_any_merge(tmp_path):
     run_dir = tmp_path / "duplicates-28"
     nodes = [SearchNode(node_id=f"n{i}", claim="same", score=0.9 - i * 0.01) for i in range(8)]
-    create_app_run(run_dir, spec(pair_cap=3, enrichment_cap=0), nodes)
+    create_controller_checkpoint_run(run_dir, spec(pair_cap=3, enrichment_cap=0), nodes)
     force_stop_intent(run_dir)
     grant = next_app_episode(run_dir)
     state = app_run_status(run_dir)
@@ -851,6 +1525,58 @@ def test_enrichment_generation_filters_known_pairs_before_window_truncation():
     assert set(item.candidate_id for item in first).isdisjoint(
         item.candidate_id for item in second
     )
+
+
+def test_enrichment_node_window_rotates_past_covered_related_nodes():
+    selected = [
+        SearchNode(
+            node_id=f"s{i}",
+            claim=f"selected {i}",
+            score=1.0 - i * 0.05,
+            local_embedding=([1.0, 0.0] if i == 0 else None),
+        )
+        for i in range(8)
+    ]
+    related = [
+        SearchNode(
+            node_id=f"r{i}",
+            claim=f"related {i}",
+            score=0.4 - i * 0.01,
+            parent_ids=["s0"],
+            local_embedding=[1.0, 0.0],
+        )
+        for i in range(5)
+    ]
+    nodes = selected + related
+    revisions = {node.node_id: 0 for node in nodes}
+    selected_ids = [node.node_id for node in selected]
+    first = generate_relation_enrichment_candidates(
+        nodes,
+        node_revisions=revisions,
+        graph_revision=1,
+        provisional_synthesis_node_ids=selected_ids,
+        existing=[],
+        relation_ledger=[],
+        max_candidates=16,
+    )
+    assert all("r4" not in (item.left_node_id, item.right_node_id) for item in first)
+    covered = [
+        item.model_copy(update={"status": "resolved", "resolved_relation_record_id": f"r{i}"})
+        for i, item in enumerate(first)
+    ]
+
+    second = generate_relation_enrichment_candidates(
+        nodes,
+        node_revisions=revisions,
+        graph_revision=2,
+        provisional_synthesis_node_ids=selected_ids,
+        existing=covered,
+        relation_ledger=[],
+        max_candidates=16,
+    )
+
+    assert any("r4" in (item.left_node_id, item.right_node_id) for item in second)
+    assert len(second) <= 16
 
 
 def test_relation_identity_ignores_graph_revision_but_tracks_node_revision():
@@ -932,7 +1658,7 @@ def make_enrichment_run(tmp_path, *, budget=3, pair_cap=2, node_count=5):
         SearchNode(node_id=f"n{i}", claim=f"distinct claim {i}", score=0.8)
         for i in range(node_count)
     ]
-    create_app_run(
+    create_controller_checkpoint_run(
         run_dir,
         spec(pair_cap=pair_cap, enrichment_cap=budget),
         nodes,
@@ -1113,6 +1839,79 @@ def test_merge_provenance_conflict_rejects_the_whole_relation_commit():
     assert graph.snapshot() == before
 
 
+def test_merge_alias_resolver_is_transitive_and_rejects_cycles_or_missing_nodes():
+    a_to_c = MergeApplicationRecord(
+        merge_application_id="merge-a-c",
+        relation_record_id="relation-a-c",
+        canonical_node_id="c",
+        absorbed_node_ids=["a"],
+        source_node_ids=["a", "c"],
+        source_node_revisions={"a": 0, "c": 0},
+        applied_graph_revision=2,
+        applied_at="2026-01-01T00:00:00+00:00",
+    )
+    c_to_d = MergeApplicationRecord(
+        merge_application_id="merge-c-d",
+        relation_record_id="relation-c-d",
+        canonical_node_id="d",
+        absorbed_node_ids=["c"],
+        source_node_ids=["c", "d"],
+        source_node_revisions={"c": 1, "d": 0},
+        applied_graph_revision=4,
+        applied_at="2026-01-01T00:01:00+00:00",
+    )
+    assert resolve_merge_aliases(
+        [a_to_c, c_to_d], committed_node_ids={"a", "c", "d"}
+    ) == {"a": "d", "c": "d"}
+
+    c_to_a = c_to_d.model_copy(
+        update={
+            "merge_application_id": "merge-c-a",
+            "canonical_node_id": "a",
+            "source_node_ids": ["a", "c"],
+            "source_node_revisions": {"a": 0, "c": 1},
+        }
+    )
+    with pytest.raises(ValueError, match="alias cycle"):
+        resolve_merge_aliases([a_to_c, c_to_a])
+    with pytest.raises(ValueError, match="missing committed node"):
+        resolve_merge_aliases([a_to_c], committed_node_ids={"a"})
+
+
+def test_merge_alias_resolver_rejects_noop_or_unaccounted_sources():
+    noop = MergeApplicationRecord(
+        merge_application_id="merge-noop",
+        relation_record_id="relation-a-b",
+        canonical_node_id="a",
+        absorbed_node_ids=[],
+        source_node_ids=["a", "b"],
+        source_node_revisions={"a": 0, "b": 0},
+        applied_graph_revision=2,
+        applied_at="2026-01-01T00:00:00+00:00",
+    )
+    with pytest.raises(ValueError, match="absorb at least one"):
+        resolve_merge_aliases([noop], committed_node_ids={"a", "b"})
+
+    unaccounted = noop.model_copy(
+        update={
+            "absorbed_node_ids": ["b"],
+            "source_node_ids": ["a", "b", "c"],
+            "source_node_revisions": {"a": 0, "b": 0, "c": 0},
+        }
+    )
+    with pytest.raises(ValueError, match="equal the canonical plus absorbed"):
+        resolve_merge_aliases([unaccounted], committed_node_ids={"a", "b", "c"})
+
+    duplicate_source = unaccounted.model_copy(
+        update={
+            "source_node_ids": ["a", "a", "b"],
+            "source_node_revisions": {"a": 0, "b": 0},
+        }
+    )
+    with pytest.raises(ValueError, match="duplicate source"):
+        resolve_merge_aliases([duplicate_source], committed_node_ids={"a", "b"})
+
+
 def test_two_node_disjoint_equivalent_merges_commit_atomically():
     graph = EpisodeGraph(nodes=[SearchNode(node_id=node_id, claim=node_id) for node_id in "abcd"])
     candidates = relation_candidates_for_pairs([("a", "b"), ("c", "d")])
@@ -1160,15 +1959,19 @@ def test_rejected_overlapping_enrichment_retry_rebatches_without_consuming_budge
         update={
             "relation_payload": old_payload,
             "selected_node_revisions": {
-                first_candidate.left_node_id: 0,
-                first_candidate.right_node_id: 0,
-                overlap.left_node_id: 0,
-                overlap.right_node_id: 0,
+                node_id: state.node_revisions[node_id]
+                for node_id in {
+                    first_candidate.left_node_id,
+                    first_candidate.right_node_id,
+                    overlap.left_node_id,
+                    overlap.right_node_id,
+                }
             },
         }
     )
     episode = app_driver._find_episode(state, granted.episode_id)
     episode.attempts[-1].request = old_request
+    episode.attempts[-1].request_hash = app_driver._episode_request_hash(old_request)
     for candidate in state.relation_candidates:
         if candidate.candidate_id in {first_candidate.candidate_id, overlap.candidate_id}:
             candidate.status = "granted"
@@ -1178,46 +1981,10 @@ def test_rejected_overlapping_enrichment_retry_rebatches_without_consuming_budge
             candidate.status = "pending"
             candidate.granted_episode_id = None
             candidate.granted_attempt_id = None
-    app_driver._save_state(run_dir, state)
-
-    before = state_snapshot(run_dir)
-    old_result = relation_result(old_request, "equivalent")
-    rejected = submit_app_episode_result(run_dir, old_result)
-    assert rejected.commit_outcome.accepted is False
-    assert rejected.commit_outcome.rejection_reason == (
-        "Relation episode candidate pairs are not node-disjoint"
-    )
-    assert state_snapshot(run_dir) == before
-    rejected_state = app_run_status(run_dir)
-    assert rejected_state.controller_action == "await_operator_decision"
-    assert app_driver._find_episode(rejected_state, old_request.episode_id).attempts[-1].status == (
-        "rejected"
-    )
-    assert app_driver._relation_enrichment_pairs_committed(rejected_state) == 0
-    rejection_events = [
-        event
-        for event in EpisodeEventLog(run_dir / "episode_events.jsonl").read_events()
-        if event["event_type"] in {"output_rejected", "relation_result_rejected"}
-        and event.get("attempt_id") == old_request.attempt_id
-    ]
-    assert {event["event_type"] for event in rejection_events} == {
-        "output_rejected",
-        "relation_result_rejected",
-    }
-    assert all("not node-disjoint" in event["rejection_reason"] for event in rejection_events)
-
-    retry = retry_app_episode(run_dir, old_request.episode_id)
-    retry_pairs = retry.request.relation_payload.candidate_pairs
-    assert len(retry_pairs) == 1
-    assert retry.attempt_id != old_request.attempt_id
-    late = submit_app_episode_result(run_dir, old_result)
-    assert late.commit_outcome.accepted is False
-    submit_app_episode_result(run_dir, relation_result(retry.request, "independent"))
-    assert app_driver._relation_enrichment_pairs_committed(app_run_status(run_dir)) == 1
-    next_request = next_app_episode(run_dir).request
-    assert overlap.candidate_id in {
-        pair.candidate_id for pair in next_request.relation_payload.candidate_pairs
-    }
+    durable_before = (run_dir / "app_run_state.json").read_text(encoding="utf-8")
+    with pytest.raises(ValueError, match="not node-disjoint and bounded"):
+        app_driver._save_state(run_dir, state)
+    assert (run_dir / "app_run_state.json").read_text(encoding="utf-8") == durable_before
 
 
 def test_zero_enrichment_budget_goes_directly_terminal_after_blockers_clear(tmp_path):
@@ -1293,7 +2060,7 @@ def test_blocking_candidates_are_always_granted_before_enrichment(tmp_path):
         SearchNode(node_id="b", claim="no", evidence=["shared"], score=0.8),
         SearchNode(node_id="c", claim="other", evidence=["different"], score=0.8),
     ]
-    create_app_run(run_dir, spec(enrichment_cap=3), nodes)
+    create_controller_checkpoint_run(run_dir, spec(enrichment_cap=3), nodes)
     force_stop_intent(run_dir)
     request = next_app_episode(run_dir).request
     assert {pair.scheduling_class for pair in request.relation_payload.candidate_pairs} == {"blocking"}

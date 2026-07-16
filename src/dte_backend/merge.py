@@ -11,16 +11,42 @@ import re
 from collections import defaultdict
 
 from .models import MergeProposal, SearchNode
-from .relation_models import MergeApplicationRecord, stable_relation_id
+from .relation_models import (
+    MergeApplicationRecord,
+    RelationRecord,
+    stable_relation_id,
+)
 
 
-def validate_merge_application_consistency(
+def resolve_merge_aliases(
     applications: list[MergeApplicationRecord],
-) -> None:
-    """Require one canonical provenance target for every absorbed node."""
+    *,
+    committed_node_ids: set[str] | None = None,
+) -> dict[str, str]:
+    """Validate merge provenance and resolve every absorbed alias transitively."""
 
     canonical_by_absorbed: dict[str, str] = {}
     for application in applications:
+        source_ids = set(application.source_node_ids)
+        absorbed_ids = set(application.absorbed_node_ids)
+        if len(source_ids) != len(application.source_node_ids):
+            raise ValueError("merge provenance contains duplicate source node IDs")
+        if len(absorbed_ids) != len(application.absorbed_node_ids):
+            raise ValueError("merge provenance contains duplicate absorbed node IDs")
+        if application.canonical_node_id in absorbed_ids:
+            raise ValueError("merge provenance cannot absorb its canonical node")
+        if not absorbed_ids:
+            raise ValueError("merge provenance must absorb at least one source node")
+        expected_sources = absorbed_ids | {application.canonical_node_id}
+        if source_ids != expected_sources:
+            raise ValueError(
+                "merge provenance sources must equal the canonical plus absorbed nodes"
+            )
+        if set(application.source_node_revisions) != source_ids:
+            raise ValueError("merge provenance source revisions must match source node IDs")
+        if committed_node_ids is not None and not source_ids.issubset(committed_node_ids):
+            missing = sorted(source_ids - committed_node_ids)
+            raise ValueError(f"merge provenance references missing committed node {missing[0]}")
         for absorbed_node_id in application.absorbed_node_ids:
             existing = canonical_by_absorbed.get(absorbed_node_id)
             if existing is not None and existing != application.canonical_node_id:
@@ -29,6 +55,102 @@ def validate_merge_application_consistency(
                     f"{absorbed_node_id} already maps to canonical {existing}"
                 )
             canonical_by_absorbed[absorbed_node_id] = application.canonical_node_id
+
+    resolved: dict[str, str] = {}
+    for absorbed_node_id in canonical_by_absorbed:
+        current = absorbed_node_id
+        path: set[str] = set()
+        while current in canonical_by_absorbed:
+            if current in path:
+                raise ValueError(f"merge provenance alias cycle contains node {current}")
+            path.add(current)
+            current = canonical_by_absorbed[current]
+        if committed_node_ids is not None and current not in committed_node_ids:
+            raise ValueError(f"merge provenance resolves to missing canonical node {current}")
+        resolved[absorbed_node_id] = current
+    return resolved
+
+
+def validate_merge_application_consistency(
+    applications: list[MergeApplicationRecord],
+) -> None:
+    """Require one acyclic canonical provenance target for every absorbed node."""
+
+    resolve_merge_aliases(applications)
+
+
+def validate_merge_application_relation_provenance(
+    application: MergeApplicationRecord,
+    record: RelationRecord,
+) -> None:
+    """Bind one merge application to the exact equivalent observation revision."""
+
+    if application.relation_record_id != record.relation_record_id:
+        raise ValueError("merge application relation-record provenance mismatch")
+    if record.relation_type != "equivalent":
+        raise ValueError("merge application requires an equivalent Relation record")
+    source_ids = set(application.source_node_ids)
+    if source_ids != {record.left_node_id, record.right_node_id}:
+        raise ValueError("merge application sources disagree with Relation provenance")
+    try:
+        expected_revisions = {
+            node_id: record.selected_node_revisions[node_id]
+            for node_id in application.source_node_ids
+        }
+    except KeyError as exc:
+        raise ValueError(
+            "merge application Relation provenance lacks a selected-node revision"
+        ) from exc
+    if application.source_node_revisions != expected_revisions:
+        raise ValueError(
+            "merge application source revisions disagree with Relation provenance"
+        )
+
+
+def validate_alias_projected_node_ancestry(
+    nodes: list[SearchNode],
+    applications: list[MergeApplicationRecord],
+) -> None:
+    """Reject self ancestry or cycles that appear after transitive alias projection."""
+
+    node_ids = {node.node_id for node in nodes}
+    aliases = resolve_merge_aliases(applications, committed_node_ids=node_ids)
+    active_ids = {node.node_id for node in nodes if node.status != "merged"}
+    projected_parents: dict[str, list[str]] = {}
+    for node in nodes:
+        if node.status == "merged":
+            continue
+        parents: list[str] = []
+        for parent_id in node.parent_ids:
+            if parent_id not in node_ids:
+                raise ValueError(
+                    f"merge-projected ancestry references missing parent {parent_id}"
+                )
+            projected = aliases.get(parent_id, parent_id)
+            if projected == node.node_id:
+                raise ValueError(
+                    f"merge-projected ancestry makes node {node.node_id} its own parent"
+                )
+            if projected in active_ids:
+                parents.append(projected)
+        projected_parents[node.node_id] = parents
+
+    visiting: set[str] = set()
+    visited: set[str] = set()
+
+    def visit(node_id: str) -> None:
+        if node_id in visiting:
+            raise ValueError("merge-projected ancestry contains a cycle")
+        if node_id in visited:
+            return
+        visiting.add(node_id)
+        for parent_id in projected_parents.get(node_id, []):
+            visit(parent_id)
+        visiting.remove(node_id)
+        visited.add(node_id)
+
+    for node_id in projected_parents:
+        visit(node_id)
 
 
 def normalize_claim(text: str) -> str:
@@ -101,6 +223,7 @@ def apply_relation_equivalent_merge(
     relation_record_id: str,
     applied_graph_revision: int,
     applied_at: str,
+    existing_merge_applications: list[MergeApplicationRecord] | None = None,
 ) -> MergeApplicationRecord:
     """Apply one validated equivalent merge while preserving all source nodes."""
 
@@ -135,7 +258,24 @@ def apply_relation_equivalent_merge(
     canonical.assumptions = sorted({item for node in active for item in node.assumptions})
     canonical.evidence = sorted({item for node in active for item in node.evidence})
     canonical.risks = sorted({item for node in active for item in node.risks})
-    canonical.parent_ids = sorted({item for node in active for item in node.parent_ids})
+    # Parent links among equivalent sources become internal to the collapsed
+    # alias set. Resolve older aliases first: a parent such as A is also
+    # internal when an earlier merge already mapped A -> B and B is one of the
+    # current sources.
+    existing_aliases = resolve_merge_aliases(
+        existing_merge_applications or [],
+        committed_node_ids=set(by_id),
+    )
+    canonicalized_parents = {
+        existing_aliases.get(item, item)
+        for node in active
+        for item in node.parent_ids
+    }
+    canonical.parent_ids = sorted(
+        canonicalized_parents - set(unique_ids)
+    )
+    if canonical.node_id in canonical.parent_ids:
+        raise ValueError("equivalent merge would create a canonical self-parent")
     canonical.confidence = max(node.confidence for node in active)
     node_revisions[canonical.node_id] += 1
     for node in absorbed:

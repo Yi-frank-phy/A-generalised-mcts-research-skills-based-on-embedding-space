@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
+import json
 from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Mapping
-
-from pydantic import ValidationError
 
 from .episode_models import (
     CommitOutcome,
@@ -15,9 +14,15 @@ from .episode_models import (
     EpisodeResult,
     ExecutorEpisodeOutput,
     JudgeEpisodeOutput,
+    canonical_json_bytes,
     compute_output_hash,
 )
-from .merge import apply_relation_equivalent_merge, validate_merge_application_consistency
+from .merge import (
+    apply_relation_equivalent_merge,
+    validate_alias_projected_node_ancestry,
+    validate_merge_application_consistency,
+    validate_merge_application_relation_provenance,
+)
 from .models import SearchNode
 from .relation_models import (
     MergeApplicationRecord,
@@ -101,6 +106,34 @@ class EpisodeGraph:
             "relation_ledger": [item.model_dump(mode="json") for item in self.relation_ledger],
             "merge_applications": [item.model_dump(mode="json") for item in self.merge_applications],
         }
+
+
+def _canonical_contract_payload(value: Any) -> Any:
+    """Detach a machine-facing value through its canonical JSON representation."""
+
+    return json.loads(canonical_json_bytes(value))
+
+
+def _best_effort_field(value: Any, name: str, default: Any = None) -> Any:
+    try:
+        if isinstance(value, Mapping):
+            return value.get(name, default)
+        return getattr(value, name, default)
+    except Exception:
+        return default
+
+
+def _emit_telemetry(telemetry: EpisodeEventLog | None, event_type: str, **fields: Any) -> None:
+    """Keep observational telemetry failures outside the commit transaction."""
+
+    if telemetry is None:
+        return
+    try:
+        telemetry.emit(event_type, **fields)
+    except Exception:
+        # Telemetry is explicitly observational.  In particular, an OSError
+        # after graph installation must not hide the successful CommitOutcome.
+        return
 
 
 def _raw_structured_output(raw_result: Any) -> Any:
@@ -188,12 +221,60 @@ def _reject(
             controller_field_violation_count=controller_violations,
             duplicate_within_result_count=duplicate_count,
         )
-        telemetry.emit("output_rejected", **rejection_fields)
+        _emit_telemetry(telemetry, "output_rejected", **rejection_fields)
         if request.role == "relation":
-            telemetry.emit("relation_result_rejected", **rejection_fields)
+            _emit_telemetry(telemetry, "relation_result_rejected", **rejection_fields)
     return CommitOutcome(
         accepted=False,
         episode_id=request.episode_id,
+        graph_revision_before=graph.revision,
+        graph_revision_after=graph.revision,
+        rejection_reason=reason,
+    )
+
+
+def _reject_invalid_request(
+    graph: EpisodeGraph,
+    raw_request: Any,
+    reason: str,
+    telemetry: EpisodeEventLog | None,
+) -> CommitOutcome:
+    """Reject an untrusted request instance without relying on its invariants."""
+
+    episode_id = _best_effort_field(raw_request, "episode_id", "")
+    if not isinstance(episode_id, str):
+        episode_id = ""
+    role = _best_effort_field(raw_request, "role")
+    if not isinstance(role, str):
+        role = None
+    selected = _best_effort_field(raw_request, "selected_node_revisions", {})
+    try:
+        selected_node_count = len(selected) if isinstance(selected, Mapping) else 0
+    except Exception:
+        selected_node_count = 0
+    rejection_fields = dict(
+        run_id=_best_effort_field(raw_request, "run_id"),
+        episode_id=episode_id,
+        attempt_id=_best_effort_field(raw_request, "attempt_id"),
+        role=role,
+        status="rejected",
+        input_graph_revision=_best_effort_field(raw_request, "input_graph_revision"),
+        returned_node_count=None,
+        accepted_node_count=0,
+        selected_node_count=selected_node_count,
+        returned_observation_count=None,
+        accepted_observation_count=0 if role in {"judge", "relation"} else None,
+        rejection_reason=reason,
+        schema_valid=False,
+        controller_field_violation_count=0,
+        duplicate_within_result_count=0,
+    )
+    _emit_telemetry(telemetry, "output_rejected", **rejection_fields)
+    if role == "relation":
+        _emit_telemetry(telemetry, "relation_result_rejected", **rejection_fields)
+    return CommitOutcome(
+        accepted=False,
+        episode_id=episode_id,
         graph_revision_before=graph.revision,
         graph_revision_after=graph.revision,
         rejection_reason=reason,
@@ -208,18 +289,32 @@ def commit_episode_result(
 ) -> CommitOutcome:
     """Validate the complete result before atomically replacing graph state."""
 
-    controller_violations, duplicate_count = _quality_counts(raw_result)
-    raw_observations = (
-        _raw_judge_observations(raw_result)
-        if request.role == "judge"
-        else _raw_relation_observations(raw_result)
-        if request.role == "relation"
-        else []
-    )
-    returned_observation_count = len(raw_observations) if request.role in {"judge", "relation"} else None
     try:
-        result = raw_result if isinstance(raw_result, EpisodeResult) else EpisodeResult.model_validate(raw_result)
-    except ValidationError as exc:
+        request = EpisodeRequest.model_validate(_canonical_contract_payload(request))
+    except Exception as exc:
+        return _reject_invalid_request(
+            graph,
+            request,
+            f"episode request schema validation failed: {exc}",
+            telemetry,
+        )
+
+    controller_violations = 0
+    duplicate_count = 0
+    returned_observation_count: int | None = None
+    try:
+        result_payload = _canonical_contract_payload(raw_result)
+        controller_violations, duplicate_count = _quality_counts(result_payload)
+        raw_observations = (
+            _raw_judge_observations(result_payload)
+            if request.role == "judge"
+            else _raw_relation_observations(result_payload)
+            if request.role == "relation"
+            else []
+        )
+        returned_observation_count = len(raw_observations) if request.role in {"judge", "relation"} else None
+        result = EpisodeResult.model_validate(result_payload)
+    except Exception as exc:
         return _reject(
             graph,
             request,
@@ -259,7 +354,11 @@ def commit_episode_result(
         return reject("selected node revisions mismatch")
     if result.schema_version != request.output_schema_version:
         return reject("output schema version mismatch")
-    if result.output_hash != compute_output_hash(result.structured_output, result.schema_version):
+    try:
+        expected_output_hash = compute_output_hash(result.structured_output, result.schema_version)
+    except Exception as exc:
+        return reject(f"episode result hash validation failed: {exc}")
+    if result.output_hash != expected_output_hash:
         return reject("output hash mismatch")
 
     if request.role == "judge":
@@ -306,7 +405,8 @@ def commit_episode_result(
         graph.node_revisions = next_revisions
         graph.revision = revision_before + 1
         if telemetry is not None:
-            telemetry.emit(
+            _emit_telemetry(
+                telemetry,
                 "judge_observations_committed",
                 run_id=request.run_id,
                 episode_id=request.episode_id,
@@ -390,10 +490,19 @@ def commit_episode_result(
             ):
                 return reject(f"Relation candidate grant provenance mismatch: {observation.candidate_id}")
             if (
-                candidate.left_node_revision != pair.left_node_revision
+                candidate.left_node_id != pair.left.node_id
+                or candidate.right_node_id != pair.right.node_id
+                or candidate.left_node_revision != pair.left_node_revision
                 or candidate.right_node_revision != pair.right_node_revision
+                or candidate.candidate_reason != pair.candidate_reason
+                or candidate.scheduling_class != pair.scheduling_class
+                or candidate.priority != pair.priority
+                or candidate.material_to_synthesis != pair.material_to_synthesis
             ):
-                return reject(f"Relation candidate is stale: {observation.candidate_id}")
+                return reject(
+                    f"Relation candidate identity is stale or disagrees with its grant: "
+                    f"{observation.candidate_id}"
+                )
 
         next_nodes = deepcopy(graph.nodes)
         next_revisions = dict(graph.node_revisions)
@@ -466,9 +575,13 @@ def commit_episode_result(
                     relation_record_id=record.relation_record_id,
                     applied_graph_revision=merge_revision,
                     applied_at=committed_at,
+                    existing_merge_applications=next_merges,
                 )
+                validate_merge_application_relation_provenance(application, record)
                 validate_merge_application_consistency([*next_merges, application])
                 next_merges.append(application)
+            if equivalent_records:
+                validate_alias_projected_node_ancestry(next_nodes, next_merges)
         except ValueError as exc:
             return reject(str(exc))
 
@@ -479,7 +592,8 @@ def commit_episode_result(
         graph.merge_applications = next_merges
         graph.revision = merge_revision
         if telemetry is not None:
-            telemetry.emit(
+            _emit_telemetry(
+                telemetry,
                 "relation_observations_committed",
                 run_id=request.run_id,
                 episode_id=request.episode_id,
@@ -504,7 +618,8 @@ def commit_episode_result(
                 usage_source="unavailable",
             )
             if counts["equivalent"]:
-                telemetry.emit(
+                _emit_telemetry(
+                    telemetry,
                     "merge_proposed",
                     run_id=request.run_id,
                     episode_id=request.episode_id,
@@ -516,7 +631,8 @@ def commit_episode_result(
                     usage_source="unavailable",
                 )
             if counts["complementary"]:
-                telemetry.emit(
+                _emit_telemetry(
+                    telemetry,
                     "complementarity_recorded",
                     run_id=request.run_id,
                     episode_id=request.episode_id,
@@ -528,7 +644,8 @@ def commit_episode_result(
                     usage_source="unavailable",
                 )
             if counts["conflict"]:
-                telemetry.emit(
+                _emit_telemetry(
+                    telemetry,
                     "conflict_recorded",
                     run_id=request.run_id,
                     episode_id=request.episode_id,
@@ -541,7 +658,8 @@ def commit_episode_result(
                     usage_source="unavailable",
                 )
             for record in equivalent_records:
-                telemetry.emit(
+                _emit_telemetry(
+                    telemetry,
                     "merge_applied",
                     run_id=request.run_id,
                     episode_id=request.episode_id,
@@ -584,6 +702,7 @@ def commit_episode_result(
     collisions = sorted(committed_ids.intersection(candidate_ids))
     if collisions:
         return reject(f"node ID collision with committed graph: {collisions[0]}")
+    returned_ids = set(candidate_ids)
 
     for candidate in candidates:
         if candidate.node_type not in request.allowed_output_types:
@@ -592,19 +711,33 @@ def commit_episode_result(
             return reject(f"forbidden node status: {candidate.status}")
         if candidate.node_type == "synthesis":
             return reject("Executor episode may not produce synthesis nodes")
+        if len(candidate.parent_ids) != len(set(candidate.parent_ids)):
+            return reject(f"child contains duplicate parent IDs: {candidate.node_id}")
         if request.required_parent_id_on_children and request.parent_node_id not in candidate.parent_ids:
             return reject("child does not reference assigned parent")
+        if candidate.node_id in candidate.parent_ids:
+            return reject(f"child references itself as parent: {candidate.node_id}")
+        sibling_parents = sorted((set(candidate.parent_ids) & returned_ids) - {candidate.node_id})
+        if sibling_parents:
+            return reject(f"child references sibling result node as parent: {sibling_parents[0]}")
+        uncommitted_parents = sorted(set(candidate.parent_ids) - committed_ids)
+        if uncommitted_parents:
+            return reject(f"child references uncommitted parent: {uncommitted_parents[0]}")
 
     # Copy first; only the final assignments mutate the caller-visible graph.
-    next_nodes = deepcopy(graph.nodes)
-    next_revisions = dict(graph.node_revisions)
-    next_parent = next(node for node in next_nodes if node.node_id == request.parent_node_id)
-    next_parent.status = "closed"
-    next_parent.expansion_budget = 0
-    next_revisions[next_parent.node_id] += 1
-    for candidate in candidates:
-        next_nodes.append(SearchNode.model_validate(candidate.model_dump(mode="json")))
-        next_revisions[candidate.node_id] = 0
+    try:
+        next_nodes = deepcopy(graph.nodes)
+        next_revisions = dict(graph.node_revisions)
+        next_parent = next(node for node in next_nodes if node.node_id == request.parent_node_id)
+        next_parent.status = "closed"
+        next_parent.expansion_budget = 0
+        next_revisions[next_parent.node_id] += 1
+        for candidate in candidates:
+            candidate_payload = _canonical_contract_payload(candidate)
+            next_nodes.append(SearchNode.model_validate(candidate_payload))
+            next_revisions[candidate.node_id] = 0
+    except Exception as exc:
+        return reject(f"Executor graph construction failed: {exc}")
 
     revision_before = graph.revision
     graph.nodes = next_nodes
@@ -616,7 +749,8 @@ def commit_episode_result(
     parent.expansion_budget = 0
 
     if telemetry is not None:
-        telemetry.emit(
+        _emit_telemetry(
+            telemetry,
             "nodes_committed",
             run_id=request.run_id,
             episode_id=request.episode_id,

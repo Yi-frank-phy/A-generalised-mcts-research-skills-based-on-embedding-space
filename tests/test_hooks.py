@@ -52,7 +52,7 @@ def test_dte_guard_accepts_sample_artifacts():
 def test_prompt_guard_injects_readable_chinese_dte_reminder():
     payload = {
         "cwd": r"C:\Users\zhaoy\Downloads\dte-codex-skill-backend",
-        "prompt": "请运行 dte-extreme-research",
+        "prompt": "请运行 /evolving-frontier-research",
     }
 
     completed = subprocess.run(
@@ -65,7 +65,7 @@ def test_prompt_guard_injects_readable_chinese_dte_reminder():
     assert completed.returncode == 0, completed.stderr
     output = json.loads(completed.stdout)
     reminder = output["hookSpecificOutput"]["additionalContext"]
-    assert "必须先使用已安装的 `dte-extreme-research` skill" in reminder
+    assert "必须先使用已安装的 `evolving-frontier-research` skill" in reminder
     assert "任何 guard 失败都必须停止消费该产物" in reminder
     assert chr(0xFFFD) not in reminder
 

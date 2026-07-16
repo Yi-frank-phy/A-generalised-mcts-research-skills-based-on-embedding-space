@@ -28,7 +28,7 @@ def main() -> int:
     triggers = [
         "dte",
         "deep think evolving",
-        "dte-extreme-research",
+        "evolving-frontier-research",
         "searchnode",
         "judge oracle",
         "relation oracle",
@@ -45,17 +45,17 @@ def main() -> int:
     reminder = (
         "DTE hook reminder:\n"
         "1. 涉及 DTE 研究或 dte-codex-skill-backend 时，必须先使用已安装的 "
-        "`dte-extreme-research` skill，并保持 SearchNode -> Judge -> "
+        "`evolving-frontier-research` skill，并保持 SearchNode -> Judge -> "
         "EvolutionController -> Executor -> Relation -> Synthesis 的角色边界。\n"
-        "2. 后端 run/spec 输入在消费前运行："
+        "2. 后端 run/spec 输入在消费前运行 "
         "`python hooks/dte_guard.py spec <run_spec.json>`。\n"
-        "3. Judge 输出在消费前运行："
+        "3. Judge 输出在消费前运行 "
         "`python hooks/dte_guard.py judge --nodes <frontier_nodes.json> "
         "--output <judge_output.json>`。\n"
-        "4. Relation 输出在消费前运行："
+        "4. Relation 输出在消费前运行 "
         "`python hooks/dte_guard.py relation --nodes <frontier_nodes.json> "
         "--output <relation_output.json>`。\n"
-        "5. Executor 输出在加入图状态前运行："
+        "5. Executor 输出在加入图状态前运行 "
         "`python hooks/dte_guard.py executor --parent <parent.json> "
         "--output <executor_output.json> --child-count <n>`。\n"
         "6. 任何 guard 失败都必须停止消费该产物；不要让 Executor、Judge 或 "

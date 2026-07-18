@@ -464,3 +464,54 @@ DTE must not:
 - accept direct final answers from Executor or Seed episodes;
 - depend on one specific transport such as `codex exec`;
 - introduce unbounded recursive agent fan-out.
+
+## 17. Deterministic observability and feedback boundary
+
+Observability is a versioned, read-only projection over the persistent App run
+state, committed episode results, controller transition records, Relation and
+readiness ledgers, append-only telemetry, and an independent feedback ledger.
+It is not a second graph, an event-sourced controller, or a source of mutation
+authority.
+
+The stable first-version projection must expose:
+
+```text
+run identity and immutable configuration
+Judge / Executor / Relation episode and attempt funnels
+node creation, Judge, allocation, expansion, selection, Relation, and merge lineage
+allocation outcomes and explicitly named internal proxy yields
+Judge score versus later observable state, labelled as non-causal posterior proxies
+Relation yields by scheduling class and candidate reason
+controller iteration trajectory
+deterministic rejection categories
+self-reported data-quality limitations
+```
+
+The projection must be deterministically rebuildable from committed artifacts.
+It must not call a repair-on-read path, write graph or artifact mirrors, revise a
+node, recompute a Judge score, or change controller decisions. Missing legacy
+fields remain `null` or are reported as missing; they are never silently treated
+as zero. Non-deterministic generation timestamps are not part of the core run
+summary.
+
+Runtime aggregate diagnostics may include provider- or main-agent-reported
+counts for internal subagents, parallelism, tool calls, rounds, failures, and
+tokens. Every such field is optional, nullable, source-labelled, and ignored by
+all commit and controller decisions. Hidden reasoning, full prompts, internal
+transcripts, and a complete subagent topology are outside the contract.
+
+Explicit evaluation is written only to a separate append-only feedback ledger.
+Feedback may target a run, episode, attempt, node, Relation record, merge
+application, or allocation decision. It must validate that the target exists,
+preserve the declared source (`user`, `main_agent`, or `external_evaluator`), and
+contain at least one substantive score, label, comment, or metadata field. It
+must never rewrite Judge output, graph state, telemetry history, allocation, or
+stopping state.
+
+Internal process proxies such as allocation yield, selected-descendant yield,
+merge rate, conflict discovery rate, retry/rejection rate, readiness cost, and
+latency describe only the recorded DTE process. Claims about scientific utility,
+novel route discovery, avoided false progress, time saved, or advantage over a
+non-DTE baseline require user feedback, a benchmark, or later external outcomes.
+The observability interface must not present internal correlation as calibration,
+causation, or proof that the architecture is effective.

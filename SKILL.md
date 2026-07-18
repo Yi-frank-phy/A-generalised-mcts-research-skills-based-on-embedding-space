@@ -41,15 +41,60 @@ python -m dte_backend create-run --run-dir <run-dir> --spec <spec.json> --nodes 
 python -m dte_backend next-episode --run-dir <run-dir>
 python -m dte_backend submit-episode-result --run-dir <run-dir> --result <result.json>
 python -m dte_backend run-status --run-dir <run-dir>
+python -m dte_backend observability-summary --run-dir <run-dir> --format json
 ```
 
 Use `fail-episode`, `cancel-episode`, and `retry-episode` for explicit attempt transitions. A retry must use the newly granted `attempt_id`; late output from cancelled, expired, failed, superseded, rejected, or committed attempts cannot be resubmitted as success.
 
-The main agent may reason, use tools, and delegate native subagents inside the request. It must not choose global allocation, hand-fill controller fields, directly edit graph state, skip submit validation, or substitute a chat/Markdown answer for committed output. Keep progress concise. Do not expose or reconstruct internal subagent count, names, routing, transcripts, hidden reasoning, tokens, or quota. App usage telemetry is `unavailable` unless the platform directly supplies it.
+The main agent may reason, use tools, and delegate native subagents inside the request. For a sufficiently complex episode, it should decompose work according to the problem, parallelize independent routes, avoid redundant internal branches, reconcile disagreements, and return one integrated role-valid result. No fixed subagent count or topology is required. It must not choose global allocation, hand-fill controller fields, directly edit graph state, skip submit validation, or substitute a chat/Markdown answer for committed output. Keep progress concise. Do not expose or reconstruct internal subagent names, routing, transcripts, hidden reasoning, tokens, quota, or a complete hidden topology. Aggregate runtime diagnostics may be used only when the provider/runtime or main agent explicitly reports them; otherwise they remain `null` with source `unavailable`.
+
+Keep episode purposes isolated:
+
+- Judge independently evaluates research potential, risks, and uncertainty and does not expand new research nodes.
+- Executor develops the backend-granted branch and may explore independent routes internally, but does not score or allocate.
+- Relation compares only granted pairs, does not verify correctness, and does not select a scientific winner.
 
 `next-episode` may return a strict `role=judge` request for ordinary unscored frontier nodes. Judge every granted node exactly once and return only observable score, reasoning, risks, and optional uncertainty evidence. After a valid Judge submit, call `next-episode` again: the backend, not the main agent, computes embedding/KDE density, entropy, uncertainty, UCB, and allocation before returning an Executor grant or a terminal controller action. Normal App operation must not require the main agent to interpret `continue_controller`.
 
 Before a new Synthesis terminal action, `next-episode` may return `role=relation`. Inspect only the granted bounded `relation_payload.candidate_pairs`; one Relation episode contains only node-disjoint pairs, so each node ID appears at most once. Classify each pair exactly once as `equivalent`, `complementary`, `conflict`, or `independent`; return one strict Relation result; submit it; and inspect the backend outcome. The payload marks each pair as blocking or enrichment, but both use the same four semantic outputs. Do not add ungranted pairs, scan the full graph, apply a merge, choose a canonical node, edit Relation artifacts, set readiness, return a correctness/pass/fail verdict, or claim final synthesis. Node-disjointness is a transactional merge-safety invariant, not a verification rule. The backend completely inventories selected-set blockers before readiness and may then schedule only a run-budgeted set of high-value enrichment pairs. `DiscriminatorTaskProposal` is metadata only and is not executed by this workflow.
+
+## Terminal observability and explicit feedback
+
+When the backend returns `ready_for_synthesis` or `run_complete`, call
+`observability-summary --format json` before reporting. Read the formal summary,
+provisional selection, and Relation disclosures, then give the user both the
+research result and a compact DTE execution summary containing:
+
+- Judge, Executor, and Relation episode/attempt counts;
+- initial → committed → provisional-selected node counts;
+- major parent allocations and committed-child outcomes;
+- merges, material conflicts, and disclosure obligations;
+- rejections, retries, terminal reason, and missing observability data.
+
+Do not derive formal metrics ad hoc from raw `episode_events.jsonl`. Distinguish
+internal process proxies (allocation yield, selected-descendant yield, merge or
+conflict discovery, retry/rejection, latency, readiness cost) from external
+effectiveness (actual usefulness, novelty, avoided false progress, comparison to
+a baseline, or later use in research). A normal run is not evidence that the
+architecture has been proven effective.
+
+When the user explicitly evaluates a run, node, or decision, the main agent may
+append feedback, for example:
+
+```bash
+python -m dte_backend record-feedback \
+  --run-dir <run-dir> \
+  --target-type run \
+  --metric architecture_effectiveness \
+  --score 0.8 \
+  --source user \
+  --comment "发现了此前没有考虑的有效路线"
+```
+
+Never label a main-agent inference as `source=user`, and never generate positive
+feedback from user silence or simple acceptance. The feedback ledger is
+append-only evaluation metadata; it does not modify Judge scores, graph state,
+allocation, stopping, or telemetry history.
 
 ## Critical real-run rule
 

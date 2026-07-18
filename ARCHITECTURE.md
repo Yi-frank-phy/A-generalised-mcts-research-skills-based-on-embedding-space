@@ -206,6 +206,33 @@ observation != authority
 delegation + policy + validated command = authority
 ```
 
+### Observability is a derived read model
+
+The stable observability interface projects the authoritative App run state,
+committed episode results, controller iteration records, Relation/readiness
+ledgers, and append-only telemetry into versioned run, episode, node-lineage,
+allocation, Judge-posterior, Relation-yield, trajectory, rejection, and
+data-quality records.
+
+```text
+authoritative persistent facts
+        -> deterministic read-only projection
+        -> JSON summary / text view / cross-run JSONL
+```
+
+The projection does not repair on read, mutate graph or revision state, rescore
+nodes, or feed proxy statistics back into allocation. Derived mirrors and
+telemetry are cross-checked but do not become a second fact store. Legacy or
+missing data is represented as `null` plus explicit data-quality limitations,
+not as zero or a fabricated confidence score.
+
+User, main-agent, and external-evaluator judgments are appended to an independent
+feedback ledger and remain bound to an existing run, episode, attempt, node,
+Relation record, merge application, or allocation decision. Feedback never
+rewrites a Judge score or controller decision. Internal process proxies support
+diagnosis and comparison; external research effectiveness still requires human,
+benchmark, or later-outcome evidence.
+
 ## Seed architecture and the Explorer role
 
 A mandatory physical Explorer is removed from the target real-run architecture.

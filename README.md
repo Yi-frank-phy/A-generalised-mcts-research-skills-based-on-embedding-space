@@ -115,6 +115,35 @@ The existing subprocess Executor is preserved only as a legacy/headless fallback
 
 Episode telemetry is append-only JSONL at `<run-dir>/episode_events.jsonl`. Because hidden App runtime usage and subagent topology are not available to repository code, App events record `usage_source=unavailable` and do not estimate tokens, quota, subagent count, or routing traces.
 
+The first observability read model turns the committed state and ledgers into a
+strict deterministic summary without changing the run:
+
+```bash
+python -m dte_backend observability-summary --run-dir <run-dir> --format json
+python -m dte_backend observability-summary --run-dir <run-dir> --format text
+python -m dte_backend observability-export --runs-root <runs-root> --format jsonl --output <export.jsonl>
+```
+
+It exposes episode and node funnels, full node lineage, allocation outcomes,
+Judge posterior proxies, Relation yield by reason, controller trajectory,
+rejection classes, and data-quality limitations. These are internal process
+observations, not scientific correctness or proof of architecture effectiveness.
+
+Explicit user or evaluator judgments can be bound to an existing run or
+decision through an independent append-only ledger:
+
+```bash
+python -m dte_backend record-feedback \
+  --run-dir <run-dir> \
+  --target-type run \
+  --metric architecture_effectiveness \
+  --score 0.8 \
+  --source user \
+  --comment "found a useful route"
+```
+
+Feedback never rewrites graph, Judge, allocation, stopping, or telemetry facts.
+
 App-path embedding vectors are cached in the run-scoped `<run-dir>/dte_cache.json` through the existing `FileDTECache` namespace contract (provider, model/snapshot, dimension, and embedding contract version). The cache is not graph state; a cache failure cannot partially commit controller fields or revisions. Terminal `ready_for_synthesis` / `run_complete` actions are sticky, and after already-allocated Executor grants are consumed the iteration cap is enforced before any new Judge grant.
 
 App-native Relation episodes now maintain a versioned semantic relation layer before a new Synthesis terminal action. The backend completely inventories selected-set exact duplicates and potential material conflicts (at most 28 pairs for the default eight-node provisional set) before readiness, grants bounded Relation episodes, and then may spend at most `max_relation_enrichment_pairs` successful nonblocking semantic classifications across the run (default 3). Known candidate/record identities are removed before enrichment truncation, so previously seen pairs cannot hide unseen pairs.

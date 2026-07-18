@@ -16,6 +16,12 @@ EpisodeRole = Literal["executor", "seed", "judge", "relation", "synthesis"]
 EpisodeStatus = Literal["completed", "failed", "timed_out", "cancelled"]
 ComparisonProfile = Literal["legacy-explicit", "native-guided", "native-autonomous"]
 UsageSource = Literal["provider_reported", "estimated", "unavailable"]
+DiagnosticsSource = Literal[
+    "provider_reported",
+    "main_agent_reported",
+    "estimated",
+    "unavailable",
+]
 PolicySelector = Literal["user", "main_agent", "run_default"]
 
 
@@ -144,6 +150,33 @@ class RuntimeDiagnostics(DTEBaseModel):
     estimated_cost: float | None = Field(default=None, ge=0.0)
     quota_delta: float | None = Field(default=None, ge=0.0)
     usage_source: UsageSource = "unavailable"
+    internal_subagent_count: int | None = Field(default=None, ge=0)
+    max_internal_parallelism: int | None = Field(default=None, ge=0)
+    internal_tool_call_count: int | None = Field(default=None, ge=0)
+    internal_round_count: int | None = Field(default=None, ge=0)
+    internal_failure_count: int | None = Field(default=None, ge=0)
+    internal_input_tokens: int | None = Field(default=None, ge=0)
+    internal_output_tokens: int | None = Field(default=None, ge=0)
+    diagnostics_source: DiagnosticsSource = "unavailable"
+
+    @model_validator(mode="after")
+    def validate_aggregate_diagnostics_source(self) -> "RuntimeDiagnostics":
+        aggregate_values = (
+            self.internal_subagent_count,
+            self.max_internal_parallelism,
+            self.internal_tool_call_count,
+            self.internal_round_count,
+            self.internal_failure_count,
+            self.internal_input_tokens,
+            self.internal_output_tokens,
+        )
+        if self.diagnostics_source == "unavailable" and any(
+            value is not None for value in aggregate_values
+        ):
+            raise ValueError(
+                "aggregate runtime diagnostics require an explicit diagnostics_source"
+            )
+        return self
 
 
 class EpisodeRequest(DTEBaseModel):

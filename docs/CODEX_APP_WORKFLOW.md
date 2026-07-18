@@ -67,6 +67,18 @@ During a run, Codex may read and summarize:
 
 App-native Relation state is persisted separately under `<run-dir>/relations/` as candidate, relation-ledger, and synthesis-readiness JSON artifacts. They are controller-owned observations; direct file editing has no commit effect.
 
+For a formal run-level view, use the deterministic read model instead of
+hand-calculating metrics from raw telemetry:
+
+```bash
+python -m dte_backend observability-summary --run-dir <run-dir> --format json
+```
+
+The command reads state, committed episode outputs, controller transitions,
+Relation/readiness records, telemetry, and source-labelled feedback without
+repairing or modifying the run. Missing and legacy fields are reported through
+the summary's data-quality record.
+
 ```text
 observation != authority
 ```
@@ -140,5 +152,17 @@ After the backend stops and commits synthesis, summarize:
 - unresolved risks and human questions;
 - run mode, budget, geometry, adapters, cache path, and any degraded fallback;
 - `report.md` as the backend-committed synthesis.
+
+For an App-native `ready_for_synthesis` or `run_complete` terminal action, first
+read the JSON observability summary, provisional selection, and Relation
+disclosures. Add a compact execution summary covering role episode counts, the
+initial → committed → selected node funnel, major allocations and their child
+outcomes, merges/conflicts, retries/rejections, terminal reason, and missing
+data. Treat those numbers as internal process proxies. External usefulness or
+advantage over a baseline requires explicit feedback or later evidence.
+
+If the user explicitly evaluates a run or concrete decision, the main agent may
+append source-labelled `record-feedback`. It must not infer `source=user` from
+silence, and the feedback ledger cannot modify graph/controller state.
 
 Do not present a checkpoint, standalone oracle output, or manually assembled subagent summary as the final DTE report.

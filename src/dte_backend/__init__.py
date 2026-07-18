@@ -19,6 +19,14 @@ from .episode_adapter import (
 from .episode_commit import EpisodeGraph, commit_episode_result
 from .episode_models import EpisodeRequest, EpisodeResult
 from .models import AllocationResult, BudgetSpec, DTERunSpec, SearchNode
+from .observability import (
+    build_run_observability_summary,
+    export_observability_jsonl,
+    read_feedback_ledger,
+    record_feedback,
+    render_observability_text,
+)
+from .observability_models import FeedbackRecordV1, RunObservabilitySummaryV1
 from .runner import RunResult, run_frontier_search
 
 __all__ = [
@@ -26,6 +34,7 @@ __all__ = [
     "AgentEpisodeAdapter",
     "app_run_status",
     "BudgetSpec",
+    "build_run_observability_summary",
     "DTERunSpec",
     "CommandAgentEpisodeAdapter",
     "create_app_run",
@@ -33,8 +42,14 @@ __all__ = [
     "EpisodeGraph",
     "EpisodeRequest",
     "EpisodeResult",
+    "export_observability_jsonl",
     "ExpansionRequest",
+    "FeedbackRecordV1",
+    "read_feedback_ledger",
+    "record_feedback",
+    "render_observability_text",
     "RunResult",
+    "RunObservabilitySummaryV1",
     "SearchNode",
     "NativeStubEpisodeAdapter",
     "next_app_episode",

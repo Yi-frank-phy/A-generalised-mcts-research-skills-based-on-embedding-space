@@ -29,9 +29,49 @@ When the current Codex App main agent runs DTE research:
 6. Call `submit-episode-result` and inspect `CommitOutcome` plus the backend controller action.
 7. Repeat only when the backend requests another episode; use explicit fail/cancel/retry transitions when needed.
 
+For a sufficiently complex episode, use native subagents and tools when they
+materially improve coverage. Decompose according to the problem rather than a
+fixed worker count or topology, parallelize only independent work, avoid
+duplicating the same route across internal branches, reconcile disagreements,
+and submit one integrated result that satisfies the current role schema. The
+internal decomposition creates no graph, score, allocation, stopping, merge, or
+synthesis authority.
+
+Keep the logical goals distinct even when the same App runtime performs them:
+
+- Judge independently evaluates research potential, risks, and uncertainty; it
+  does not expand a new research node.
+- Executor develops only the backend-granted branch; it may explore independent
+  approaches internally, but it does not score or allocate them.
+- Relation compares only the granted pairs; it is not a verifier and does not
+  choose a scientific winner.
+
 For a Judge request, return only the granted nodes' observable scores, reasoning, risks, and optional uncertainty evidence. Never hand-fill score into graph state, embedding, density, entropy, uncertainty, UCB, allocation, graph/node revision, stopping, or synthesis fields. Never bypass submission validation or treat hidden agent count, names, routing, traces, tokens, or quota as required graph facts.
 
 For a Relation request, inspect only `relation_payload.candidate_pairs`. One Relation episode contains only node-disjoint candidate pairs: each node ID may appear in at most one granted pair. Classify every granted pair exactly once as `equivalent`, `complementary`, `conflict`, or `independent`; use only granted evidence references; construct one strict `RelationEpisodeResult`; submit it; then inspect `CommitOutcome`. Do not scan the graph for extra pairs, select a canonical node, merge or close nodes, edit the candidate/Relation ledger, set synthesis readiness, write `ready_for_synthesis`, or return correctness/pass/fail/reward state. Node-disjointness is a transactional merge-safety invariant, not a verification rule. Relation is not a second Judge, verifier, or final Synthesis agent. Discriminator proposals are persisted metadata and are not executed in the current workflow.
+
+## Terminal observability and feedback
+
+When `next-episode` returns `ready_for_synthesis` or `run_complete`, first run:
+
+```bash
+python -m dte_backend observability-summary --run-dir <run-dir> --format json
+```
+
+Read that formal summary together with provisional selection and Relation
+disclosure artifacts. Report the research result and a separate short execution
+summary covering Judge/Executor/Relation counts, initial → committed → selected
+nodes, major allocations and committed children, merge/conflict outcomes,
+rejections/retries, terminal reason, and data-quality limitations. Do not hand-
+calculate formal metrics from raw JSONL. Internal allocation, survival, merge,
+conflict, latency, and retry measures are process proxies; they do not prove
+scientific correctness or that DTE is effective.
+
+When the user explicitly evaluates a run or a concrete decision, the main agent
+may append source-labelled feedback with `record-feedback`. It must preserve the
+user's source as `user`, label its own assessment as `main_agent`, and never infer
+positive feedback from silence or mere acceptance. Feedback is not Judge input
+and cannot modify graph or controller state.
 
 ## Preferred implementation style
 

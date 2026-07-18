@@ -34,6 +34,12 @@ from .guards import enforce_run_spec_guard
 from .math_engine import allocate_frontier
 from .episode_models import RuntimeLimits
 from .models import DTERunSpec, ExpansionRequest, SearchNode, SynthesisControlRequest
+from .observability import (
+    build_run_observability_summary,
+    export_observability_jsonl,
+    record_feedback,
+    render_observability_text,
+)
 from .oracle_validation import validate_relation_output
 from .relation_workflow import relation_result_to_outputs
 from .runner import run_frontier_search
@@ -258,6 +264,70 @@ def cmd_run_status(args: argparse.Namespace) -> None:
     _print_model(app_run_status(args.run_dir))
 
 
+def _write_or_print(payload: str, output: str | None) -> None:
+    if output is None:
+        print(payload)
+        return
+    path = Path(output)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(payload + ("" if payload.endswith("\n") else "\n"), encoding="utf-8")
+
+
+def cmd_observability_summary(args: argparse.Namespace) -> None:
+    summary = build_run_observability_summary(args.run_dir)
+    payload = (
+        summary.model_dump_json(indent=2)
+        if args.format == "json"
+        else render_observability_text(summary)
+    )
+    _write_or_print(payload, args.output)
+
+
+def cmd_observability_export(args: argparse.Namespace) -> None:
+    if args.format != "jsonl":  # argparse constrains this; keep the API fail-closed.
+        raise SystemExit("observability-export currently supports only --format jsonl")
+    _print_model(export_observability_jsonl(args.runs_root, args.output))
+
+
+def _feedback_metadata(value: str | None) -> dict | None:
+    if value is None:
+        return None
+    stripped = value.lstrip()
+    if stripped.startswith("{"):
+        raw = json.loads(value)
+    else:
+        candidate = Path(value)
+        try:
+            is_file = candidate.is_file()
+        except OSError:
+            is_file = False
+        raw = (
+            json.loads(candidate.read_text(encoding="utf-8"))
+            if is_file
+            else json.loads(value)
+        )
+    if not isinstance(raw, dict):
+        raise SystemExit("--metadata must be a JSON object or a path to one")
+    return raw
+
+
+def cmd_record_feedback(args: argparse.Namespace) -> None:
+    _print_model(
+        record_feedback(
+            args.run_dir,
+            target_type=args.target_type,
+            target_id=args.target_id,
+            metric=args.metric,
+            score=args.score,
+            label=args.label,
+            comment=args.comment,
+            source=args.source,
+            metadata=_feedback_metadata(args.metadata),
+            feedback_id=args.feedback_id,
+        )
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="DTE backend helper")
     sub = parser.add_subparsers(required=True)
@@ -395,6 +465,59 @@ def build_parser() -> argparse.ArgumentParser:
     status = sub.add_parser("run-status", help="read persistent App-native run and lifecycle state")
     status.add_argument("--run-dir", required=True)
     status.set_defaults(func=cmd_run_status)
+
+    observability_summary = sub.add_parser(
+        "observability-summary",
+        help="derive a deterministic read-only summary of one persistent App run",
+    )
+    observability_summary.add_argument("--run-dir", required=True)
+    observability_summary.add_argument("--format", choices=["json", "text"], default="json")
+    observability_summary.add_argument("--output")
+    observability_summary.set_defaults(func=cmd_observability_summary)
+
+    observability_export = sub.add_parser(
+        "observability-export",
+        help="export distinguishable cross-run observability records as JSONL",
+    )
+    observability_export.add_argument("--runs-root", required=True)
+    observability_export.add_argument("--format", choices=["jsonl"], default="jsonl")
+    observability_export.add_argument("--output", required=True)
+    observability_export.set_defaults(func=cmd_observability_export)
+
+    feedback = sub.add_parser(
+        "record-feedback",
+        help="append one source-labelled evaluation to a run's feedback ledger",
+    )
+    feedback.add_argument("--run-dir", required=True)
+    feedback.add_argument(
+        "--target-type",
+        required=True,
+        choices=[
+            "run",
+            "episode",
+            "attempt",
+            "node",
+            "relation_record",
+            "merge_application",
+            "allocation_decision",
+        ],
+    )
+    feedback.add_argument("--target-id")
+    feedback.add_argument("--metric", required=True)
+    feedback.add_argument("--score", type=float)
+    feedback.add_argument("--label")
+    feedback.add_argument("--comment")
+    feedback.add_argument(
+        "--source",
+        required=True,
+        choices=["user", "main_agent", "external_evaluator"],
+    )
+    feedback.add_argument(
+        "--metadata",
+        help="JSON object or path to a JSON object; never treated as graph state",
+    )
+    feedback.add_argument("--feedback-id")
+    feedback.set_defaults(func=cmd_record_feedback)
 
     return parser
 

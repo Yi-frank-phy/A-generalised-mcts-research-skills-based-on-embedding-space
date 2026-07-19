@@ -29,6 +29,11 @@ from .artifacts import (
     render_role_audit_markdown,
 )
 from .control import OperatorAuthorizationError
+from .epistemic import (
+    build_terminal_epistemic_handoff,
+    record_researcher_learning,
+    render_epistemic_text,
+)
 from .file_cache import FileDTECache
 from .guards import enforce_run_spec_guard
 from .math_engine import allocate_frontier
@@ -289,6 +294,16 @@ def cmd_observability_export(args: argparse.Namespace) -> None:
     _print_model(export_observability_jsonl(args.runs_root, args.output))
 
 
+def cmd_epistemic_summary(args: argparse.Namespace) -> None:
+    handoff = build_terminal_epistemic_handoff(args.run_dir)
+    payload = (
+        handoff.model_dump_json(indent=2)
+        if args.format == "json"
+        else render_epistemic_text(handoff)
+    )
+    _write_or_print(payload, args.output)
+
+
 def _feedback_metadata(value: str | None) -> dict | None:
     if value is None:
         return None
@@ -324,6 +339,23 @@ def cmd_record_feedback(args: argparse.Namespace) -> None:
             source=args.source,
             metadata=_feedback_metadata(args.metadata),
             feedback_id=args.feedback_id,
+        )
+    )
+
+
+def cmd_record_learning(args: argparse.Namespace) -> None:
+    _print_model(
+        record_researcher_learning(
+            args.run_dir,
+            source=args.source,
+            previous_view=args.previous_view,
+            updated_view=args.updated_view,
+            change_reason_refs=args.reason_ref,
+            reusable_heuristic=args.reusable_heuristic,
+            recognized_failure_mode=args.recognized_failure_mode,
+            still_unclear=args.still_unclear,
+            metadata=_feedback_metadata(args.metadata),
+            learning_id=args.learning_id,
         )
     )
 
@@ -484,6 +516,17 @@ def build_parser() -> argparse.ArgumentParser:
     observability_export.add_argument("--output", required=True)
     observability_export.set_defaults(func=cmd_observability_export)
 
+    epistemic_summary = sub.add_parser(
+        "epistemic-summary",
+        help="derive a deterministic read-only epistemic handoff for one App run",
+    )
+    epistemic_summary.add_argument("--run-dir", required=True)
+    epistemic_summary.add_argument(
+        "--format", choices=["json", "text"], default="json"
+    )
+    epistemic_summary.add_argument("--output")
+    epistemic_summary.set_defaults(func=cmd_epistemic_summary)
+
     feedback = sub.add_parser(
         "record-feedback",
         help="append one source-labelled evaluation to a run's feedback ledger",
@@ -518,6 +561,26 @@ def build_parser() -> argparse.ArgumentParser:
     )
     feedback.add_argument("--feedback-id")
     feedback.set_defaults(func=cmd_record_feedback)
+
+    learning = sub.add_parser(
+        "record-learning",
+        help="append one source-labelled researcher learning record",
+    )
+    learning.add_argument("--run-dir", required=True)
+    learning.add_argument(
+        "--source",
+        required=True,
+        choices=["user", "main_agent", "external_evaluator"],
+    )
+    learning.add_argument("--previous-view", required=True)
+    learning.add_argument("--updated-view", required=True)
+    learning.add_argument("--reason-ref", action="append", required=True)
+    learning.add_argument("--reusable-heuristic")
+    learning.add_argument("--recognized-failure-mode")
+    learning.add_argument("--still-unclear")
+    learning.add_argument("--metadata")
+    learning.add_argument("--learning-id")
+    learning.set_defaults(func=cmd_record_learning)
 
     return parser
 

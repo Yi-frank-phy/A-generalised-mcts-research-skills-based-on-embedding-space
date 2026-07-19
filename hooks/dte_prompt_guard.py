@@ -46,7 +46,8 @@ def main() -> int:
         "DTE hook reminder:\n"
         "1. 涉及 DTE 研究或 dte-codex-skill-backend 时，必须先使用已安装的 "
         "`evolving-frontier-research` skill，并保持 SearchNode -> Judge -> "
-        "EvolutionController -> Executor -> Relation -> Synthesis 的角色边界。\n"
+        "EvolutionController -> Executor -> Relation -> terminal handoff -> "
+        "main-agent report 的角色边界；不要制造 final Synthesis episode。\n"
         "2. 后端 run/spec 输入在消费前运行 "
         "`python hooks/dte_guard.py spec <run_spec.json>`。\n"
         "3. Judge 输出在消费前运行 "
@@ -58,8 +59,12 @@ def main() -> int:
         "5. Executor 输出在加入图状态前运行 "
         "`python hooks/dte_guard.py executor --parent <parent.json> "
         "--output <executor_output.json> --child-count <n>`。\n"
-        "6. 任何 guard 失败都必须停止消费该产物；不要让 Executor、Judge 或 "
-        "Relation oracle 直接生成最终结论。"
+        "6. terminal 后同时读取 `observability-summary --format json` 与 "
+        "`epistemic-summary --format json`，区分未搜索/未入选与受到挑战/反驳。\n"
+        "7. 只有用户明确确认判断变化时才使用 `record-learning --source user`；"
+        "不得从沉默或继续对话推断学习。\n"
+        "8. 任何 guard 失败都必须停止消费该产物；不要让 Executor、Judge 或 "
+        "Relation oracle 直接生成最终用户报告。"
     )
 
     print(

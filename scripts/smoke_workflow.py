@@ -43,6 +43,7 @@ def main() -> None:
         "--judge-command",
         f"{sys.executable} examples/mock_judge_adapter.py",
     ])
+    run([sys.executable, "scripts/smoke_epistemic_workflow.py"])
     run([
         sys.executable,
         "-m",

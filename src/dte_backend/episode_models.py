@@ -8,6 +8,7 @@ from typing import Any, Literal
 
 from pydantic import Field, model_validator
 
+from .epistemic_models import EpistemicContributionBundle
 from .models import DTEBaseModel
 from .relation_models import RelationEpisodeOutput, RelationEpisodePayload
 
@@ -85,6 +86,7 @@ class ExecutorEpisodeOutput(DTEBaseModel):
     nodes: list[ExecutorNodeCandidate] = Field(default_factory=list)
     episode_summary: str = ""
     unresolved_questions: list[str] = Field(default_factory=list)
+    epistemic_contributions: EpistemicContributionBundle | None = None
 
 
 class JudgeNodeInput(DTEBaseModel):
@@ -130,6 +132,7 @@ class JudgeObservation(DTEBaseModel):
 
 class JudgeEpisodeOutput(DTEBaseModel):
     observations: list[JudgeObservation] = Field(min_length=1)
+    epistemic_contributions: EpistemicContributionBundle | None = None
 
 
 class RuntimeDiagnostics(DTEBaseModel):

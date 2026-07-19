@@ -8,6 +8,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Mapping
 
+from .epistemic_commit import EpistemicReferenceContext, prepare_epistemic_commit
+from .epistemic_models import EpistemicLedgerV1
 from .episode_models import (
     CommitOutcome,
     EpisodeRequest,
@@ -82,6 +84,7 @@ class EpisodeGraph:
     relation_candidates: list[RelationCandidate] = field(default_factory=list)
     relation_ledger: list[RelationRecord] = field(default_factory=list)
     merge_applications: list[MergeApplicationRecord] = field(default_factory=list)
+    epistemic_ledger: EpistemicLedgerV1 = field(default_factory=EpistemicLedgerV1)
 
     def __post_init__(self) -> None:
         ids = [node.node_id for node in self.nodes]
@@ -105,6 +108,7 @@ class EpisodeGraph:
             "relation_candidates": [item.model_dump(mode="json") for item in self.relation_candidates],
             "relation_ledger": [item.model_dump(mode="json") for item in self.relation_ledger],
             "merge_applications": [item.model_dump(mode="json") for item in self.merge_applications],
+            "epistemic_ledger": self.epistemic_ledger.model_dump(mode="json"),
         }
 
 
@@ -286,6 +290,8 @@ def commit_episode_result(
     request: EpisodeRequest,
     raw_result: EpisodeResult | Mapping[str, Any],
     telemetry: EpisodeEventLog | None = None,
+    *,
+    epistemic_context: EpistemicReferenceContext | None = None,
 ) -> CommitOutcome:
     """Validate the complete result before atomically replacing graph state."""
 
@@ -400,9 +406,23 @@ def commit_episode_result(
             }
             next_revisions[node.node_id] += 1
 
+        try:
+            next_epistemic_ledger = prepare_epistemic_commit(
+                graph=graph,
+                request=request,
+                result=result,
+                bundle=result.structured_output.epistemic_contributions,
+                authorized_node_ids=granted_ids,
+                committed_at=datetime.now(timezone.utc).isoformat(),
+                context=epistemic_context,
+            )
+        except ValueError as exc:
+            return reject(f"epistemic contribution rejected: {exc}")
+
         revision_before = graph.revision
         graph.nodes = next_nodes
         graph.node_revisions = next_revisions
+        graph.epistemic_ledger = next_epistemic_ledger
         graph.revision = revision_before + 1
         if telemetry is not None:
             _emit_telemetry(
@@ -739,9 +759,23 @@ def commit_episode_result(
     except Exception as exc:
         return reject(f"Executor graph construction failed: {exc}")
 
+    try:
+        next_epistemic_ledger = prepare_epistemic_commit(
+            graph=graph,
+            request=request,
+            result=result,
+            bundle=result.structured_output.epistemic_contributions,
+            authorized_node_ids={request.parent_node_id, *candidate_ids},
+            committed_at=datetime.now(timezone.utc).isoformat(),
+            context=epistemic_context,
+        )
+    except ValueError as exc:
+        return reject(f"epistemic contribution rejected: {exc}")
+
     revision_before = graph.revision
     graph.nodes = next_nodes
     graph.node_revisions = next_revisions
+    graph.epistemic_ledger = next_epistemic_ledger
     graph.revision = revision_before + 1
     # Preserve the legacy caller-visible parent reference after the atomic
     # replacement succeeds. No external object is touched on rejection.

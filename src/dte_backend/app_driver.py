@@ -12,7 +12,7 @@ import hashlib
 import math
 import uuid
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from collections.abc import Mapping
 from typing import Any, Literal
 
@@ -21,6 +21,12 @@ from pydantic import Field
 from .control import authorize_synthesis_control
 from .embedding import EmbeddingProvider, get_embedding_provider
 from .entropy import evaluate_entropy_state
+from .epistemic_commit import EpistemicReferenceContext
+from .epistemic_models import (
+    EpistemicLedgerV1,
+    ResearcherLearningRecordV1,
+    stable_epistemic_id,
+)
 from .episode_adapter import (
     build_executor_episode_request,
     build_judge_episode_request,
@@ -217,6 +223,7 @@ class AppRunState(DTEBaseModel):
     relation_candidates: list[RelationCandidate] = Field(default_factory=list)
     relation_ledger: list[RelationRecord] = Field(default_factory=list)
     merge_applications: list[MergeApplicationRecord] = Field(default_factory=list)
+    epistemic_ledger: EpistemicLedgerV1 = Field(default_factory=EpistemicLedgerV1)
     provisional_synthesis_selection: ProvisionalSynthesisSelection | None = None
     synthesis_readiness: SynthesisReadinessRecord | None = None
     relation_readiness_status: Literal["not_evaluated", "evaluated", "legacy_unchecked"] = "not_evaluated"
@@ -239,6 +246,7 @@ class AppRunState(DTEBaseModel):
             relation_candidates=[item.model_copy(deep=True) for item in self.relation_candidates],
             relation_ledger=[item.model_copy(deep=True) for item in self.relation_ledger],
             merge_applications=[item.model_copy(deep=True) for item in self.merge_applications],
+            epistemic_ledger=self.epistemic_ledger.model_copy(deep=True),
         )
 
     def replace_graph(self, graph: EpisodeGraph) -> None:
@@ -248,6 +256,7 @@ class AppRunState(DTEBaseModel):
         self.relation_candidates = [item.model_copy(deep=True) for item in graph.relation_candidates]
         self.relation_ledger = [item.model_copy(deep=True) for item in graph.relation_ledger]
         self.merge_applications = [item.model_copy(deep=True) for item in graph.merge_applications]
+        self.epistemic_ledger = graph.epistemic_ledger.model_copy(deep=True)
 
 
 def _validate_terminal_intent_provenance(
@@ -439,9 +448,10 @@ def _save_state(run_dir: str | Path, state: AppRunState) -> None:
     _write_json_atomic(_state_path(run_dir), canonical.model_dump(mode="json"))
     try:
         _write_relation_artifacts(run_dir, canonical)
+        _write_epistemic_artifact(run_dir, canonical)
     except Exception:
-        # Relation mirrors are derived from AppRunState and are retried on the
-        # next save/load. They are never authoritative commit facts.
+        # Relation and epistemic mirrors are derived from AppRunState and are
+        # retried on the next save/load. They are never authoritative facts.
         pass
     _repair_attempt_artifacts(run_dir, canonical)
     _flush_pending_events(run_dir, canonical)
@@ -502,6 +512,20 @@ def _write_relation_artifacts(run_dir: str | Path, state: AppRunState) -> None:
     )
 
 
+def _write_epistemic_artifact(run_dir: str | Path, state: AppRunState) -> None:
+    """Refresh the non-authoritative mirror from AppRunState."""
+
+    _write_json_atomic(
+        Path(run_dir) / "epistemic" / "ledger.json",
+        {
+            "schema_version": "dte-epistemic-ledger-mirror.v1",
+            "run_id": state.run_id,
+            "authoritative_source": "app_run_state.json#epistemic_ledger",
+            "ledger": state.epistemic_ledger.model_dump(mode="json"),
+        },
+    )
+
+
 def _relation_enrichment_pairs_committed(state: AppRunState) -> int:
     """Rebuild the run-level successful enrichment spend from durable ledger facts."""
 
@@ -512,6 +536,256 @@ def _relation_enrichment_pairs_committed(state: AppRunState) -> int:
             if record.scheduling_class == "enrichment"
         }
     )
+
+
+def _validate_persisted_epistemic_ledger(
+    state: AppRunState,
+    attempts_by_identity: dict[
+        tuple[str, str], tuple[EpisodeLifecycleRecord, EpisodeAttemptRecord]
+    ],
+    *,
+    created_at: datetime,
+    updated_at: datetime,
+) -> None:
+    """Rebuild ledger identities and payloads from committed episode outputs."""
+
+    ledger = state.epistemic_ledger
+    statements = {item.statement_id: item for item in ledger.statements}
+    edges = {item.edge_id: item for item in ledger.edges}
+    dispositions = {
+        item.disposition_id: item for item in ledger.path_dispositions
+    }
+    all_ids = {*statements, *edges, *dispositions}
+    expected_ids: set[str] = set()
+
+    for (episode_id, attempt_id), (episode, attempt) in attempts_by_identity.items():
+        if attempt.status != "committed" or episode.role not in {"executor", "judge"}:
+            continue
+        result = attempt.committed_result
+        assert result is not None
+        output = result.structured_output
+        bundle = (
+            output.epistemic_contributions
+            if isinstance(output, (ExecutorEpisodeOutput, JudgeEpisodeOutput))
+            else None
+        )
+        if bundle is None:
+            continue
+        authorized = set(attempt.request.selected_node_revisions)
+        if isinstance(output, ExecutorEpisodeOutput):
+            authorized.update(item.node_id for item in output.nodes)
+        local_statement_ids = {
+            item.local_id: stable_epistemic_id(
+                "epistmt",
+                run_id=state.run_id,
+                episode_id=episode_id,
+                attempt_id=attempt_id,
+                output_hash=result.output_hash,
+                local_id=item.local_id,
+                record_type="statement",
+            )
+            for item in bundle.statements
+        }
+
+        def resolved(ref: str) -> str:
+            if not ref.startswith("local-statement:"):
+                return ref
+            local_id = ref.removeprefix("local-statement:")
+            if local_id not in local_statement_ids:
+                raise ValueError("persisted epistemic output has an unknown local reference")
+            return f"epistemic:{local_statement_ids[local_id]}"
+
+        def validate_episode_authority_and_source(
+            source_type: str,
+            refs: list[str],
+        ) -> None:
+            for ref in refs:
+                if ref.startswith("node-claim:") and (
+                    ref.removeprefix("node-claim:") not in authorized
+                ):
+                    raise ValueError(
+                        "persisted epistemic output exceeds its node authority"
+                    )
+            if source_type not in {
+                "agent_reported",
+                "external_artifact_backed",
+            }:
+                raise ValueError(
+                    "persisted episode output forges epistemic source authority"
+                )
+            if source_type == "external_artifact_backed" and not any(
+                ref.startswith(("artifact:", "external:")) for ref in refs
+            ):
+                raise ValueError(
+                    "persisted external-artifact-backed record lacks its basis"
+                )
+
+        def ref_target_node(ref: str) -> str | None:
+            if ref.startswith("node-claim:"):
+                return ref.removeprefix("node-claim:")
+            if ref.startswith("epistemic:"):
+                statement = statements.get(ref.removeprefix("epistemic:"))
+                return None if statement is None else statement.target_node_id
+            return None
+
+        for contribution in bundle.statements:
+            stable_id = local_statement_ids[contribution.local_id]
+            expected_ids.add(stable_id)
+            record = statements.get(stable_id)
+            resolved_basis = [resolved(ref) for ref in contribution.basis_refs]
+            validate_episode_authority_and_source(
+                contribution.source_type, resolved_basis
+            )
+            if record is None or (
+                record.local_id != contribution.local_id
+                or record.statement_type != contribution.statement_type
+                or record.text != contribution.text
+                or record.target_node_id != contribution.target_node_id
+                or record.source_type != contribution.source_type
+                or record.basis_refs != resolved_basis
+                or record.target_node_id not in authorized
+            ):
+                raise ValueError(
+                    "persisted epistemic statement disagrees with its committed output"
+                )
+        for contribution in bundle.edges:
+            stable_id = stable_epistemic_id(
+                "epiedge",
+                run_id=state.run_id,
+                episode_id=episode_id,
+                attempt_id=attempt_id,
+                output_hash=result.output_hash,
+                local_id=contribution.local_id,
+                record_type="edge",
+            )
+            expected_ids.add(stable_id)
+            record = edges.get(stable_id)
+            resolved_refs = [
+                resolved(contribution.source_ref),
+                resolved(contribution.target_ref),
+                *(resolved(ref) for ref in contribution.basis_refs),
+            ]
+            validate_episode_authority_and_source(
+                contribution.source_type, resolved_refs
+            )
+            target_node = ref_target_node(resolved_refs[1])
+            source_node = ref_target_node(resolved_refs[0])
+            if (target_node is not None and target_node not in authorized) or (
+                target_node is None and source_node not in authorized
+            ):
+                raise ValueError(
+                    "persisted epistemic edge lacks an authorized node anchor"
+                )
+            if record is None or (
+                record.local_id != contribution.local_id
+                or record.source_ref != resolved(contribution.source_ref)
+                or record.target_ref != resolved(contribution.target_ref)
+                or record.relation_type != contribution.relation_type
+                or record.source_type != contribution.source_type
+                or record.basis_refs
+                != [resolved(ref) for ref in contribution.basis_refs]
+                or record.explanation != contribution.explanation
+            ):
+                raise ValueError(
+                    "persisted epistemic edge disagrees with its committed output"
+                )
+        for contribution in bundle.path_dispositions:
+            stable_id = stable_epistemic_id(
+                "epidisp",
+                run_id=state.run_id,
+                episode_id=episode_id,
+                attempt_id=attempt_id,
+                output_hash=result.output_hash,
+                local_id=contribution.local_id,
+                record_type="path_disposition",
+            )
+            expected_ids.add(stable_id)
+            record = dispositions.get(stable_id)
+            resolved_basis = [resolved(ref) for ref in contribution.basis_refs]
+            validate_episode_authority_and_source(
+                contribution.source_type, resolved_basis
+            )
+            if record is None or (
+                record.local_id != contribution.local_id
+                or record.target_node_id != contribution.target_node_id
+                or record.epistemic_disposition
+                != contribution.epistemic_disposition
+                or record.source_type != contribution.source_type
+                or record.basis_refs != resolved_basis
+                or record.explanation != contribution.explanation
+                or record.target_node_id not in authorized
+            ):
+                raise ValueError(
+                    "persisted epistemic disposition disagrees with its committed output"
+                )
+
+    if expected_ids != all_ids:
+        raise ValueError(
+            "persisted epistemic ledger is incomplete or contains non-committed records"
+        )
+
+    committed_attempts = {
+        identity
+        for identity, (episode, attempt) in attempts_by_identity.items()
+        if attempt.status == "committed"
+        and episode.committed_attempt_id == attempt.attempt_id
+    }
+    node_ids = {node.node_id for node in state.nodes}
+    relation_ids = {item.relation_record_id for item in state.relation_ledger}
+    merge_ids = {item.merge_application_id for item in state.merge_applications}
+
+    def validate_ref(ref: str) -> None:
+        if ref.startswith("node-claim:"):
+            valid = ref.removeprefix("node-claim:") in node_ids
+        elif ref.startswith("epistemic:"):
+            valid = ref.removeprefix("epistemic:") in all_ids
+        elif ref.startswith("relation:"):
+            valid = ref.removeprefix("relation:") in relation_ids
+        elif ref.startswith("merge:"):
+            valid = ref.removeprefix("merge:") in merge_ids
+        elif ref.startswith("episode-result:"):
+            parts = ref.removeprefix("episode-result:").split(":")
+            valid = len(parts) == 2 and tuple(parts) in committed_attempts
+        elif ref.startswith("artifact:"):
+            value = ref.removeprefix("artifact:")
+            path = PurePosixPath(value)
+            valid = bool(value) and not path.is_absolute() and not any(
+                part in {"", ".", ".."} for part in path.parts
+            ) and "\\" not in value and path.as_posix() == value
+        elif ref.startswith("external:"):
+            valid = bool(ref.removeprefix("external:").strip())
+        elif ref.startswith("learning:"):
+            valid = bool(ref.removeprefix("learning:").strip())
+        else:
+            valid = ref == f"run:{state.run_id}"
+        if not valid:
+            raise ValueError(f"persisted epistemic ledger has an invalid reference: {ref}")
+
+    for record in [*ledger.statements, *ledger.edges, *ledger.path_dispositions]:
+        owner = attempts_by_identity.get((record.episode_id, record.attempt_id))
+        committed_at = _parse_time(record.committed_at)
+        if owner is None:
+            raise ValueError("persisted epistemic record references a missing attempt")
+        owner_episode, owner_attempt = owner
+        if (
+            record.run_id != state.run_id
+            or owner_episode.role != record.role
+            or owner_episode.committed_attempt_id != owner_attempt.attempt_id
+            or owner_attempt.status != "committed"
+            or owner_attempt.result_hash != record.output_hash
+            or record.source_type
+            not in {"agent_reported", "external_artifact_backed"}
+            or committed_at < created_at
+            or committed_at > updated_at
+        ):
+            raise ValueError(
+                "persisted epistemic record disagrees with committed attempt provenance"
+            )
+        for ref in record.basis_refs:
+            validate_ref(ref)
+        if hasattr(record, "source_ref"):
+            validate_ref(record.source_ref)
+            validate_ref(record.target_ref)
 
 
 def _validate_loaded_state(state: AppRunState) -> None:
@@ -800,6 +1074,13 @@ def _validate_loaded_state(state: AppRunState) -> None:
                 active_lifecycle_records.append((episode, attempt))
     if len(active_lifecycle_records) > 1:
         raise ValueError("persisted App state contains multiple active attempt lifecycles")
+
+    _validate_persisted_epistemic_ledger(
+        state,
+        attempts_by_identity,
+        created_at=created_at,
+        updated_at=updated_at,
+    )
 
     require_unique(
         [event.event_id for event in state.pending_telemetry_events],
@@ -1834,6 +2115,7 @@ def load_app_run(run_dir: str | Path) -> AppRunState:
     _flush_pending_events(run_dir, state)
     try:
         _write_relation_artifacts(run_dir, state)
+        _write_epistemic_artifact(run_dir, state)
     except Exception:
         pass
     _repair_attempt_artifacts(run_dir, state)
@@ -2558,6 +2840,73 @@ def _attempt_artifact_dir(run_dir: str | Path, request: EpisodeRequest) -> Path:
     return target
 
 
+def _epistemic_reference_context(
+    run_dir: str | Path,
+    state: AppRunState,
+) -> EpistemicReferenceContext:
+    """Snapshot safe pre-commit identities without creating any artifact."""
+
+    root = Path(run_dir).resolve()
+    reserved_files = {
+        "app_run_state.json",
+        "episode_events.jsonl",
+        "dte_cache.json",
+        "epistemic/ledger.json",
+        "epistemic/researcher_learning.jsonl",
+        "observability/feedback.jsonl",
+    }
+    artifact_paths: set[str] = set()
+    for path in root.rglob("*"):
+        if not path.is_file() or path.is_symlink():
+            continue
+        relative = path.relative_to(root).as_posix()
+        if (
+            relative in reserved_files
+            or relative.startswith("episodes/")
+            or relative.startswith("relations/")
+            or relative.startswith("epistemic/")
+            or relative.startswith("observability/")
+        ):
+            continue
+        artifact_paths.add(relative)
+
+    confirmed_learning_ids: set[str] = set()
+    duplicate_learning_ids: set[str] = set()
+    seen_learning_ids: set[str] = set()
+    learning_path = root / "epistemic" / "researcher_learning.jsonl"
+    if learning_path.exists():
+        for line in learning_path.read_bytes().splitlines():
+            try:
+                raw = json.loads(line.decode("utf-8"))
+                learning = ResearcherLearningRecordV1.model_validate(raw)
+            except Exception:
+                continue
+            if learning.learning_id in seen_learning_ids:
+                duplicate_learning_ids.add(learning.learning_id)
+                confirmed_learning_ids.discard(learning.learning_id)
+                continue
+            seen_learning_ids.add(learning.learning_id)
+            if (
+                learning.run_id == state.run_id
+                and learning.source == "user"
+                and learning.user_confirmed
+            ):
+                confirmed_learning_ids.add(learning.learning_id)
+    confirmed_learning_ids.difference_update(duplicate_learning_ids)
+
+    return EpistemicReferenceContext(
+        committed_episode_attempts={
+            (episode.episode_id, attempt.attempt_id)
+            for episode in state.episodes
+            for attempt in episode.attempts
+            if attempt.status == "committed"
+            and episode.committed_attempt_id == attempt.attempt_id
+        },
+        artifact_paths=artifact_paths,
+        user_confirmed_learning_ids=confirmed_learning_ids,
+    )
+
+
 def _write_attempt_artifacts(run_dir: str | Path, attempt: EpisodeAttemptRecord) -> None:
     _write_json_atomic(_request_artifact_path(run_dir, attempt.request), attempt.request.model_dump(mode="json"))
     _write_json_atomic(_status_artifact_path(run_dir, attempt.request), attempt.model_dump(mode="json"))
@@ -3122,6 +3471,7 @@ def submit_app_episode_result(
             next_controller_action=state.controller_action,
         )
 
+    epistemic_context = _epistemic_reference_context(run_dir, state)
     attempt.submitted_at = _iso(submitted_at)
     attempt.status = "completed_uncommitted"
     _write_json_atomic(result_path, payload)
@@ -3132,6 +3482,7 @@ def submit_app_episode_result(
         attempt.request,
         payload,
         telemetry=buffered_events,  # type: ignore[arg-type]
+        epistemic_context=epistemic_context,
     )
     attempt.commit_outcome = outcome
     if outcome.accepted:

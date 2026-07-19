@@ -233,6 +233,44 @@ rewrites a Judge score or controller decision. Internal process proxies support
 diagnosis and comparison; external research effectiveness still requires human,
 benchmark, or later-outcome evidence.
 
+### Epistemic provenance is committed fact, not verification
+
+Executor and Judge may add optional, bounded structured contributions to their
+role-valid output. The backend validates role authority, node and fact identity,
+safe artifact paths, lifecycle, provenance source, and references. It does not
+validate scientific truth. The records are installed in the same commit
+transaction as the episode result:
+
+```text
+accepted Judge / Executor EpisodeResult
+        -> stable statement, edge, and path-disposition IDs
+        -> AppRunState.epistemic_ledger (authoritative)
+        -> epistemic/ledger.json (derived mirror)
+```
+
+Stable identities bind `run_id`, `episode_id`, `attempt_id`, `output_hash`, the
+output-local ID, and record type. Local statement references resolve inside the
+transaction. Unknown node, committed episode/attempt, epistemic record, Relation
+record, merge application, or run artifact references reject the entire result.
+Stale, failed, cancelled, expired, late, or superseded attempts never contribute
+records, and retry makes only the committed attempt visible.
+
+The deterministic epistemic read model combines that ledger with canonical node
+claims, committed attempts, Relation records, merge applications, provisional
+selection, operational observability, and the independent researcher-learning
+ledger. It never extracts edges from legacy free text and never repairs on read.
+Relation projection prevents a competing Relation truth. Search lifecycle
+dispositions and epistemic dispositions are distinct, so non-selection, low
+Judge score, merge, and budget exhaustion cannot silently become contradiction.
+
+The terminal handoff describes provisional-selected node claims because the
+current App-native slice has no final Synthesis episode. Its model-profile and
+support-source comparisons are correlated-error risk indicators, not correctness
+or scientific reliability scores. Researcher learning is append-only feedback:
+main-agent inferences remain unconfirmed, explicit user confirmation creates a
+new record, and no learning append feeds graph, Judge, Relation, allocation, or
+stopping state.
+
 ## Seed architecture and the Explorer role
 
 A mandatory physical Explorer is removed from the target real-run architecture.

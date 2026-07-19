@@ -145,24 +145,42 @@ The standalone `judge-oracle`, `relation-oracle`, `validate-executor`, and flexi
 
 ## Handoff after completion
 
-After the backend stops and commits synthesis, summarize:
+After a headless synthesis result or an App-native terminal handoff, summarize:
 
 - why the DTE controller stopped, or that the user interrupted;
-- the selected and rejected branches;
+- the selected and non-selected or abandoned branches;
 - unresolved risks and human questions;
 - run mode, budget, geometry, adapters, cache path, and any degraded fallback;
 - `report.md` as the backend-committed synthesis.
 
 For an App-native `ready_for_synthesis` or `run_complete` terminal action, first
-read the JSON observability summary, provisional selection, and Relation
-disclosures. Add a compact execution summary covering role episode counts, the
-initial → committed → selected node funnel, major allocations and their child
-outcomes, merges/conflicts, retries/rejections, terminal reason, and missing
-data. Treat those numbers as internal process proxies. External usefulness or
-advantage over a baseline requires explicit feedback or later evidence.
+run both read-only interfaces:
+
+```bash
+python -m dte_backend observability-summary --run-dir <run-dir> --format json
+python -m dte_backend epistemic-summary --run-dir <run-dir> --format json
+```
+
+Read provisional selection and Relation disclosures through those handoffs. Add
+a compact execution summary covering role episode counts, the initial →
+committed → selected node funnel, major allocations and their child outcomes,
+merges/conflicts, retries/rejections, terminal reason, and missing data. Then
+report the selected claims, their key assumptions, supporting/challenging and
+conditional evidence, the most dangerous unresolved dependencies, and whether
+an abandoned route was merely not searched or has an explicit counterexample.
+Include a short correlated-error risk note and possible transferable heuristic,
+without treating either as correctness or confirmed user learning. The App
+handoff maps provisional-selected node claims; it does not require a final
+Synthesis episode or assert that backend code audited the main agent's prose.
 
 If the user explicitly evaluates a run or concrete decision, the main agent may
 append source-labelled `record-feedback`. It must not infer `source=user` from
 silence, and the feedback ledger cannot modify graph/controller state.
+
+Only an explicit user statement of changed judgment or transferable learning
+permits `record-learning --source user`. Main-agent inferred possibilities use
+`source=main_agent`, remain unconfirmed, and are never upgraded from silence,
+continued conversation, or answer acceptance. Confirmation appends a new record
+rather than modifying the prior record.
 
 Do not present a checkpoint, standalone oracle output, or manually assembled subagent summary as the final DTE report.

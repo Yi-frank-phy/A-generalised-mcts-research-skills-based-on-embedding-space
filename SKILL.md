@@ -42,6 +42,7 @@ python -m dte_backend next-episode --run-dir <run-dir>
 python -m dte_backend submit-episode-result --run-dir <run-dir> --result <result.json>
 python -m dte_backend run-status --run-dir <run-dir>
 python -m dte_backend observability-summary --run-dir <run-dir> --format json
+python -m dte_backend epistemic-summary --run-dir <run-dir> --format json
 ```
 
 Use `fail-episode`, `cancel-episode`, and `retry-episode` for explicit attempt transitions. A retry must use the newly granted `attempt_id`; late output from cancelled, expired, failed, superseded, rejected, or committed attempts cannot be resubmitted as success.
@@ -54,16 +55,47 @@ Keep episode purposes isolated:
 - Executor develops the backend-granted branch and may explore independent routes internally, but does not score or allocate.
 - Relation compares only granted pairs, does not verify correctness, and does not select a scientific winner.
 
+Judge and Executor may return optional `epistemic_contributions` only when they
+carry high-signal information. Do not fill the schema with generic assumptions.
+Prefer critical prerequisites, substantive support/challenge evidence, explicit
+counterexamples, important unresolved dependencies, transferable failure modes,
+and heuristics. Internal facts use machine references; external support must use
+an explicit `external:` reference or safe run-local `artifact:` reference. Keep
+`agent_reported`, `external_artifact_backed`, `human_confirmed`, and
+`backend_derived` distinct. Agent episodes may submit only the first two, and may
+never claim that the backend verified scientific truth. Existing free-text
+`assumptions` and `evidence` remain readable context but are not formal dependency
+edges.
+
 `next-episode` may return a strict `role=judge` request for ordinary unscored frontier nodes. Judge every granted node exactly once and return only observable score, reasoning, risks, and optional uncertainty evidence. After a valid Judge submit, call `next-episode` again: the backend, not the main agent, computes embedding/KDE density, entropy, uncertainty, UCB, and allocation before returning an Executor grant or a terminal controller action. Normal App operation must not require the main agent to interpret `continue_controller`.
 
 Before a new Synthesis terminal action, `next-episode` may return `role=relation`. Inspect only the granted bounded `relation_payload.candidate_pairs`; one Relation episode contains only node-disjoint pairs, so each node ID appears at most once. Classify each pair exactly once as `equivalent`, `complementary`, `conflict`, or `independent`; return one strict Relation result; submit it; and inspect the backend outcome. The payload marks each pair as blocking or enrichment, but both use the same four semantic outputs. Do not add ungranted pairs, scan the full graph, apply a merge, choose a canonical node, edit Relation artifacts, set readiness, return a correctness/pass/fail verdict, or claim final synthesis. Node-disjointness is a transactional merge-safety invariant, not a verification rule. The backend completely inventories selected-set blockers before readiness and may then schedule only a run-budgeted set of high-value enrichment pairs. `DiscriminatorTaskProposal` is metadata only and is not executed by this workflow.
 
-## Terminal observability and explicit feedback
+## Terminal observability, epistemic handoff, and explicit feedback
 
-When the backend returns `ready_for_synthesis` or `run_complete`, call
-`observability-summary --format json` before reporting. Read the formal summary,
-provisional selection, and Relation disclosures, then give the user both the
-research result and a compact DTE execution summary containing:
+When the backend returns `ready_for_synthesis` or `run_complete`, call both:
+
+```bash
+python -m dte_backend observability-summary --run-dir <run-dir> --format json
+python -m dte_backend epistemic-summary --run-dir <run-dir> --format json
+```
+
+Read the operational summary, provisional selection, Relation disclosures, and
+epistemic handoff before reporting. The handoff covers provisional-selected node
+claims, not an audited final natural-language answer, and this App path does not
+require a final Synthesis episode. Give the user a compact epistemic section in
+this order:
+
+- current most credible conclusion;
+- key dependency assumptions;
+- main supporting, challenging, and conditional evidence with source labels;
+- the most dangerous unverified assumptions and unresolved questions;
+- important failed/abandoned routes, distinguishing not-searched or low-priority
+  paths from routes with actual counterexamples or contradictions;
+- possible transferable judgments, without claiming the user learned them;
+- correlated-error risk indicators, never a correctness or reliability score.
+
+Also give a compact DTE execution summary containing:
 
 - Judge, Executor, and Relation episode/attempt counts;
 - initial → committed → provisional-selected node counts;
@@ -95,6 +127,26 @@ Never label a main-agent inference as `source=user`, and never generate positive
 feedback from user silence or simple acceptance. The feedback ledger is
 append-only evaluation metadata; it does not modify Judge scores, graph state,
 allocation, stopping, or telemetry history.
+
+The researcher learning ledger is separate and append-only. A main-agent
+inference must use `source=main_agent`, remains `user_confirmed=false`, and must
+not be presented as a user change. Only when the user explicitly reports or
+confirms a changed view, reusable heuristic, or recognized failure mode may the
+main agent append a new record with `record-learning --source user`, for example:
+
+```bash
+python -m dte_backend record-learning --source user \
+  --run-dir <run-dir> \
+  --previous-view "..." \
+  --updated-view "..." \
+  --reason-ref node-claim:<node-id> \
+  --reusable-heuristic "..." \
+  --recognized-failure-mode "..."
+```
+
+Never infer user learning from silence, continued conversation, or acceptance
+of an answer. Learning append does not modify graph, epistemic dependencies,
+Judge, Relation, UCB, allocation, budget, or stopping state.
 
 ## Critical real-run rule
 

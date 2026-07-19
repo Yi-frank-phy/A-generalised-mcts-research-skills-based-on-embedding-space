@@ -144,6 +144,44 @@ python -m dte_backend record-feedback \
 
 Feedback never rewrites graph, Judge, allocation, stopping, or telemetry facts.
 
+Judge and Executor outputs may also contribute a small, bounded set of
+source-labelled epistemic statements, directed dependencies, and explicit path
+dispositions. Accepted records are committed atomically inside
+`AppRunState.epistemic_ledger`; `<run-dir>/epistemic/ledger.json` is only a
+derived mirror. Stable IDs bind run, episode, attempt, output hash, local ID, and
+record type. Relation conflicts/equivalence and merge provenance are projected
+from the existing Relation ledger rather than copied into a second truth store.
+
+At `ready_for_synthesis` or `run_complete`, the deterministic handoff is
+available as JSON or compact text:
+
+```bash
+python -m dte_backend epistemic-summary --run-dir <run-dir> --format json
+python -m dte_backend epistemic-summary --run-dir <run-dir> --format text
+```
+
+It traces provisional-selected node claims through explicit assumptions,
+support, challenge, conditionality, unresolved dependencies, artifacts,
+producing attempts, Relation disclosures, and merges. Search dispositions such
+as `not_selected` and `out_of_budget` remain separate from epistemic
+dispositions such as `challenged` and `contradicted`. Correlated-error fields are
+risk indicators only, never verification or a reliability score. Legacy runs
+without structured contributions produce an empty graph with explicit data
+quality limitations; free text is never mined for edges.
+
+Explicit post-run learning can be appended without changing controller state:
+
+```bash
+python -m dte_backend record-learning \
+  --run-dir <run-dir> --source user \
+  --previous-view "..." --updated-view "..." \
+  --reason-ref node-claim:<node-id>
+```
+
+Only `source=user` records are user-confirmed. Main-agent hypotheses about
+possible learning stay unconfirmed, and later confirmation appends a new record
+instead of rewriting history.
+
 App-path embedding vectors are cached in the run-scoped `<run-dir>/dte_cache.json` through the existing `FileDTECache` namespace contract (provider, model/snapshot, dimension, and embedding contract version). The cache is not graph state; a cache failure cannot partially commit controller fields or revisions. Terminal `ready_for_synthesis` / `run_complete` actions are sticky, and after already-allocated Executor grants are consumed the iteration cap is enforced before any new Judge grant.
 
 App-native Relation episodes now maintain a versioned semantic relation layer before a new Synthesis terminal action. The backend completely inventories selected-set exact duplicates and potential material conflicts (at most 28 pairs for the default eight-node provisional set) before readiness, grants bounded Relation episodes, and then may spend at most `max_relation_enrichment_pairs` successful nonblocking semantic classifications across the run (default 3). Known candidate/record identities are removed before enrichment truncation, so previously seen pairs cannot hide unseen pairs.

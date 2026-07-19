@@ -89,7 +89,11 @@ def build_executor_episode_request(
         input_graph_revision=graph.revision,
         selected_node_revisions={parent.node_id: parent_revision},
         objective=objective,
-        coverage_requirements=coverage_requirements or [],
+        coverage_requirements=[
+            *(coverage_requirements or []),
+            "submit optional epistemic_contributions only for material assumptions, evidence, challenges, counterexamples, failure modes, heuristics, or unresolved dependencies",
+            "use machine references and explicit source_type; do not claim the backend verified scientific truth",
+        ],
         allowed_output_types=allowed_output_types or ["candidate", "evidence", "counterexample", "merge"],
         output_schema_version="executor-output.v1",
         native_orchestration_allowed=native_orchestration_allowed,
@@ -160,6 +164,8 @@ def build_judge_episode_request(
         coverage_requirements=[
             "score every granted node exactly once",
             "state observable reasoning and material risks",
+            "submit optional epistemic_contributions only for material assumptions, support gaps, challenges, conditionality, or unresolved dependencies",
+            "use machine references and explicit source_type; do not turn a low score into contradiction or claim backend verification",
             "do not return controller-owned geometry, allocation, revision, stopping, or synthesis fields",
         ],
         allowed_output_types=[],

@@ -18,6 +18,13 @@ from .episode_adapter import (
 )
 from .episode_commit import EpisodeGraph, commit_episode_result
 from .episode_models import EpisodeRequest, EpisodeResult
+from .epistemic import (
+    build_terminal_epistemic_handoff,
+    read_researcher_learning_ledger,
+    record_researcher_learning,
+    render_epistemic_text,
+)
+from .epistemic_models import TerminalEpistemicHandoffV1
 from .models import AllocationResult, BudgetSpec, DTERunSpec, SearchNode
 from .observability import (
     build_run_observability_summary,
@@ -35,6 +42,7 @@ __all__ = [
     "app_run_status",
     "BudgetSpec",
     "build_run_observability_summary",
+    "build_terminal_epistemic_handoff",
     "DTERunSpec",
     "CommandAgentEpisodeAdapter",
     "create_app_run",
@@ -46,7 +54,10 @@ __all__ = [
     "ExpansionRequest",
     "FeedbackRecordV1",
     "read_feedback_ledger",
+    "read_researcher_learning_ledger",
     "record_feedback",
+    "record_researcher_learning",
+    "render_epistemic_text",
     "render_observability_text",
     "RunResult",
     "RunObservabilitySummaryV1",
@@ -59,5 +70,6 @@ __all__ = [
     "retry_app_episode",
     "fail_app_episode",
     "submit_app_episode_result",
+    "TerminalEpistemicHandoffV1",
     "commit_episode_result",
 ]

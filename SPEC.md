@@ -515,3 +515,126 @@ novel route discovery, avoided false progress, time saved, or advantage over a
 non-DTE baseline require user feedback, a benchmark, or later external outcomes.
 The observability interface must not present internal correlation as calibration,
 causation, or proof that the architecture is effective.
+
+## 18. Epistemic provenance and researcher handoff
+
+The App-native run state owns one additional versioned committed-fact
+collection:
+
+```text
+AppRunState.epistemic_ledger
+```
+
+It contains only structured statements, directed epistemic edges, and explicit
+path epistemic dispositions accepted with a completed Judge or Executor result.
+The ledger is committed in the same copy-validate-replace transaction as that
+episode result. A JSON artifact under `epistemic/ledger.json` is a derived
+mirror, never a second fact source. Legacy App states migrate to an empty ledger.
+
+Every epistemic record carries one source label:
+
+```text
+agent_reported
+external_artifact_backed
+human_confirmed
+backend_derived
+```
+
+Episode producers may submit only `agent_reported` or genuinely referenced
+`external_artifact_backed` contributions. They may not manufacture
+`human_confirmed` or `backend_derived` facts. Backend validation establishes
+identity, authorization, lifecycle, reference existence, safe artifact paths,
+and provenance; it does not establish scientific truth. In particular, an
+agent's claim that it verified something remains agent-reported unless an
+explicit external artifact/reference is bound to the record.
+
+Executor and Judge output may contain one optional bounded
+`epistemic_contributions` object. It supports:
+
+```text
+statement types: claim | assumption | evidence | open_question | failure_mode | heuristic
+edge types: supports | challenges | requires | qualifies | contradicts | derived_from
+path dispositions: blocked_by_assumption | counterexample_found | challenged |
+                   contradicted | inconclusive | insufficient_support
+```
+
+Directed-edge convention is:
+
+```text
+evidence --supports--> claim
+claim --requires--> assumption
+counterexample --challenges--> claim
+claim B --qualifies--> claim A
+claim --derived_from--> source
+```
+
+Node claims use `node-claim:<node_id>`. Current-output statements use
+`local-statement:<local_id>` and are resolved transactionally to committed
+stable IDs. Other machine references may identify an existing committed
+epistemic record, Relation record, merge application, episode result, safe run
+artifact, explicit external reference, or previously user-confirmed learning
+record. Free text is never mined to infer edges.
+
+Stable record IDs bind:
+
+```text
+run_id
+episode_id
+attempt_id
+output_hash
+record local_id
+record type
+```
+
+They do not semantically merge equal natural-language text across contexts.
+Unknown identities, unauthorized target nodes, unsafe or missing artifact
+references, duplicate local IDs, forged source types, invalid dispositions, or
+duplicate stable IDs reject the whole episode commit. Failed, stale, late,
+cancelled, expired, superseded, or rejected attempts contribute no epistemic
+facts. `counterexample_found` and `contradicted` require non-empty basis
+references.
+
+Search disposition and epistemic disposition are independent projections.
+Backend-derived search facts include `selected`, `not_selected`, `merged`,
+`closed`, `out_of_budget`, and `not_explored`. They never imply a scientific
+status. In particular:
+
+```text
+not_selected != contradicted
+low Judge score != false
+out_of_budget != unpromising
+merged != universally scientifically redundant
+```
+
+The deterministic read-only epistemic model projects committed run state,
+episode results, the epistemic ledger, the existing Relation ledger, merge
+applications, provisional selection, observability, and researcher learning
+into a terminal handoff. It never repairs or rewrites the run. The formal JSON
+handoff traces each provisional-selected node claim through required
+assumptions, supporting and challenging records, producer episode/attempt,
+artifacts, Relation conflicts, and merge provenance. Relation classifications
+are referenced from the existing Relation ledger; no second Relation truth is
+created. The handoff describes provisional-selected claims, not an audited
+final natural-language Synthesis answer.
+
+The handoff also reports correlated-error risk indicators. Model/runtime
+metadata is used only when explicitly persisted; missing metadata remains
+unavailable rather than guessed. Same-model cross-role confirmation,
+agent-only support, absent structured support, unresolved assumptions, and
+self-referential support are risk indicators, not correctness rates,
+independent-validation rates, or scientific reliability scores.
+
+Researcher learning is stored separately at:
+
+```text
+epistemic/researcher_learning.jsonl
+```
+
+This typed append-only ledger records explicit post-run changes of view,
+reusable heuristics, recognized failure modes, and remaining uncertainty. A
+learning record must reference existing run facts. Only `source=user` may set
+`user_confirmed=true`; main-agent inferences remain unconfirmed, and later user
+confirmation appends a new record rather than editing history. Silence,
+continued conversation, or mere acceptance is never feedback. Researcher
+learning cannot modify graph state, Judge output, Relation, UCB, allocation,
+stopping, or terminal state.

@@ -30,7 +30,11 @@ The internal Python package still uses `dte_backend` for backward compatibility.
 
 ## Status
 
-This is an **alpha skill/backend**. The smoke path is fully local and should pass without external API keys. Real research mode requires a real Judge command, such as:
+This is a **feature-complete v1 protocol in public alpha**. The engineering
+architecture is ready for real use; the alpha label remains because comparative
+research effectiveness has not yet been established by real-run outcome data.
+The smoke path is fully local and should pass without external API keys. Real
+research mode requires a real Judge command, such as:
 
 ```bash
 python -m dte_backend strict-run \
@@ -42,6 +46,17 @@ python -m dte_backend strict-run \
 ```
 
 `examples/mock_*_adapter.py` are smoke-test tools only. Hash embedding is a debug/dry-run fallback, not real geometry.
+
+### V1 stability policy
+
+Development now prioritizes real-run use, evaluation, compatibility,
+maintenance, and fixes. Do not pre-emptively add a native final Synthesis
+episode, verifier or human-approval gate, dormant-node state, or more complex
+reward/convergence/reliability/control metrics. Reconsider one of these only
+after a reproducible real-run failure, comparative outcome evidence, or a
+concrete protocol requirement demonstrates that the current v1 mechanisms are
+insufficient. Passing tests establishes protocol behavior, not scientific
+correctness or research effectiveness.
 
 ## Repository layout
 
@@ -169,18 +184,13 @@ risk indicators only, never verification or a reliability score. Legacy runs
 without structured contributions produce an empty graph with explicit data
 quality limitations; free text is never mined for edges.
 
-Explicit post-run learning can be appended without changing controller state:
-
-```bash
-python -m dte_backend record-learning \
-  --run-dir <run-dir> --source user \
-  --previous-view "..." --updated-view "..." \
-  --reason-ref node-claim:<node-id>
-```
-
-Only `source=user` records are user-confirmed. Main-agent hypotheses about
-possible learning stay unconfirmed, and later confirmation appends a new record
-instead of rewriting history.
+The persisted `external_artifact_backed` source means reference provenance only;
+text output labels it `artifact_referenced`. DTE does not check the artifact,
+its assumptions, applicability, or scientific claim. The retired
+`epistemic/researcher_learning.jsonl` file is a deprecated external artifact
+ignored by current DTE; it is not read, migrated, exported, repaired, or
+modified. Explicit run evaluation remains available through `record-feedback`,
+which never becomes epistemic authority or controller input.
 
 App-path embedding vectors are cached in the run-scoped `<run-dir>/dte_cache.json` through the existing `FileDTECache` namespace contract (provider, model/snapshot, dimension, and embedding contract version). The cache is not graph state; a cache failure cannot partially commit controller fields or revisions. Terminal `ready_for_synthesis` / `run_complete` actions are sticky, and after already-allocated Executor grants are consumed the iteration cap is enforced before any new Judge grant.
 

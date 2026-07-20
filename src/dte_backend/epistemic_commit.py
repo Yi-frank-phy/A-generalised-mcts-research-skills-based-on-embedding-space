@@ -27,7 +27,6 @@ class EpistemicReferenceContext:
 
     committed_episode_attempts: set[tuple[str, str]] = field(default_factory=set)
     artifact_paths: set[str] = field(default_factory=set)
-    user_confirmed_learning_ids: set[str] = field(default_factory=set)
 
 
 def _safe_artifact_path(value: str) -> str:
@@ -154,10 +153,9 @@ def prepare_epistemic_commit(
                 raise ValueError(f"unknown epistemic reference: {ref}")
             return ref
         if ref.startswith("learning:"):
-            learning_id = ref.removeprefix("learning:")
-            if learning_id not in reference_context.user_confirmed_learning_ids:
-                raise ValueError(f"unknown epistemic reference: {ref}")
-            return ref
+            raise ValueError(
+                "learning: references are not part of the current DTE epistemic contract"
+            )
         if ref == f"run:{request.run_id}":
             return ref
         raise ValueError(f"unknown epistemic reference: {ref}")

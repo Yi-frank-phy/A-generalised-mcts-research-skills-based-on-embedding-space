@@ -14,7 +14,7 @@ from dte_backend.app_driver import (
 from dte_backend.embedding import HashEmbeddingProvider
 from dte_backend.epistemic import (
     build_terminal_epistemic_handoff,
-    record_researcher_learning,
+    render_epistemic_text,
 )
 from dte_backend.epistemic_models import (
     EpistemicContributionBundle,
@@ -94,7 +94,8 @@ def main() -> None:
             goal="preserve assumptions, evidence, challenges, and conflict provenance",
             constraints=["do not infer formal edges from prose"],
             budget=BudgetSpec(
-                max_iterations=1,
+                max_committed_search_nodes=3,
+                max_iterations=10,
                 allocation_mass_per_iteration=1,
                 max_children_per_iteration=2,
                 max_relation_pairs_per_episode=1,
@@ -194,6 +195,9 @@ def main() -> None:
         ).request
         assert executor is not None and executor.role == "executor"
         child_id = "bounded-child"
+        artifact = run_dir / "evidence" / "calculation.json"
+        artifact.parent.mkdir(parents=True, exist_ok=True)
+        artifact.write_text("{}", encoding="utf-8")
         executor_output = ExecutorEpisodeOutput(
             nodes=[
                 ExecutorNodeCandidate(
@@ -209,8 +213,8 @@ def main() -> None:
                         statement_type="evidence",
                         text="a bounded calculation supports the child claim",
                         target_node_id=child_id,
-                        source_type="agent_reported",
-                        basis_refs=[],
+                        source_type="external_artifact_backed",
+                        basis_refs=["artifact:evidence/calculation.json"],
                     )
                 ],
                 edges=[
@@ -219,8 +223,8 @@ def main() -> None:
                         source_ref="local-statement:finite-check",
                         target_ref=f"node-claim:{child_id}",
                         relation_type="supports",
-                        source_type="agent_reported",
-                        basis_refs=[],
+                        source_type="external_artifact_backed",
+                        basis_refs=["artifact:evidence/calculation.json"],
                         explanation="the calculation supplies bounded support",
                     ),
                     EpistemicEdgeContribution(
@@ -274,6 +278,9 @@ def main() -> None:
 
         state_path = run_dir / "app_run_state.json"
         authoritative_before = state_path.read_bytes()
+        legacy_learning_path = run_dir / "epistemic" / "researcher_learning.jsonl"
+        legacy_learning_bytes = b'{"deprecated":"external artifact"}\n'
+        legacy_learning_path.write_bytes(legacy_learning_bytes)
         operational_before = build_run_observability_summary(run_dir)
         epistemic_before = build_terminal_epistemic_handoff(run_dir)
         assert epistemic_before.selected_claims
@@ -284,28 +291,27 @@ def main() -> None:
         assert child_handoff.claim_origin == "executor_episode"
         assert child_handoff.claim_producing_episode_id == executor.episode_id
         assert child_handoff.claim_producing_attempt_id == executor.attempt_id
-
-        record_researcher_learning(
-            run_dir,
-            source="user",
-            previous_view="the condition looked sufficient without qualification",
-            updated_view="the boundary must be checked separately",
-            change_reason_refs=["node-claim:left"],
-            reusable_heuristic="separate generic and boundary cases early",
-            recognized_failure_mode="prematurely generalizing a bounded check",
-            learning_id="smoke-learning",
-        )
+        assert child_handoff.referenced_artifacts == ["evidence/calculation.json"]
+        assert app_run_status(run_dir).terminal_record.source == "max_search_nodes"
+        serialized = epistemic_before.model_dump(mode="json")
+        assert "researcher_learning" not in serialized
+        assert "human_confirmed" not in epistemic_before.model_dump_json()
+        rendered = render_epistemic_text(epistemic_before)
+        assert "artifact_referenced" in rendered
+        assert "does not check the artifact" in rendered
         operational_after = build_run_observability_summary(run_dir)
         epistemic_after = build_terminal_epistemic_handoff(run_dir)
         assert state_path.read_bytes() == authoritative_before
+        assert legacy_learning_path.read_bytes() == legacy_learning_bytes
         assert operational_after == operational_before
-        assert len(epistemic_after.researcher_learning) == 1
+        assert epistemic_after == epistemic_before
 
         # Restart through the normal state validator, then rebuild both views.
         app_run_status(run_dir)
         assert build_run_observability_summary(run_dir) == operational_after
         assert build_terminal_epistemic_handoff(run_dir) == epistemic_after
         assert state_path.read_bytes() == authoritative_before
+        assert legacy_learning_path.read_bytes() == legacy_learning_bytes
 
     print("DTE epistemic provenance smoke ok")
 

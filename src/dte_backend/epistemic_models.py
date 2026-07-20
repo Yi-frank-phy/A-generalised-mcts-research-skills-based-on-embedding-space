@@ -7,9 +7,7 @@ dependencies.  None of them is a scientific verifier or controller signal.
 from __future__ import annotations
 
 import hashlib
-import json
-from datetime import datetime
-from typing import Any, Literal
+from typing import Literal
 
 from pydantic import Field, model_validator
 
@@ -20,16 +18,11 @@ from .relation_models import RelationType
 EpistemicSourceType = Literal[
     "agent_reported",
     "external_artifact_backed",
-    "human_confirmed",
     "backend_derived",
 ]
-# The transport schema recognizes the full vocabulary.  The commit boundary
-# then rejects human/backend authority from an Executor or Judge atomically.
 EpisodeEpistemicSourceType = Literal[
     "agent_reported",
     "external_artifact_backed",
-    "human_confirmed",
-    "backend_derived",
 ]
 EpistemicStatementType = Literal[
     "claim",
@@ -63,8 +56,6 @@ SearchDisposition = Literal[
     "out_of_budget",
     "not_explored",
 ]
-LearningSource = Literal["user", "main_agent", "external_evaluator"]
-
 MAX_EPISTEMIC_STATEMENTS_PER_EPISODE = 24
 MAX_EPISTEMIC_EDGES_PER_EPISODE = 32
 MAX_PATH_DISPOSITIONS_PER_EPISODE = 12
@@ -459,68 +450,17 @@ class EpistemicIndependenceSummaryV1(DTEBaseModel):
     different_model_support_challenge_count: int | None = Field(default=None, ge=0)
     selected_claim_count: int = Field(ge=0)
     agent_only_supported_selected_claim_count: int = Field(ge=0)
-    external_artifact_backed_selected_claim_count: int = Field(ge=0)
-    human_confirmed_selected_claim_count: int = Field(ge=0)
+    external_artifact_backed_selected_claim_count: int = Field(
+        ge=0,
+        description=(
+            "Selected claims with structured support that references an external "
+            "artifact; this is reference coverage, not verification."
+        ),
+    )
     selected_claims_with_unresolved_assumptions: int = Field(ge=0)
     selected_claims_without_structured_support_count: int = Field(ge=0)
     self_referential_support_count: int = Field(ge=0)
     risk_flags: list[str] = Field(default_factory=list)
-
-
-class LearningLedgerDiagnosticsV1(DTEBaseModel):
-    path_present: bool
-    valid_record_count: int = Field(ge=0)
-    malformed_interior_line_count: int = Field(ge=0)
-    corrupt_tail_detected: bool
-    corrupt_tail_repaired: bool
-    duplicate_learning_ids: list[str] = Field(default_factory=list)
-
-
-class ResearcherLearningRecordV1(DTEBaseModel):
-    schema_version: Literal["dte-researcher-learning.v1"] = (
-        "dte-researcher-learning.v1"
-    )
-    learning_id: str = Field(min_length=1)
-    timestamp: str = Field(min_length=1)
-    run_id: str = Field(min_length=1)
-    source: LearningSource
-    previous_view: str = Field(min_length=1, max_length=8000)
-    updated_view: str = Field(min_length=1, max_length=8000)
-    change_reason_refs: list[str] = Field(min_length=1, max_length=32)
-    reusable_heuristic: str | None = Field(default=None, max_length=8000)
-    recognized_failure_mode: str | None = Field(default=None, max_length=8000)
-    still_unclear: str | None = Field(default=None, max_length=8000)
-    user_confirmed: bool = False
-    metadata: dict[str, Any] | None = None
-
-    @model_validator(mode="after")
-    def validate_learning(self) -> "ResearcherLearningRecordV1":
-        if self.user_confirmed and self.source != "user":
-            raise ValueError("user_confirmed=true requires source='user'")
-        if not self.previous_view.strip() or not self.updated_view.strip():
-            raise ValueError("learning views must be substantive")
-        optional_text = (
-            self.reusable_heuristic,
-            self.recognized_failure_mode,
-            self.still_unclear,
-        )
-        if any(value is not None and not value.strip() for value in optional_text):
-            raise ValueError("optional learning text must be omitted or substantive")
-        if len(self.change_reason_refs) != len(set(self.change_reason_refs)):
-            raise ValueError("learning change_reason_refs must be unique")
-        if any(not ref.strip() for ref in self.change_reason_refs):
-            raise ValueError("learning change_reason_refs must be non-empty")
-        try:
-            parsed = datetime.fromisoformat(self.timestamp)
-        except ValueError as exc:
-            raise ValueError("learning timestamp must be ISO-8601") from exc
-        if parsed.tzinfo is None or parsed.utcoffset() is None:
-            raise ValueError("learning timestamp must include a UTC offset")
-        try:
-            json.dumps(self.metadata, allow_nan=False, sort_keys=True)
-        except (TypeError, ValueError) as exc:
-            raise ValueError("learning metadata must be JSON-serializable") from exc
-        return self
 
 
 class EpistemicDataQualityV1(DTEBaseModel):
@@ -535,14 +475,18 @@ class EpistemicDataQualityV1(DTEBaseModel):
     model_metadata_status: Literal["available", "partial", "unavailable"]
     operational_observability_status: Literal["current", "partial_legacy"]
     operational_observability_limitations: list[str] = Field(default_factory=list)
-    learning_ledger: LearningLedgerDiagnosticsV1
     limitations: list[str] = Field(default_factory=list)
 
 
 class SourceProvenanceSummaryV1(DTEBaseModel):
     agent_reported_record_count: int = Field(ge=0)
-    external_artifact_backed_record_count: int = Field(ge=0)
-    human_confirmed_record_count: int = Field(ge=0)
+    external_artifact_backed_record_count: int = Field(
+        ge=0,
+        description=(
+            "Records that reference an external artifact; the backend does not "
+            "verify the artifact or scientific claim."
+        ),
+    )
     backend_derived_record_count: int = Field(ge=0)
 
 
@@ -573,6 +517,5 @@ class TerminalEpistemicHandoffV1(DTEBaseModel):
     source_provenance: SourceProvenanceSummaryV1
     independence_summary: EpistemicIndependenceSummaryV1
     node_summaries: list[NodeEpistemicSummaryV1]
-    researcher_learning: list[ResearcherLearningRecordV1]
     dependency_graph: EpistemicDependencyGraphV1
     data_quality: EpistemicDataQualityV1

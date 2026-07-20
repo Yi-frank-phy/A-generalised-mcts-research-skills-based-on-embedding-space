@@ -31,7 +31,6 @@ from .artifacts import (
 from .control import OperatorAuthorizationError
 from .epistemic import (
     build_terminal_epistemic_handoff,
-    record_researcher_learning,
     render_epistemic_text,
 )
 from .file_cache import FileDTECache
@@ -343,23 +342,6 @@ def cmd_record_feedback(args: argparse.Namespace) -> None:
     )
 
 
-def cmd_record_learning(args: argparse.Namespace) -> None:
-    _print_model(
-        record_researcher_learning(
-            args.run_dir,
-            source=args.source,
-            previous_view=args.previous_view,
-            updated_view=args.updated_view,
-            change_reason_refs=args.reason_ref,
-            reusable_heuristic=args.reusable_heuristic,
-            recognized_failure_mode=args.recognized_failure_mode,
-            still_unclear=args.still_unclear,
-            metadata=_feedback_metadata(args.metadata),
-            learning_id=args.learning_id,
-        )
-    )
-
-
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="DTE backend helper")
     sub = parser.add_subparsers(required=True)
@@ -561,26 +543,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     feedback.add_argument("--feedback-id")
     feedback.set_defaults(func=cmd_record_feedback)
-
-    learning = sub.add_parser(
-        "record-learning",
-        help="append one source-labelled researcher learning record",
-    )
-    learning.add_argument("--run-dir", required=True)
-    learning.add_argument(
-        "--source",
-        required=True,
-        choices=["user", "main_agent", "external_evaluator"],
-    )
-    learning.add_argument("--previous-view", required=True)
-    learning.add_argument("--updated-view", required=True)
-    learning.add_argument("--reason-ref", action="append", required=True)
-    learning.add_argument("--reusable-heuristic")
-    learning.add_argument("--recognized-failure-mode")
-    learning.add_argument("--still-unclear")
-    learning.add_argument("--metadata")
-    learning.add_argument("--learning-id")
-    learning.set_defaults(func=cmd_record_learning)
 
     return parser
 

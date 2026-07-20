@@ -168,8 +168,9 @@ merges/conflicts, retries/rejections, terminal reason, and missing data. Then
 report the selected claims, their key assumptions, supporting/challenging and
 conditional evidence, the most dangerous unresolved dependencies, and whether
 an abandoned route was merely not searched or has an explicit counterexample.
-Include a short correlated-error risk note and possible transferable heuristic,
-without treating either as correctness or confirmed user learning. The App
+Include a short correlated-error risk note and any heuristic or failure mode
+reported by an episode for possible researcher use, without claiming user
+learning or capability transfer. The App
 handoff maps provisional-selected node claims; it does not require a final
 Synthesis episode or assert that backend code audited the main agent's prose.
 
@@ -177,10 +178,11 @@ If the user explicitly evaluates a run or concrete decision, the main agent may
 append source-labelled `record-feedback`. It must not infer `source=user` from
 silence, and the feedback ledger cannot modify graph/controller state.
 
-Only an explicit user statement of changed judgment or transferable learning
-permits `record-learning --source user`. Main-agent inferred possibilities use
-`source=main_agent`, remain unconfirmed, and are never upgraded from silence,
-continued conversation, or answer acceptance. Confirmation appends a new record
-rather than modifying the prior record.
+DTE preserves provenance and uncertainty; it does not verify scientific truth.
+External tools, artifacts, literature checks, independent proofs, and the
+user's final research judgment remain outside its authority. The retired
+`epistemic/researcher_learning.jsonl` file is ignored and left unchanged. Use
+`record-feedback` for explicit run evaluation; feedback is not an epistemic
+verifier or controller input.
 
 Do not present a checkpoint, standalone oracle output, or manually assembled subagent summary as the final DTE report.

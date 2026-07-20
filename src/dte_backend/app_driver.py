@@ -32,7 +32,6 @@ from .entropy import evaluate_entropy_state
 from .epistemic_commit import EpistemicReferenceContext
 from .epistemic_models import (
     EpistemicLedgerV1,
-    ResearcherLearningRecordV1,
     stable_epistemic_id,
 )
 from .episode_adapter import (
@@ -811,7 +810,7 @@ def _validate_persisted_epistemic_ledger(
         elif ref.startswith("external:"):
             valid = bool(ref.removeprefix("external:").strip())
         elif ref.startswith("learning:"):
-            valid = bool(ref.removeprefix("learning:").strip())
+            valid = False
         else:
             valid = ref == f"run:{state.run_id}"
         if not valid:
@@ -3303,30 +3302,6 @@ def _epistemic_reference_context(
             continue
         artifact_paths.add(relative)
 
-    confirmed_learning_ids: set[str] = set()
-    duplicate_learning_ids: set[str] = set()
-    seen_learning_ids: set[str] = set()
-    learning_path = root / "epistemic" / "researcher_learning.jsonl"
-    if learning_path.exists():
-        for line in learning_path.read_bytes().splitlines():
-            try:
-                raw = json.loads(line.decode("utf-8"))
-                learning = ResearcherLearningRecordV1.model_validate(raw)
-            except Exception:
-                continue
-            if learning.learning_id in seen_learning_ids:
-                duplicate_learning_ids.add(learning.learning_id)
-                confirmed_learning_ids.discard(learning.learning_id)
-                continue
-            seen_learning_ids.add(learning.learning_id)
-            if (
-                learning.run_id == state.run_id
-                and learning.source == "user"
-                and learning.user_confirmed
-            ):
-                confirmed_learning_ids.add(learning.learning_id)
-    confirmed_learning_ids.difference_update(duplicate_learning_ids)
-
     return EpistemicReferenceContext(
         committed_episode_attempts={
             (episode.episode_id, attempt.attempt_id)
@@ -3336,7 +3311,6 @@ def _epistemic_reference_context(
             and episode.committed_attempt_id == attempt.attempt_id
         },
         artifact_paths=artifact_paths,
-        user_confirmed_learning_ids=confirmed_learning_ids,
     )
 
 

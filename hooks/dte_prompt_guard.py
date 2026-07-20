@@ -61,8 +61,8 @@ def main() -> int:
         "--output <executor_output.json> --child-count <n>`。\n"
         "6. terminal 后同时读取 `observability-summary --format json` 与 "
         "`epistemic-summary --format json`，区分未搜索/未入选与受到挑战/反驳。\n"
-        "7. 只有用户明确确认判断变化时才使用 `record-learning --source user`；"
-        "不得从沉默或继续对话推断学习。\n"
+        "7. DTE 只保存搜索过程的 provenance 与不确定性；不验证科学真理，"
+        "artifact 与外部工具不是 correctness oracle。\n"
         "8. 任何 guard 失败都必须停止消费该产物；不要让 Executor、Judge 或 "
         "Relation oracle 直接生成最终用户报告。"
     )

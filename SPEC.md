@@ -565,22 +565,24 @@ The ledger is committed in the same copy-validate-replace transaction as that
 episode result. A JSON artifact under `epistemic/ledger.json` is a derived
 mirror, never a second fact source. Legacy App states migrate to an empty ledger.
 
-Every epistemic record carries one source label:
+Every current epistemic record carries one source label:
 
 ```text
 agent_reported
 external_artifact_backed
-human_confirmed
 backend_derived
 ```
 
 Episode producers may submit only `agent_reported` or genuinely referenced
 `external_artifact_backed` contributions. They may not manufacture
-`human_confirmed` or `backend_derived` facts. Backend validation establishes
+`backend_derived` facts. Backend validation establishes
 identity, authorization, lifecycle, reference existence, safe artifact paths,
-and provenance; it does not establish scientific truth. In particular, an
-agent's claim that it verified something remains agent-reported unless an
-explicit external artifact/reference is bound to the record.
+and provenance; it does not establish scientific truth. An external artifact
+reference means only that the record points to that artifact. The backend does
+not verify the artifact, its assumptions, its applicability, or the scientific
+claim. Human-readable output labels this provenance as `artifact_referenced`;
+the persisted `external_artifact_backed` token remains for output-hash and state
+compatibility.
 
 Executor and Judge output may contain one optional bounded
 `epistemic_contributions` object. It supports:
@@ -606,8 +608,8 @@ Node claims use `node-claim:<node_id>`. Current-output statements use
 `local-statement:<local_id>` and are resolved transactionally to committed
 stable IDs. Other machine references may identify an existing committed
 epistemic record, Relation record, merge application, episode result, safe run
-artifact, explicit external reference, or previously user-confirmed learning
-record. Free text is never mined to infer edges.
+artifact, or explicit external reference. `learning:` references are not part
+of the DTE contract. Free text is never mined to infer edges.
 
 Stable record IDs bind:
 
@@ -642,8 +644,8 @@ merged != universally scientifically redundant
 
 The deterministic read-only epistemic model projects committed run state,
 episode results, the epistemic ledger, the existing Relation ledger, merge
-applications, provisional selection, observability, and researcher learning
-into a terminal handoff. It never repairs or rewrites the run. The formal JSON
+applications, provisional selection, and observability into a terminal
+handoff. It never repairs or rewrites the run. The formal JSON
 handoff traces each provisional-selected node claim through required
 assumptions, supporting and challenging records, producer episode/attempt,
 artifacts, Relation conflicts, and merge provenance. Relation classifications
@@ -653,22 +655,28 @@ final natural-language Synthesis answer.
 
 The handoff also reports correlated-error risk indicators. Model/runtime
 metadata is used only when explicitly persisted; missing metadata remains
-unavailable rather than guessed. Same-model cross-role confirmation,
+unavailable rather than guessed. Same-model cross-role correlation,
 agent-only support, absent structured support, unresolved assumptions, and
 self-referential support are risk indicators, not correctness rates,
 independent-validation rates, or scientific reliability scores.
 
-Researcher learning is stored separately at:
+The former file:
 
 ```text
 epistemic/researcher_learning.jsonl
 ```
 
-This typed append-only ledger records explicit post-run changes of view,
-reusable heuristics, recognized failure modes, and remaining uncertainty. A
-learning record must reference existing run facts. Only `source=user` may set
-`user_confirmed=true`; main-agent inferences remain unconfirmed, and later user
-confirmation appends a new record rather than editing history. Silence,
-continued conversation, or mere acceptance is never feedback. Researcher
-learning cannot modify graph state, Judge output, Relation, UCB, allocation,
-stopping, or terminal state.
+is a deprecated external artifact ignored by current DTE. Current code does not
+read, interpret, export, migrate, repair, or modify it. Human learning, external
+tool validation, literature checking, independent proof, and final researcher
+judgment remain outside DTE authority. Explicit evaluations of a run or decision
+continue to use the independent `record-feedback` ledger, which is never an
+epistemic verifier or controller input.
+
+Historical ledgers containing the retired `human_confirmed` source are not
+upgraded or rewritten. The read-only handoff may isolate those legacy records
+and report a partial-data limitation; it never converts them to
+`agent_reported` or treats them as verification. Controller resume remains
+fail-closed for such an invalid legacy authority source rather than rewriting
+the run or recomputing a historical EpisodeResult hash. Normal PR #19/#20 runs,
+whose commit boundary already rejected that source, resume unchanged.

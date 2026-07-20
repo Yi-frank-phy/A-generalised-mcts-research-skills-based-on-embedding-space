@@ -22,10 +22,8 @@ from dte_backend.app_driver import (
 )
 from dte_backend.embedding import HashEmbeddingProvider
 from dte_backend.epistemic import (
-    DuplicateLearningError,
+    _search_dispositions,
     build_terminal_epistemic_handoff,
-    read_researcher_learning_ledger,
-    record_researcher_learning,
     render_epistemic_text,
 )
 from dte_backend.epistemic_commit import EpistemicReferenceContext
@@ -36,7 +34,6 @@ from dte_backend.epistemic_models import (
     EpistemicLedgerV1,
     EpistemicStatementContribution,
     PathDispositionContribution,
-    ResearcherLearningRecordV1,
     TerminalEpistemicHandoffV1,
 )
 from dte_backend.episode_adapter import (
@@ -369,23 +366,16 @@ def test_agent_episode_cannot_forge_human_or_backend_source(source_type):
     request = direct_executor_request(graph, grant=0)
     output = ExecutorEpisodeOutput(
         nodes=[],
-        epistemic_contributions=EpistemicContributionBundle(
-            statements=[
-                EpistemicStatementContribution(
-                    local_id="forged",
-                    statement_type="assumption",
-                    text="forged authority",
-                    target_node_id="parent",
-                    source_type=source_type,
-                    basis_refs=[],
-                )
-            ]
-        ),
+        epistemic_contributions=assumption_bundle(),
     )
+    raw_result = result_for(request, output).model_dump(mode="json")
+    raw_result["structured_output"]["epistemic_contributions"]["statements"][0][
+        "source_type"
+    ] = source_type
     before = graph_snapshot(graph)
-    outcome = commit_episode_result(graph, request, result_for(request, output))
+    outcome = commit_episode_result(graph, request, raw_result)
     assert outcome.accepted is False
-    assert "source_type" in (outcome.rejection_reason or "")
+    assert "schema validation failed" in (outcome.rejection_reason or "")
     assert graph_snapshot(graph) == before
 
 
@@ -394,6 +384,20 @@ def test_illegal_source_type_is_rejected_by_strict_schema():
     raw["statements"][0]["source_type"] = "agent_verified"
     with pytest.raises(ValidationError, match="literal_error"):
         EpistemicContributionBundle.model_validate(raw)
+
+
+def test_current_epistemic_schemas_expose_no_human_confirmation_semantics():
+    contribution_schema = json.dumps(
+        EpistemicContributionBundle.model_json_schema(), sort_keys=True
+    )
+    handoff_schema = json.dumps(
+        TerminalEpistemicHandoffV1.model_json_schema(), sort_keys=True
+    )
+    assert "human_confirmed" not in contribution_schema
+    assert "human_confirmed" not in handoff_schema
+    assert "human_confirmed_selected_claim_count" not in handoff_schema
+    assert "human_confirmed_record_count" not in handoff_schema
+    assert "researcher_learning" not in handoff_schema
 
 
 def test_epistemic_contribution_hard_cap_is_enforced():
@@ -803,6 +807,41 @@ def test_terminal_handoff_is_deterministic_read_only_and_schema_round_trips(tmp_
     assert file_snapshot(run_dir) == before
 
 
+def test_legacy_human_source_is_isolated_as_read_only_partial_limitation(tmp_path):
+    run_dir = drive_terminal_run(tmp_path)
+    state_path = run_dir / "app_run_state.json"
+    raw = json.loads(state_path.read_text(encoding="utf-8"))
+    raw["epistemic_ledger"]["statements"][0]["source_type"] = "human_confirmed"
+    changed = False
+    for episode in raw["episodes"]:
+        for attempt in episode["attempts"]:
+            result = attempt.get("committed_result")
+            output = None if result is None else result.get("structured_output")
+            bundle = None if output is None else output.get("epistemic_contributions")
+            if bundle and bundle["statements"]:
+                bundle["statements"][0]["source_type"] = "human_confirmed"
+                changed = True
+                break
+        if changed:
+            break
+    assert changed
+    state_path.write_text(json.dumps(raw), encoding="utf-8")
+    before = file_snapshot(run_dir)
+
+    handoff = build_terminal_epistemic_handoff(run_dir)
+
+    assert handoff.data_quality.epistemic_data_status == "partial"
+    assert any(
+        "legacy human-confirmation epistemic records" in item
+        for item in handoff.data_quality.limitations
+    )
+    assert "human_confirmed" not in handoff.model_dump_json()
+    assert file_snapshot(run_dir) == before
+    with pytest.raises(ValidationError, match="human_confirmed"):
+        app_run_status(run_dir)
+    assert file_snapshot(run_dir) == before
+
+
 def test_selected_claim_dependency_traversal_and_unresolved_assumptions(tmp_path):
     handoff = build_terminal_epistemic_handoff(drive_terminal_run(tmp_path))
     selected = handoff.selected_claims[0]
@@ -840,6 +879,11 @@ def test_external_and_agent_reported_support_are_counted_separately(tmp_path):
     assert external.selected_claims[0].referenced_artifacts == [
         "evidence/calculation.json"
     ]
+    rendered = render_epistemic_text(external)
+    assert "artifact_referenced" in rendered
+    assert "does not check the artifact" in rendered
+    assert "verified by" not in rendered.casefold()
+    assert "confirmed by" not in rendered.casefold()
 
 
 def test_missing_model_metadata_is_unavailable_not_guessed(tmp_path):
@@ -860,7 +904,7 @@ def test_same_model_cross_role_is_only_a_correlated_error_risk_indicator(tmp_pat
     assert independence.same_model_cross_role_count == 1
     assert independence.runtime_profile_metadata_status == "available"
     assert independence.same_runtime_profile_cross_role_count == 1
-    assert "same_model_cross_role_confirmation" in independence.risk_flags
+    assert "same_model_cross_role_correlation" in independence.risk_flags
     serialized = handoff.model_dump_json().casefold()
     assert "correctness score" not in serialized
     assert "scientific reliability score" not in serialized
@@ -925,6 +969,79 @@ def test_search_and_epistemic_dispositions_are_strictly_separate(tmp_path):
     assert "not_selected" in other.search_dispositions
     assert "contradicted" not in other.epistemic_dispositions
     assert "false" not in render_epistemic_text(handoff).casefold()
+
+
+@pytest.mark.parametrize(
+    ("terminal_source", "expected"),
+    [
+        ("max_iterations", True),
+        ("max_search_nodes", True),
+        ("continuation_gate", False),
+        ("controller_stop", False),
+        ("authorized_synthesis", False),
+    ],
+)
+def test_only_hard_budget_terminal_sources_mark_frontier_out_of_budget(
+    tmp_path, terminal_source, expected
+):
+    state = app_run_status(drive_targeted_selection_run(tmp_path))
+    assert state.terminal_record is not None
+    state.terminal_record.source = terminal_source
+    dispositions = _search_dispositions(state, "other")
+    assert ("out_of_budget" in dispositions) is expected
+    assert "contradicted" not in dispositions
+
+
+def test_max_search_nodes_terminal_handoff_marks_unselected_frontier_out_of_budget(
+    tmp_path,
+):
+    run_dir = tmp_path / "node-cap-handoff"
+    bounded = spec(node_cap=9, max_iterations=10)
+    bounded = bounded.model_copy(
+        update={
+            "budget": bounded.budget.model_copy(
+                update={"max_committed_search_nodes": 9}
+            )
+        }
+    )
+    create_app_run(
+        run_dir,
+        bounded,
+        [SearchNode(node_id=f"n{index}", claim=f"distinct claim {index}") for index in range(9)],
+        run_id="node-cap-handoff",
+    )
+    judge = next_app_episode(run_dir).request
+    assert judge is not None and judge.role == "judge"
+    output = JudgeEpisodeOutput(
+        observations=[
+            JudgeObservation(
+                node_id=node_id,
+                score=1.0 - index / 20,
+                reasoning="bounded potential ranking",
+                risks=[],
+            )
+            for index, node_id in enumerate(judge.selected_node_revisions)
+        ]
+    )
+    assert submit_app_episode_result(run_dir, result_for(judge, output)).commit_outcome.accepted
+    while True:
+        outcome = next_app_episode(run_dir)
+        if outcome.request is None:
+            assert outcome.controller_action == "ready_for_synthesis"
+            break
+        assert outcome.request.role == "relation"
+        assert submit_app_episode_result(
+            run_dir, relation_result(outcome.request, "independent")
+        ).commit_outcome.accepted
+
+    state = app_run_status(run_dir)
+    assert state.terminal_record is not None
+    assert state.terminal_record.source == "max_search_nodes"
+    handoff = build_terminal_epistemic_handoff(run_dir)
+    unselected = [item for item in handoff.node_summaries if not item.selected_for_synthesis]
+    assert len(unselected) == 1
+    assert "out_of_budget" in unselected[0].search_dispositions
+    assert unselected[0].epistemic_dispositions == []
 
 
 def relation_result(request, relation_type: str) -> EpisodeResult:
@@ -1022,123 +1139,46 @@ def test_relation_conflict_is_projected_from_existing_ledger_without_duplication
     assert state.epistemic_ledger.edges == []
 
 
-def test_learning_append_validation_and_controller_isolation(tmp_path):
+def test_legacy_researcher_learning_file_is_ignored_and_not_modified(tmp_path):
     run_dir = drive_terminal_run(tmp_path)
-    before = (run_dir / "app_run_state.json").read_bytes()
-    record = record_researcher_learning(
-        run_dir,
-        source="main_agent",
-        previous_view="the condition looked sufficient",
-        updated_view="the condition may be only necessary",
-        change_reason_refs=["node-claim:parent"],
-        reusable_heuristic="separate necessary from sufficient conditions",
-        recognized_failure_mode="prematurely collapsing logical directions",
-        still_unclear="whether the boundary case closes the gap",
-        learning_id="main-agent-learning",
-    )
-    records, diagnostics_record = read_researcher_learning_ledger(run_dir)
-
-    assert record.user_confirmed is False
-    assert [item.learning_id for item in records] == ["main-agent-learning"]
-    assert diagnostics_record.valid_record_count == 1
-    assert (run_dir / "app_run_state.json").read_bytes() == before
-
-
-def test_learning_target_must_bind_to_existing_run_fact(tmp_path):
-    run_dir = drive_terminal_run(tmp_path)
-    with pytest.raises(ValueError, match="learning reason reference"):
-        record_researcher_learning(
-            run_dir,
-            source="user",
-            previous_view="old",
-            updated_view="new",
-            change_reason_refs=["node-claim:missing"],
-        )
-
-
-def test_main_agent_inferred_learning_cannot_be_user_confirmed():
-    with pytest.raises(ValidationError, match="user_confirmed"):
-        ResearcherLearningRecordV1(
-            learning_id="forged",
-            timestamp="2026-01-01T00:00:00+00:00",
-            run_id="run",
-            source="main_agent",
-            previous_view="old",
-            updated_view="new",
-            change_reason_refs=["run:run"],
-            user_confirmed=True,
-        )
-
-
-def test_user_confirmation_appends_without_modifying_prior_learning(tmp_path):
-    run_dir = drive_terminal_run(tmp_path)
-    first = record_researcher_learning(
-        run_dir,
-        source="main_agent",
-        previous_view="old",
-        updated_view="possible update",
-        change_reason_refs=["node-claim:parent"],
-        learning_id="inferred",
-    )
-    second = record_researcher_learning(
-        run_dir,
-        source="user",
-        previous_view="old",
-        updated_view="confirmed update",
-        change_reason_refs=["learning:inferred"],
-        learning_id="confirmed",
-    )
-    records, _ = read_researcher_learning_ledger(run_dir)
-
-    assert first.user_confirmed is False
-    assert second.user_confirmed is True
-    assert [item.learning_id for item in records] == ["inferred", "confirmed"]
-    assert records[0].updated_view == "possible update"
-
-
-def test_damaged_learning_tail_is_quarantined_before_append(tmp_path):
-    run_dir = drive_terminal_run(tmp_path)
-    record_researcher_learning(
-        run_dir,
-        source="user",
-        previous_view="old",
-        updated_view="first",
-        change_reason_refs=["node-claim:parent"],
-        learning_id="first",
-    )
     path = run_dir / "epistemic" / "researcher_learning.jsonl"
-    with path.open("ab") as handle:
-        handle.write(b'{"learning_id":')
-    record_researcher_learning(
-        run_dir,
-        source="user",
-        previous_view="first",
-        updated_view="second",
-        change_reason_refs=["node-claim:parent"],
-        learning_id="second",
+    payload = b'{"legacy":"deprecated external artifact"}\n{"tail":'
+    path.write_bytes(payload)
+    before = file_snapshot(run_dir)
+
+    handoff = build_terminal_epistemic_handoff(run_dir)
+
+    assert "researcher_learning" not in handoff.model_dump(mode="json")
+    assert path.read_bytes() == payload
+    assert file_snapshot(run_dir) == before
+
+
+def test_learning_reference_is_rejected_by_current_commit_contract():
+    graph = EpisodeGraph(nodes=[SearchNode(node_id="parent", claim="parent claim")])
+    request = direct_executor_request(graph, grant=0)
+    output = ExecutorEpisodeOutput(
+        nodes=[],
+        epistemic_contributions=EpistemicContributionBundle(
+            statements=[
+                EpistemicStatementContribution(
+                    local_id="legacy-learning-ref",
+                    statement_type="evidence",
+                    text="retired learning reference",
+                    target_node_id="parent",
+                    source_type="agent_reported",
+                    basis_refs=["learning:retired"],
+                )
+            ]
+        ),
     )
-    records, quality = read_researcher_learning_ledger(run_dir)
-
-    assert [item.learning_id for item in records] == ["first", "second"]
-    assert quality.corrupt_tail_repaired is True
-    assert path.with_suffix(path.suffix + ".corrupt").exists()
-
-
-def test_duplicate_learning_id_is_rejected(tmp_path):
-    run_dir = drive_terminal_run(tmp_path)
-    kwargs = dict(
-        source="user",
-        previous_view="old",
-        updated_view="new",
-        change_reason_refs=["node-claim:parent"],
-        learning_id="same",
-    )
-    record_researcher_learning(run_dir, **kwargs)
-    with pytest.raises(DuplicateLearningError):
-        record_researcher_learning(run_dir, **kwargs)
+    before = graph_snapshot(graph)
+    outcome = commit_episode_result(graph, request, result_for(request, output))
+    assert outcome.accepted is False
+    assert "learning: references" in (outcome.rejection_reason or "")
+    assert graph_snapshot(graph) == before
 
 
-def test_epistemic_cli_json_text_and_record_learning(tmp_path):
+def test_epistemic_cli_json_text_and_record_learning_is_removed(tmp_path):
     run_dir = drive_terminal_run(tmp_path)
     root = Path(__file__).resolve().parents[1]
     json_result = subprocess.run(
@@ -1179,20 +1219,6 @@ def test_epistemic_cli_json_text_and_record_learning(tmp_path):
             "-m",
             "dte_backend",
             "record-learning",
-            "--run-dir",
-            str(run_dir),
-            "--source",
-            "user",
-            "--previous-view",
-            "old",
-            "--updated-view",
-            "new",
-            "--reason-ref",
-            "node-claim:parent",
-            "--reusable-heuristic",
-            "check dependencies first",
-            "--learning-id",
-            "cli-learning",
         ],
         cwd=root,
         capture_output=True,
@@ -1202,12 +1228,12 @@ def test_epistemic_cli_json_text_and_record_learning(tmp_path):
 
     assert json_result.returncode == 0, json_result.stderr
     assert text_result.returncode == 0, text_result.stderr
-    assert learning_result.returncode == 0, learning_result.stderr
+    assert learning_result.returncode != 0
+    assert "invalid choice" in learning_result.stderr.casefold()
     assert json.loads(json_result.stdout)["schema_version"] == (
         "dte-terminal-epistemic-handoff.v1"
     )
     assert "current most credible conclusions" in text_result.stdout.casefold()
-    assert json.loads(learning_result.stdout)["user_confirmed"] is True
 
 
 def test_epistemic_read_path_launches_no_codex_subprocess(monkeypatch, tmp_path):
@@ -1221,7 +1247,7 @@ def test_epistemic_read_path_launches_no_codex_subprocess(monkeypatch, tmp_path)
     assert build_terminal_epistemic_handoff(run_dir).selected_claims
 
 
-def test_skill_and_agents_require_both_terminal_summaries_and_explicit_learning():
+def test_skill_and_agents_require_both_terminal_summaries_without_learning_ledger():
     root = Path(__file__).resolve().parents[1]
     skill = (root / "SKILL.md").read_text(encoding="utf-8")
     agents = (root / "AGENTS.md").read_text(encoding="utf-8")
@@ -1229,6 +1255,7 @@ def test_skill_and_agents_require_both_terminal_summaries_and_explicit_learning(
 
     assert "observability-summary --run-dir <run-dir> --format json" in combined
     assert "epistemic-summary --run-dir <run-dir> --format json" in combined
-    assert "record-learning --source user" in combined
+    assert "record-learning" not in combined
+    assert "record-feedback" in combined
+    assert "does not verify scientific truth" in combined.casefold()
     assert "most dangerous" in combined.casefold() or "最危险" in combined
-    assert "silence" in combined.casefold()

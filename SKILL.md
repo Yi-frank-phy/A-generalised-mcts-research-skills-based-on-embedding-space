@@ -61,9 +61,12 @@ Prefer critical prerequisites, substantive support/challenge evidence, explicit
 counterexamples, important unresolved dependencies, transferable failure modes,
 and heuristics. Internal facts use machine references; external support must use
 an explicit `external:` reference or safe run-local `artifact:` reference. Keep
-`agent_reported`, `external_artifact_backed`, `human_confirmed`, and
-`backend_derived` distinct. Agent episodes may submit only the first two, and may
-never claim that the backend verified scientific truth. Existing free-text
+`agent_reported`, `external_artifact_backed`, and `backend_derived` distinct.
+Agent episodes may submit only the first two, and may never claim that the
+backend verified scientific truth. The persisted `external_artifact_backed`
+token means only that the record references an artifact; human-readable output
+uses `artifact_referenced`. DTE does not check the artifact, its assumptions,
+applicability, or scientific claim. Existing free-text
 `assumptions` and `evidence` remain readable context but are not formal dependency
 edges.
 
@@ -92,7 +95,8 @@ this order:
 - the most dangerous unverified assumptions and unresolved questions;
 - important failed/abandoned routes, distinguishing not-searched or low-priority
   paths from routes with actual counterexamples or contradictions;
-- possible transferable judgments, without claiming the user learned them;
+- heuristics and failure modes reported by episodes for possible researcher use,
+  without claiming the user learned them or that capability was transferred;
 - correlated-error risk indicators, never a correctness or reliability score.
 
 Also give a compact DTE execution summary containing:
@@ -128,25 +132,13 @@ feedback from user silence or simple acceptance. The feedback ledger is
 append-only evaluation metadata; it does not modify Judge scores, graph state,
 allocation, stopping, or telemetry history.
 
-The researcher learning ledger is separate and append-only. A main-agent
-inference must use `source=main_agent`, remains `user_confirmed=false`, and must
-not be presented as a user change. Only when the user explicitly reports or
-confirms a changed view, reusable heuristic, or recognized failure mode may the
-main agent append a new record with `record-learning --source user`, for example:
-
-```bash
-python -m dte_backend record-learning --source user \
-  --run-dir <run-dir> \
-  --previous-view "..." \
-  --updated-view "..." \
-  --reason-ref node-claim:<node-id> \
-  --reusable-heuristic "..." \
-  --recognized-failure-mode "..."
-```
-
-Never infer user learning from silence, continued conversation, or acceptance
-of an answer. Learning append does not modify graph, epistemic dependencies,
-Judge, Relation, UCB, allocation, budget, or stopping state.
+DTE preserves provenance and uncertainty; it does not verify scientific truth.
+External tools, artifacts, literature checks, independent proofs, and the
+user's final research judgment remain outside DTE authority. The deprecated
+`epistemic/researcher_learning.jsonl` file, if present in an old run, is ignored
+and must not be read, migrated, repaired, exported, or modified. Explicit run
+evaluation continues to use `record-feedback`, which is never an epistemic
+verifier or controller input.
 
 ## Critical real-run rule
 

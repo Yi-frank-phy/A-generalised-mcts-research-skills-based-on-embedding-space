@@ -56,7 +56,7 @@ counterexamples, transferable failure modes, and unresolved questions. Use
 machine identities for internal facts; give external evidence an `external:` or
 safe `artifact:` basis reference. An Executor may target only its granted parent
 and children created by the same accepted output; a Judge may target only its
-granted nodes. Neither role may submit `human_confirmed` or `backend_derived`
+granted nodes. Neither role may submit `backend_derived`
 facts, infer formal edges from free text, equate a low score or non-selection
 with contradiction, or claim that the backend verified scientific truth.
 
@@ -83,9 +83,11 @@ with: the current most credible conclusion; its key assumptions; supporting,
 challenging, and conditional evidence; the most dangerous unverified
 assumptions and unresolved dependencies; whether an important abandoned route
 was merely not searched/low priority or has an explicit counterexample; a short
-correlated-error risk note; and possible transferable heuristics. Preserve every
-source label, especially the distinction between `agent_reported`,
-`external_artifact_backed`, and `human_confirmed`.
+correlated-error risk note; and possible transferable heuristics reported by an
+episode. Preserve source labels. The persisted `external_artifact_backed` value
+means only that a record references an artifact; the backend does not check the
+artifact, its assumptions, applicability, or scientific claim. Human-readable
+output uses `artifact_referenced` for this provenance.
 
 Also give a compact operational summary covering Judge/Executor/Relation counts,
 initial → committed → selected nodes, major allocations and committed children,
@@ -100,13 +102,13 @@ user's source as `user`, label its own assessment as `main_agent`, and never inf
 positive feedback from silence or mere acceptance. Feedback is not Judge input
 and cannot modify graph or controller state.
 
-Potential learning inferred by the main agent is not user learning. Record it,
-if useful, as `source=main_agent` with `user_confirmed=false`. Only after the
-user explicitly states that their view changed or confirms a reusable research
-lesson may the main agent append a new confirmation using
-`record-learning --source user`; never infer learning from silence, continued
-conversation, or acceptance of an answer. Learning records are append-only and
-do not modify epistemic edges, Relation, Judge, UCB, allocation, or stopping.
+DTE preserves provenance and uncertainty; it does not verify scientific truth.
+External tools, artifacts, literature checks, independent proofs, and the
+user's final research judgment remain outside DTE authority. Agent-reported
+heuristics and failure modes may be handed to the researcher as possibilities,
+but they do not assert that the user learned them or that capability transfer
+occurred. The deprecated `epistemic/researcher_learning.jsonl` file, if present,
+is an external artifact ignored by current DTE and must not be modified.
 
 ## Preferred implementation style
 

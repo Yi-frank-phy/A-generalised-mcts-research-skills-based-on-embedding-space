@@ -1,18 +1,14 @@
-"""Deterministic epistemic read model and append-only researcher learning.
+"""Deterministic provenance-only epistemic read model.
 
 The read path consumes authoritative committed facts and never repairs a run.
-The learning append path is deliberately separate from controller state.
+Scientific verification, artifact evaluation, and researcher learning remain
+outside DTE authority.
 """
 
 from __future__ import annotations
 
-import json
-import os
-import uuid
 from collections import defaultdict, deque
-from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
 
 from .app_driver import AppRunState
 from .epistemic_models import (
@@ -22,11 +18,9 @@ from .epistemic_models import (
     EpistemicIndependenceSummaryV1,
     EpistemicStatementRecordV1,
     ImportantPathHandoffV1,
-    LearningLedgerDiagnosticsV1,
     MergeEpistemicProjectionV1,
     NodeEpistemicSummaryV1,
     RelationEpistemicProjectionV1,
-    ResearcherLearningRecordV1,
     SelectedClaimHandoffV1,
     SourceProvenanceSummaryV1,
     TerminalEpistemicHandoffV1,
@@ -34,49 +28,8 @@ from .epistemic_models import (
 from .episode_models import ExecutorEpisodeOutput
 from .observability import (
     _load_state_read_only,
-    _read_jsonl_objects_read_only,
-    _repair_jsonl_tail_for_append,
     build_run_observability_summary,
 )
-
-
-LEARNING_LEDGER_PATH = Path("epistemic") / "researcher_learning.jsonl"
-
-
-class DuplicateLearningError(ValueError):
-    """A learning identity already exists in the append-only ledger."""
-
-
-def read_researcher_learning_ledger(
-    run_dir: str | Path,
-) -> tuple[list[ResearcherLearningRecordV1], LearningLedgerDiagnosticsV1]:
-    """Read valid learning records without repairing or modifying the file."""
-
-    path = Path(run_dir) / LEARNING_LEDGER_PATH
-    raw_records, malformed_interior, corrupt_tail = _read_jsonl_objects_read_only(path)
-    records: list[ResearcherLearningRecordV1] = []
-    invalid = 0
-    duplicates: list[str] = []
-    seen: set[str] = set()
-    for raw in raw_records:
-        try:
-            record = ResearcherLearningRecordV1.model_validate(raw)
-        except Exception:
-            invalid += 1
-            continue
-        if record.learning_id in seen:
-            duplicates.append(record.learning_id)
-            continue
-        seen.add(record.learning_id)
-        records.append(record)
-    return records, LearningLedgerDiagnosticsV1(
-        path_present=path.exists(),
-        valid_record_count=len(records),
-        malformed_interior_line_count=malformed_interior + invalid,
-        corrupt_tail_detected=corrupt_tail,
-        corrupt_tail_repaired=path.with_suffix(path.suffix + ".corrupt").exists(),
-        duplicate_learning_ids=sorted(set(duplicates)),
-    )
 
 
 def _committed_attempts(state: AppRunState):
@@ -91,104 +44,6 @@ def _committed_attempts(state: AppRunState):
             ):
                 yield episode, attempt
                 break
-
-
-def _learning_reason_refs(
-    state: AppRunState,
-    existing_learning_ids: set[str],
-) -> set[str]:
-    refs = {
-        f"run:{state.run_id}",
-        *(f"node-claim:{node.node_id}" for node in state.nodes),
-        *(f"epistemic:{item.statement_id}" for item in state.epistemic_ledger.statements),
-        *(f"epistemic:{item.edge_id}" for item in state.epistemic_ledger.edges),
-        *(
-            f"epistemic:{item.disposition_id}"
-            for item in state.epistemic_ledger.path_dispositions
-        ),
-        *(f"relation:{item.relation_record_id}" for item in state.relation_ledger),
-        *(f"merge:{item.merge_application_id}" for item in state.merge_applications),
-        *(f"learning:{item}" for item in existing_learning_ids),
-    }
-    refs.update(
-        f"episode-result:{episode.episode_id}:{attempt.attempt_id}"
-        for episode, attempt in _committed_attempts(state)
-    )
-    return refs
-
-
-def record_researcher_learning(
-    run_dir: str | Path,
-    *,
-    source: str,
-    previous_view: str,
-    updated_view: str,
-    change_reason_refs: list[str],
-    reusable_heuristic: str | None = None,
-    recognized_failure_mode: str | None = None,
-    still_unclear: str | None = None,
-    metadata: dict[str, Any] | None = None,
-    learning_id: str | None = None,
-    timestamp: str | None = None,
-    user_confirmed: bool | None = None,
-) -> ResearcherLearningRecordV1:
-    """Append one validated learning report without touching AppRunState."""
-
-    state, _, _, validation_error, _, _ = _load_state_read_only(run_dir)
-    if validation_error is not None:
-        raise ValueError(
-            "cannot bind researcher learning to an invalid App run state: "
-            f"{validation_error}"
-        )
-    path = Path(run_dir) / LEARNING_LEDGER_PATH
-    _repair_jsonl_tail_for_append(path)
-    existing, diagnostics = read_researcher_learning_ledger(run_dir)
-    if diagnostics.duplicate_learning_ids:
-        raise ValueError("researcher learning ledger contains duplicate learning IDs")
-    if diagnostics.malformed_interior_line_count:
-        raise ValueError(
-            "researcher learning ledger contains invalid existing records; refusing to append"
-        )
-    record = ResearcherLearningRecordV1(
-        learning_id=learning_id or str(uuid.uuid4()),
-        timestamp=timestamp or datetime.now(timezone.utc).isoformat(),
-        run_id=state.run_id,
-        source=source,
-        previous_view=previous_view,
-        updated_view=updated_view,
-        change_reason_refs=list(change_reason_refs),
-        reusable_heuristic=reusable_heuristic,
-        recognized_failure_mode=recognized_failure_mode,
-        still_unclear=still_unclear,
-        user_confirmed=(source == "user") if user_confirmed is None else user_confirmed,
-        metadata=metadata,
-    )
-    if any(item.learning_id == record.learning_id for item in existing):
-        raise DuplicateLearningError(
-            f"learning_id already exists: {record.learning_id}"
-        )
-    allowed_refs = _learning_reason_refs(
-        state, {item.learning_id for item in existing}
-    )
-    unknown = [ref for ref in record.change_reason_refs if ref not in allowed_refs]
-    if unknown:
-        raise ValueError(f"learning reason reference does not exist: {unknown[0]}")
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    encoded = (
-        json.dumps(
-            record.model_dump(mode="json"),
-            ensure_ascii=False,
-            sort_keys=True,
-            allow_nan=False,
-        )
-        + "\n"
-    ).encode("utf-8")
-    with path.open("ab") as handle:
-        handle.write(encoded)
-        handle.flush()
-        os.fsync(handle.fileno())
-    return record
 
 
 def _relation_projections(state: AppRunState) -> list[RelationEpistemicProjectionV1]:
@@ -259,7 +114,10 @@ def _search_dispositions(state: AppRunState, node_id: str) -> list[str]:
     elif node.status == "closed":
         values.append("closed")
     elif node.status == "frontier" and node_id not in selected:
-        if state.terminal_record is not None and state.terminal_record.source == "max_iterations":
+        if state.terminal_record is not None and state.terminal_record.source in {
+            "max_iterations",
+            "max_search_nodes",
+        }:
             values.append("out_of_budget")
         elif state.controller_action in {"ready_for_synthesis", "run_complete"}:
             values.append("not_explored")
@@ -645,7 +503,7 @@ def _independence_summary(
         f"epistemic:{item.statement_id}": item
         for item in state.epistemic_ledger.statements
     }
-    agent_only = external = human = without_support = self_referential = 0
+    agent_only = external = without_support = self_referential = 0
     unresolved = 0
     for item in selected:
         supports = [statements[ref] for ref in item.supporting_record_refs if ref in statements]
@@ -665,8 +523,6 @@ def _independence_summary(
             agent_only += 1
         if "external_artifact_backed" in support_sources:
             external += 1
-        if "human_confirmed" in support_sources:
-            human += 1
         if item.unresolved_dependency_refs:
             unresolved += 1
         self_referential += sum(
@@ -683,9 +539,9 @@ def _independence_summary(
     elif model_status == "partial":
         flags.append("model_metadata_partial")
     if same_cross:
-        flags.append("same_model_cross_role_confirmation")
+        flags.append("same_model_cross_role_correlation")
     if same_profile:
-        flags.append("same_runtime_profile_cross_role_confirmation")
+        flags.append("same_runtime_profile_cross_role_correlation")
     if agent_only:
         flags.append("selected_claims_supported_only_by_agent_reports")
     if without_support:
@@ -707,7 +563,6 @@ def _independence_summary(
         selected_claim_count=len(selected),
         agent_only_supported_selected_claim_count=agent_only,
         external_artifact_backed_selected_claim_count=external,
-        human_confirmed_selected_claim_count=human,
         selected_claims_with_unresolved_assumptions=unresolved,
         selected_claims_without_structured_support_count=without_support,
         self_referential_support_count=self_referential,
@@ -811,11 +666,12 @@ def build_terminal_epistemic_handoff(
     """Build the formal machine handoff from current persisted facts only."""
 
     directory = Path(run_dir)
-    state, _, partial, validation_error, _, raw_state = _load_state_read_only(directory)
+    state, _, partial, validation_error, reconstructed, raw_state = (
+        _load_state_read_only(directory)
+    )
     # Reuse the existing deterministic operational read model as required by
     # the handoff contract.  Its value is not copied into a second fact source.
     operational_summary = build_run_observability_summary(directory)
-    learning, learning_quality = read_researcher_learning_ledger(directory)
     dependency_graph = _dependency_graph(state)
     selected = [_selected_claim(state, node_id) for node_id in _selected_ids(state)]
     selected_by_id = {item.node_id: item for item in selected}
@@ -844,21 +700,7 @@ def build_terminal_epistemic_handoff(
     missing_artifacts = [
         path for path in artifact_refs if not (directory / path).is_file()
     ]
-    learning_ids = {item.learning_id for item in learning}
-    unresolved_references = sorted(
-        {
-            ref
-            for collection in (
-                state.epistemic_ledger.statements,
-                state.epistemic_ledger.edges,
-                state.epistemic_ledger.path_dispositions,
-            )
-            for item in collection
-            for ref in _record_refs(item)
-            if ref.startswith("learning:")
-            and ref.removeprefix("learning:") not in learning_ids
-        }
-    )
+    unresolved_references: list[str] = []
     structured_episodes = {
         (item.episode_id, item.attempt_id)
         for collection in (
@@ -890,9 +732,21 @@ def build_terminal_epistemic_handoff(
         )
     if validation_error:
         limitations.append(f"persisted state validation warning: {validation_error}")
-    if learning_quality.corrupt_tail_detected:
+    if any(
+        item.startswith("deprecated_human_confirmed_epistemic_records:")
+        for item in reconstructed
+    ):
         limitations.append(
-            "researcher learning ledger has a corrupt tail ignored without read-time repair"
+            "legacy human-confirmation epistemic records were isolated from this "
+            "read-only handoff; they are deprecated and carry no verification authority"
+        )
+    if any(
+        item.startswith("deprecated_learning_epistemic_references:")
+        for item in reconstructed
+    ):
+        limitations.append(
+            "legacy learning: references were isolated from this read-only handoff; "
+            "researcher learning is outside the current DTE contract"
         )
     data_status = (
         "unavailable"
@@ -911,7 +765,6 @@ def build_terminal_epistemic_handoff(
         for source in (
             "agent_reported",
             "external_artifact_backed",
-            "human_confirmed",
             "backend_derived",
         )
     }
@@ -970,12 +823,10 @@ def build_terminal_epistemic_handoff(
             external_artifact_backed_record_count=source_counts[
                 "external_artifact_backed"
             ],
-            human_confirmed_record_count=source_counts["human_confirmed"],
             backend_derived_record_count=source_counts["backend_derived"],
         ),
         independence_summary=independence,
         node_summaries=_node_summaries(state, selected_by_id),
-        researcher_learning=learning,
         dependency_graph=dependency_graph,
         data_quality=EpistemicDataQualityV1(
             epistemic_data_status=data_status,
@@ -992,7 +843,6 @@ def build_terminal_epistemic_handoff(
             operational_observability_limitations=list(
                 operational_summary.data_quality.limitations
             ),
-            learning_ledger=learning_quality,
             limitations=limitations,
         ),
     )
@@ -1001,11 +851,25 @@ def build_terminal_epistemic_handoff(
 def render_epistemic_text(handoff: TerminalEpistemicHandoffV1) -> str:
     """Render a compact human handoff without changing the JSON contract."""
 
+    def source_label(source_type: str) -> str:
+        return (
+            "artifact_referenced"
+            if source_type == "external_artifact_backed"
+            else source_type
+        )
+
     def statement_lines(items: list[EpistemicStatementRecordV1]) -> list[str]:
-        return [f"- [{item.source_type}] {item.text}" for item in items]
+        return [f"- [{source_label(item.source_type)}] {item.text}" for item in items]
 
     lines = [
         f"Epistemic handoff for run {handoff.run_id}",
+        "",
+        "Provenance boundary",
+        "- artifact_referenced means only that a record points to an external "
+        "artifact; DTE does not check the artifact, its assumptions, its "
+        "applicability, or the scientific claim.",
+        "- DTE preserves provenance and uncertainty; scientific judgment remains "
+        "outside backend authority.",
         "",
         "Current most credible conclusions",
     ]
@@ -1034,7 +898,7 @@ def render_epistemic_text(handoff: TerminalEpistemicHandoffV1) -> str:
     ]
     lines.extend(
         [
-            f"- [{item.source_type}] {ref}: {item.explanation}"
+            f"- [{source_label(item.source_type)}] {ref}: {item.explanation}"
             for item in counterexample_dispositions
             for ref in item.basis_refs
         ]
@@ -1047,7 +911,7 @@ def render_epistemic_text(handoff: TerminalEpistemicHandoffV1) -> str:
             "epistemic="
             + (
                 ",".join(
-                    f"{record.epistemic_disposition}[{record.source_type}]"
+                    f"{record.epistemic_disposition}[{source_label(record.source_type)}]"
                     for record in item.epistemic_disposition_records
                 )
                 or "none"
@@ -1064,7 +928,7 @@ def render_epistemic_text(handoff: TerminalEpistemicHandoffV1) -> str:
                 *handoff.transferable_failure_modes,
             ]
         )
-        or ["- None recorded; user learning is not inferred from silence."]
+        or ["- None reported by an episode for possible researcher use."]
     )
     lines.extend(["", "Correlated-error risk indicators"])
     lines.extend(

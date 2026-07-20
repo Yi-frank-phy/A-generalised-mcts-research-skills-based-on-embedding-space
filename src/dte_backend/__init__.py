@@ -20,8 +20,6 @@ from .episode_commit import EpisodeGraph, commit_episode_result
 from .episode_models import EpisodeRequest, EpisodeResult
 from .epistemic import (
     build_terminal_epistemic_handoff,
-    read_researcher_learning_ledger,
-    record_researcher_learning,
     render_epistemic_text,
 )
 from .epistemic_models import TerminalEpistemicHandoffV1
@@ -54,9 +52,7 @@ __all__ = [
     "ExpansionRequest",
     "FeedbackRecordV1",
     "read_feedback_ledger",
-    "read_researcher_learning_ledger",
     "record_feedback",
-    "record_researcher_learning",
     "render_epistemic_text",
     "render_observability_text",
     "RunResult",

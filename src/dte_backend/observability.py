@@ -124,6 +124,93 @@ def allocation_decision_id(run_id: str, controller_iteration: int, node_id: str)
     return f"allocation-{digest}"
 
 
+def _isolate_deprecated_epistemic_payloads(payload: dict[str, Any]) -> list[str]:
+    """Remove retired authority types from an in-memory read-only copy.
+
+    Old bytes remain untouched.  An attempt containing a retired source or
+    ``learning:`` reference is excluded as one unit so the current handoff does
+    not present a partial contribution bundle as if it were the committed
+    output.  Controller validation will report the sanitized copy as partial.
+    """
+
+    def record_refs(record: Mapping[str, Any]) -> list[str]:
+        refs = list(record.get("basis_refs") or [])
+        for name in ("source_ref", "target_ref"):
+            value = record.get(name)
+            if isinstance(value, str):
+                refs.append(value)
+        return [ref for ref in refs if isinstance(ref, str)]
+
+    def retired(record: Mapping[str, Any]) -> tuple[bool, bool]:
+        human = record.get("source_type") == "human_confirmed"
+        learning = any(ref.startswith("learning:") for ref in record_refs(record))
+        return human, learning
+
+    affected_attempts: set[tuple[str, str]] = set()
+    human_detected = False
+    learning_detected = False
+    episodes = payload.get("episodes")
+    if isinstance(episodes, list):
+        for episode in episodes:
+            if not isinstance(episode, dict):
+                continue
+            episode_id = episode.get("episode_id")
+            attempts = episode.get("attempts")
+            if not isinstance(episode_id, str) or not isinstance(attempts, list):
+                continue
+            for attempt in attempts:
+                if not isinstance(attempt, dict):
+                    continue
+                attempt_id = attempt.get("attempt_id")
+                result = attempt.get("committed_result")
+                output = result.get("structured_output") if isinstance(result, dict) else None
+                bundle = output.get("epistemic_contributions") if isinstance(output, dict) else None
+                if not isinstance(attempt_id, str) or not isinstance(bundle, dict):
+                    continue
+                records = [
+                    record
+                    for name in ("statements", "edges", "path_dispositions")
+                    for record in (bundle.get(name) or [])
+                    if isinstance(record, dict)
+                ]
+                statuses = [retired(record) for record in records]
+                if not any(human or learning for human, learning in statuses):
+                    continue
+                human_detected = human_detected or any(human for human, _ in statuses)
+                learning_detected = learning_detected or any(
+                    learning for _, learning in statuses
+                )
+                affected_attempts.add((episode_id, attempt_id))
+                output["epistemic_contributions"] = None
+
+    ledger = payload.get("epistemic_ledger")
+    if isinstance(ledger, dict):
+        for name in ("statements", "edges", "path_dispositions"):
+            records = ledger.get(name)
+            if not isinstance(records, list):
+                continue
+            kept = []
+            for record in records:
+                if not isinstance(record, dict):
+                    kept.append(record)
+                    continue
+                human, learning = retired(record)
+                owner = (record.get("episode_id"), record.get("attempt_id"))
+                if human or learning or owner in affected_attempts:
+                    human_detected = human_detected or human
+                    learning_detected = learning_detected or learning
+                    continue
+                kept.append(record)
+            ledger[name] = kept
+
+    limitations: list[str] = []
+    if human_detected:
+        limitations.append("deprecated_human_confirmed_epistemic_records:present")
+    if learning_detected:
+        limitations.append("deprecated_learning_epistemic_references:present")
+    return limitations
+
+
 def _load_state_read_only(
     run_dir: str | Path,
 ) -> tuple[
@@ -164,6 +251,8 @@ def _load_state_read_only(
             canonical_json_bytes(payload["initial_nodes"])
         ).hexdigest()
         reconstructed.append("initial_nodes_hash")
+
+    reconstructed.extend(_isolate_deprecated_epistemic_payloads(payload))
 
     try:
         state = AppRunState.model_validate(payload)

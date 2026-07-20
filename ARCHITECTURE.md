@@ -264,8 +264,8 @@ records, and retry makes only the committed attempt visible.
 
 The deterministic epistemic read model combines that ledger with canonical node
 claims, committed attempts, Relation records, merge applications, provisional
-selection, operational observability, and the independent researcher-learning
-ledger. It never extracts edges from legacy free text and never repairs on read.
+selection, and operational observability. It never extracts edges from legacy
+free text and never repairs on read.
 Relation projection prevents a competing Relation truth. Search lifecycle
 dispositions and epistemic dispositions are distinct, so non-selection, low
 Judge score, merge, and budget exhaustion cannot silently become contradiction.
@@ -273,10 +273,12 @@ Judge score, merge, and budget exhaustion cannot silently become contradiction.
 The terminal handoff describes provisional-selected node claims because the
 current App-native slice has no final Synthesis episode. Its model-profile and
 support-source comparisons are correlated-error risk indicators, not correctness
-or scientific reliability scores. Researcher learning is append-only feedback:
-main-agent inferences remain unconfirmed, explicit user confirmation creates a
-new record, and no learning append feeds graph, Judge, Relation, allocation, or
-stopping state.
+or scientific reliability scores. Artifact references are provenance only and
+do not verify an artifact or claim. Researcher learning, external-tool checks,
+independent proof, and final human judgment remain outside DTE. A legacy
+`epistemic/researcher_learning.jsonl` file is ignored and left unchanged;
+explicit run evaluation continues through the controller-independent feedback
+ledger.
 
 ## Seed architecture and the Explorer role
 

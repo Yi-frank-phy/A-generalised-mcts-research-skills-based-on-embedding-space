@@ -19,6 +19,14 @@ from typing import Any, Literal
 from pydantic import Field
 
 from .control import authorize_synthesis_control
+from .continuation import (
+    ContinuationGateRecord,
+    count_committed_search_nodes,
+    epistemic_record_ids,
+    evaluate_continuation_gate,
+    expected_continuation_decision,
+    remaining_search_node_slots,
+)
 from .embedding import EmbeddingProvider, get_embedding_provider
 from .entropy import evaluate_entropy_state
 from .epistemic_commit import EpistemicReferenceContext
@@ -177,7 +185,13 @@ class TerminalRecord(DTEBaseModel):
     """Immutable audit record for the first controller terminal transition."""
 
     action: Literal["ready_for_synthesis", "run_complete"]
-    source: Literal["authorized_synthesis", "max_iterations", "controller_stop"]
+    source: Literal[
+        "authorized_synthesis",
+        "max_iterations",
+        "max_search_nodes",
+        "continuation_gate",
+        "controller_stop",
+    ]
     reason: str
     graph_revision: int = Field(ge=0)
     controller_iteration: int = Field(ge=0)
@@ -198,6 +212,11 @@ class ControllerIterationRecord(DTEBaseModel):
     densities: dict[str, float]
     uncertainties: dict[str, float]
     spatial_entropy: float
+    entropy_delta: float | None = Field(default=None, ge=0.0)
+    normalized_temperature: float | None = Field(default=None, ge=0.0, le=1.0)
+    plateau_signal: bool = False
+    consecutive_plateau_count: int = Field(default=0, ge=0)
+    effective_child_cap: int | None = Field(default=None, ge=0)
 
 
 class AppRunState(DTEBaseModel):
@@ -219,6 +238,9 @@ class AppRunState(DTEBaseModel):
     controller_iteration_records: list[ControllerIterationRecord] = Field(
         default_factory=list
     )
+    continuation_gate_records: list[ContinuationGateRecord] = Field(
+        default_factory=list
+    )
     previous_spatial_entropy: float | None = None
     relation_candidates: list[RelationCandidate] = Field(default_factory=list)
     relation_ledger: list[RelationRecord] = Field(default_factory=list)
@@ -230,7 +252,11 @@ class AppRunState(DTEBaseModel):
     pending_terminal_action: Literal["ready_for_synthesis", "run_complete"] | None = None
     pending_terminal_reason: str | None = None
     pending_terminal_source: Literal[
-        "authorized_synthesis", "max_iterations", "controller_stop"
+        "authorized_synthesis",
+        "max_iterations",
+        "max_search_nodes",
+        "continuation_gate",
+        "controller_stop",
     ] | None = None
     pending_terminal_gate_evaluated: bool = False
     terminal_record: TerminalRecord | None = None
@@ -264,7 +290,13 @@ def _validate_terminal_intent_provenance(
     *,
     action: Literal["ready_for_synthesis", "run_complete"],
     reason: str,
-    source: Literal["authorized_synthesis", "max_iterations", "controller_stop"],
+    source: Literal[
+        "authorized_synthesis",
+        "max_iterations",
+        "max_search_nodes",
+        "continuation_gate",
+        "controller_stop",
+    ],
 ) -> None:
     """Rebuild the controller-owned terminal decision from durable facts."""
 
@@ -290,6 +322,21 @@ def _validate_terminal_intent_provenance(
         ):
             raise ValueError("max-iteration terminal intent lacks its controller boundary")
         return
+    if source == "max_search_nodes":
+        if (
+            count_committed_search_nodes(state.nodes)
+            < state.spec.budget.max_committed_search_nodes
+            or reason != "maximum committed search nodes reached"
+        ):
+            raise ValueError("search-node terminal intent lacks its hard boundary")
+        return
+    if source == "continuation_gate":
+        if not state.continuation_gate_records:
+            raise ValueError("continuation terminal intent lacks a durable gate record")
+        gate = state.continuation_gate_records[-1]
+        if gate.decision != "prepare_synthesis" or reason != gate.reason:
+            raise ValueError("continuation terminal intent disagrees with its gate record")
+        return
 
     if not state.controller_iteration_records:
         raise ValueError("controller-stop terminal intent predates any controller transition")
@@ -305,9 +352,18 @@ def _validate_terminal_intent_provenance(
         iteration=latest.iteration,
         min_iterations=state.spec.budget.min_iterations_before_synthesis,
         entropy_change_threshold=state.spec.budget.entropy_change_threshold,
+        previous_plateau_count=(
+            state.controller_iteration_records[-2].consecutive_plateau_count
+            if len(state.controller_iteration_records) > 1
+            else 0
+        ),
+        plateau_confirmations=state.spec.budget.entropy_plateau_confirmations,
         t_max=state.spec.budget.t_max,
     )
-    if entropy_state.should_synthesize:
+    if (
+        state.spec.budget.continuation_policy == "legacy_entropy_v1"
+        and entropy_state.plateau_signal
+    ):
         expected_reason = entropy_state.stop_reason or "entropy stopping policy reached"
     elif not any(latest.allocations.values()):
         expected_reason = "controller produced no positive expandable frontier allocation"
@@ -795,6 +851,7 @@ def _validate_loaded_state(state: AppRunState) -> None:
     if not graph.nodes:
         raise ValueError("persisted App run has no committed initial nodes")
     node_ids = {node.node_id for node in graph.nodes}
+    nodes_by_id = {node.node_id: node for node in graph.nodes}
     if state.spec_hash != _run_spec_hash(state.spec):
         raise ValueError("persisted RunSpec disagrees with its immutable run hash")
     if state.initial_nodes_hash != _initial_nodes_hash(state.initial_nodes):
@@ -806,6 +863,13 @@ def _validate_loaded_state(state: AppRunState) -> None:
         raise ValueError("persisted App run was updated before it was created")
     if state.controller_iteration > state.spec.budget.max_iterations:
         raise ValueError("persisted controller iteration exceeds the run budget")
+    if (
+        state.spec.budget.continuation_policy == "bounded_node_yield_v1"
+        and
+        count_committed_search_nodes(state.nodes)
+        > state.spec.budget.max_committed_search_nodes
+    ):
+        raise ValueError("persisted search graph exceeds the committed-node budget")
     if len(state.controller_iteration_records) != state.controller_iteration:
         raise ValueError("persisted controller iteration lacks durable transition records")
     previous_output_revision = -1
@@ -833,7 +897,11 @@ def _validate_loaded_state(state: AppRunState) -> None:
                 for budget in record.allocations.values()
             )
             or sum(record.allocations.values())
-            > state.spec.budget.max_children_per_iteration
+            > (
+                state.spec.budget.max_children_per_iteration
+                if record.effective_child_cap is None
+                else record.effective_child_cap
+            )
         ):
             raise ValueError("persisted controller allocation transition is inconsistent")
         previous_output_revision = record.output_graph_revision
@@ -842,6 +910,199 @@ def _validate_loaded_state(state: AppRunState) -> None:
             raise ValueError("persisted controller entropy disagrees with its latest transition")
     elif state.previous_spatial_entropy is not None:
         raise ValueError("persisted controller entropy predates any allocation transition")
+    if state.spec.budget.continuation_policy == "bounded_node_yield_v1":
+        if len(state.continuation_gate_records) != state.controller_iteration:
+            raise ValueError("persisted controller iteration lacks a continuation-gate record")
+        durable_epistemic_ids = epistemic_record_ids(state.epistemic_ledger)
+        initial_node_ids = {node.node_id for node in state.initial_nodes}
+        committed_child_revisions: dict[str, int] = {}
+        attempt_commit_revisions: dict[tuple[str, str], int] = {}
+        for episode in state.episodes:
+            for attempt in episode.attempts:
+                outcome = attempt.commit_outcome
+                if (
+                    attempt.status != "committed"
+                    or outcome is None
+                    or not outcome.accepted
+                ):
+                    continue
+                attempt_commit_revisions[(episode.episode_id, attempt.attempt_id)] = (
+                    outcome.graph_revision_after
+                )
+                if episode.role == "executor":
+                    for node_id in outcome.accepted_node_ids:
+                        committed_child_revisions[node_id] = outcome.graph_revision_after
+
+        def ledger_at_revision(graph_revision: int) -> EpistemicLedgerV1:
+            def visible(record: object) -> bool:
+                identity = (record.episode_id, record.attempt_id)  # type: ignore[attr-defined]
+                revision = attempt_commit_revisions.get(identity)
+                return revision is not None and revision <= graph_revision
+
+            return EpistemicLedgerV1(
+                statements=[
+                    record
+                    for record in state.epistemic_ledger.statements
+                    if visible(record)
+                ],
+                edges=[
+                    record
+                    for record in state.epistemic_ledger.edges
+                    if visible(record)
+                ],
+                path_dispositions=[
+                    record
+                    for record in state.epistemic_ledger.path_dispositions
+                    if visible(record)
+                ],
+            )
+
+        previously_considered_ids: set[str] = set()
+        previous_committed_count = 0
+        for expected_iteration, gate in enumerate(
+            state.continuation_gate_records,
+            start=1,
+        ):
+            controller_record = state.controller_iteration_records[
+                expected_iteration - 1
+            ]
+            expected_triggers = []
+            if gate.plateau_confirmed:
+                expected_triggers.append("entropy_plateau_confirmed")
+            if gate.canonical_frontier_count == 1:
+                expected_triggers.append("single_canonical_frontier")
+            positive_allocation_ids = sorted(
+                node_id
+                for node_id, budget in controller_record.allocations.items()
+                if budget > 0
+            )
+            node_ids_at_revision = initial_node_ids | {
+                node_id
+                for node_id, revision in committed_child_revisions.items()
+                if revision <= gate.graph_revision
+            }
+            nodes_at_revision = [
+                nodes_by_id[node_id].model_copy(
+                    update={
+                        "status": (
+                            "frontier"
+                            if node_id in controller_record.frontier_node_ids
+                            else "closed"
+                        )
+                    }
+                )
+                for node_id in sorted(node_ids_at_revision)
+            ]
+            previous_controller_record = (
+                state.controller_iteration_records[expected_iteration - 2]
+                if expected_iteration > 1
+                else None
+            )
+            previous_gate = (
+                state.continuation_gate_records[expected_iteration - 2]
+                if expected_iteration > 1
+                else None
+            )
+            replayed_gate = evaluate_continuation_gate(
+                iteration=gate.iteration,
+                graph_revision=gate.graph_revision,
+                nodes=nodes_at_revision,
+                max_committed_search_nodes=(
+                    state.spec.budget.max_committed_search_nodes
+                ),
+                entropy_delta=controller_record.entropy_delta,
+                consecutive_plateau_count=(
+                    controller_record.consecutive_plateau_count
+                ),
+                plateau_confirmed=(
+                    gate.iteration
+                    >= state.spec.budget.min_iterations_before_synthesis
+                    and controller_record.consecutive_plateau_count
+                    >= state.spec.budget.entropy_plateau_confirmations
+                ),
+                allocations=controller_record.allocations,
+                previous_frontier_node_ids=(
+                    set(previous_controller_record.frontier_node_ids)
+                    if previous_controller_record is not None
+                    else set()
+                ),
+                previous_positive_allocation_node_ids=(
+                    {
+                        node_id
+                        for node_id, budget in previous_controller_record.allocations.items()
+                        if budget > 0
+                    }
+                    if previous_controller_record is not None
+                    else set()
+                ),
+                previous_provisional_synthesis_node_ids=(
+                    set(previous_gate.provisional_synthesis_node_ids)
+                    if previous_gate is not None
+                    else set()
+                ),
+                provisional_synthesis_node_ids=gate.provisional_synthesis_node_ids,
+                ledger=ledger_at_revision(gate.graph_revision),
+                previously_considered_epistemic_ids=previously_considered_ids,
+            )
+            expected_committed_count = count_committed_search_nodes(
+                nodes_at_revision
+            )
+            if (
+                gate.iteration != expected_iteration
+                or gate.graph_revision != controller_record.output_graph_revision
+                or gate.max_committed_search_nodes
+                != state.spec.budget.max_committed_search_nodes
+                or gate.committed_search_node_count < previous_committed_count
+                or gate.committed_search_node_count != expected_committed_count
+                or gate.committed_search_node_count
+                > count_committed_search_nodes(state.nodes)
+                or gate.remaining_search_node_slots
+                != max(
+                    0,
+                    gate.max_committed_search_nodes
+                    - gate.committed_search_node_count,
+                )
+                or len(gate.considered_epistemic_record_ids)
+                != len(set(gate.considered_epistemic_record_ids))
+                or len(gate.material_epistemic_record_ids)
+                != len(set(gate.material_epistemic_record_ids))
+                or set(gate.considered_epistemic_record_ids)
+                & previously_considered_ids
+                or not set(gate.considered_epistemic_record_ids).issubset(
+                    durable_epistemic_ids
+                )
+                or not set(gate.material_epistemic_record_ids).issubset(
+                    set(gate.considered_epistemic_record_ids)
+                )
+                or gate.entropy_delta != controller_record.entropy_delta
+                or gate.consecutive_plateau_count
+                != controller_record.consecutive_plateau_count
+                or gate.plateau_confirmed
+                != (
+                    gate.iteration
+                    >= state.spec.budget.min_iterations_before_synthesis
+                    and gate.consecutive_plateau_count
+                    >= state.spec.budget.entropy_plateau_confirmations
+                )
+                or gate.trigger_signals != expected_triggers
+                or gate.canonical_frontier_count
+                != len(controller_record.frontier_node_ids)
+                or gate.positive_allocation_node_ids != positive_allocation_ids
+                or not set(gate.continuation_target_node_ids).issubset(
+                    set(gate.positive_allocation_node_ids)
+                )
+                or not set(gate.provisional_synthesis_node_ids).issubset(node_ids)
+                or gate.decision != expected_continuation_decision(gate)
+                or gate.model_dump(mode="json")
+                != replayed_gate.model_dump(mode="json")
+            ):
+                raise ValueError("persisted continuation-gate record is inconsistent")
+            previously_considered_ids.update(
+                gate.considered_epistemic_record_ids
+            )
+            previous_committed_count = gate.committed_search_node_count
+    elif state.continuation_gate_records:
+        raise ValueError("legacy entropy state cannot contain bounded continuation records")
 
     def require_unique(values: list[str], label: str) -> None:
         if len(values) != len(set(values)):
@@ -1811,6 +2072,10 @@ def _validate_loaded_state(state: AppRunState) -> None:
                 != min(
                     parent.expansion_budget,
                     state.spec.budget.max_children_per_iteration,
+                    remaining_search_node_slots(
+                        state.nodes,
+                        state.spec.budget.max_committed_search_nodes,
+                    ),
                 )
                 or payload.parent.model_dump(mode="json")
                 != parent.model_dump(mode="json", include=executor_parent_fields)
@@ -1982,6 +2247,8 @@ def _validate_loaded_state(state: AppRunState) -> None:
             "controller_stop",
             "authorized_synthesis",
             "max_iterations",
+            "max_search_nodes",
+            "continuation_gate",
         }:
             raise ValueError("ungated pending terminal intent lacks durable stop provenance")
         if not _has_synthesis_safe_checkpoint(state):
@@ -2110,7 +2377,39 @@ def _validate_loaded_state(state: AppRunState) -> None:
 
 
 def load_app_run(run_dir: str | Path) -> AppRunState:
-    state = AppRunState.model_validate_json(_state_path(run_dir).read_text(encoding="utf-8"))
+    raw = json.loads(_state_path(run_dir).read_text(encoding="utf-8"))
+    raw_spec = raw.get("spec") if isinstance(raw, dict) else None
+    raw_budget = raw_spec.get("budget") if isinstance(raw_spec, dict) else None
+    if isinstance(raw_budget, dict) and "max_committed_search_nodes" not in raw_budget:
+        # Validate the immutable pre-upgrade spec before inserting compatibility
+        # fields. Existing runs keep the old entropy stop and receive a node cap
+        # loose enough not to reduce their original expansion envelope.
+        old_hash = hashlib.sha256(canonical_json_bytes(raw_spec)).hexdigest()
+        if raw.get("spec_hash") != old_hash:
+            raise ValueError("persisted legacy RunSpec disagrees with its immutable run hash")
+        initial_count = sum(
+            item.get("node_type") != "synthesis"
+            for item in raw.get("initial_nodes", [])
+            if isinstance(item, dict)
+        )
+        current_count = sum(
+            item.get("node_type") != "synthesis"
+            for item in raw.get("nodes", [])
+            if isinstance(item, dict)
+        )
+        legacy_envelope = initial_count + (
+            int(raw_budget.get("max_iterations", 2))
+            * int(raw_budget.get("max_children_per_iteration", 5))
+        )
+        raw_budget["max_committed_search_nodes"] = min(
+            100,
+            max(1, current_count, legacy_envelope),
+        )
+        raw_budget["entropy_plateau_confirmations"] = 1
+        raw_budget["continuation_policy"] = "legacy_entropy_v1"
+        migrated_spec = DTERunSpec.model_validate(raw_spec)
+        raw["spec_hash"] = _run_spec_hash(migrated_spec)
+    state = AppRunState.model_validate(raw)
     _validate_loaded_state(state)
     _flush_pending_events(run_dir, state)
     try:
@@ -2209,6 +2508,11 @@ def create_app_run(
         raise FileExistsError(f"App run already exists: {path}")
     validated_spec = DTERunSpec.model_validate(spec.model_dump(mode="json"))
     validated_initial_nodes = _validate_initial_nodes(initial_nodes)
+    initial_search_node_count = count_committed_search_nodes(validated_initial_nodes)
+    if initial_search_node_count > validated_spec.budget.max_committed_search_nodes:
+        raise ValueError(
+            "initial committed search nodes exceed max_committed_search_nodes"
+        )
     graph = EpisodeGraph(nodes=validated_initial_nodes)
     created = _iso()
     state = AppRunState(
@@ -2412,6 +2716,12 @@ def _progress_controller(
         return terminal_action, "no expandable frontier remains"
     if any(node.score is None for node in frontier):
         raise RuntimeError("controller progression requires every frontier node to be judged")
+    if (
+        state.spec.budget.continuation_policy == "bounded_node_yield_v1"
+        and count_committed_search_nodes(state.nodes)
+        >= state.spec.budget.max_committed_search_nodes
+    ):
+        return terminal_action, "maximum committed search nodes reached"
     if state.controller_iteration >= state.spec.budget.max_iterations:
         return terminal_action, "maximum controller iterations reached"
 
@@ -2435,18 +2745,33 @@ def _progress_controller(
         node.uncertainty = uncertainty
 
     iteration = state.controller_iteration + 1
+    previous_plateau_count = (
+        state.controller_iteration_records[-1].consecutive_plateau_count
+        if state.controller_iteration_records
+        else 0
+    )
     entropy_state = evaluate_entropy_state(
         spatial_entropy=kde_state.spatial_entropy,
         previous_entropy=state.previous_spatial_entropy,
         iteration=iteration,
         min_iterations=state.spec.budget.min_iterations_before_synthesis,
         entropy_change_threshold=state.spec.budget.entropy_change_threshold,
+        previous_plateau_count=previous_plateau_count,
+        plateau_confirmations=state.spec.budget.entropy_plateau_confirmations,
         t_max=state.spec.budget.t_max,
+    )
+    remaining_slots = remaining_search_node_slots(
+        next_nodes,
+        state.spec.budget.max_committed_search_nodes,
+    )
+    effective_child_cap = min(
+        state.spec.budget.max_children_per_iteration,
+        remaining_slots,
     )
     allocations = allocate_frontier(
         next_nodes,
         allocation_mass_per_iteration=state.spec.budget.allocation_mass_per_iteration,
-        max_children_per_iteration=state.spec.budget.max_children_per_iteration,
+        max_children_per_iteration=effective_child_cap,
         tau=max(entropy_state.normalized_temperature, 0.05),
         c_explore=1.0,
         temperature=max(entropy_state.effective_temperature, 0.05),
@@ -2486,6 +2811,11 @@ def _progress_controller(
                 node.node_id: node.uncertainty or 0.0 for node in next_frontier
             },
             spatial_entropy=kde_state.spatial_entropy,
+            entropy_delta=entropy_state.entropy_delta,
+            normalized_temperature=entropy_state.normalized_temperature,
+            plateau_signal=entropy_state.plateau_signal,
+            consecutive_plateau_count=entropy_state.consecutive_plateau_count,
+            effective_child_cap=effective_child_cap,
         )
     )
     state.nodes = next_nodes
@@ -2504,7 +2834,106 @@ def _progress_controller(
         spatial_entropy=kde_state.spatial_entropy,
         usage_source="unavailable",
     )
-    if entropy_state.should_synthesize:
+    if state.spec.budget.continuation_policy == "bounded_node_yield_v1":
+        synthesis_request = state.synthesis_request
+        if synthesis_request is not None:
+            synthesis_request = _canonicalize_synthesis_request(state, synthesis_request)
+        provisional = select_provisional_synthesis_nodes(
+            state.nodes,
+            graph_revision=state.graph_revision,
+            synthesis_request=synthesis_request,
+        )
+        previous_record = (
+            state.controller_iteration_records[-2]
+            if len(state.controller_iteration_records) > 1
+            else None
+        )
+        previous_gate = (
+            state.continuation_gate_records[-1]
+            if state.continuation_gate_records
+            else None
+        )
+        considered_epistemic_ids = {
+            record_id
+            for record in state.continuation_gate_records
+            for record_id in record.considered_epistemic_record_ids
+        }
+        gate = evaluate_continuation_gate(
+            iteration=iteration,
+            graph_revision=state.graph_revision,
+            nodes=state.nodes,
+            max_committed_search_nodes=state.spec.budget.max_committed_search_nodes,
+            entropy_delta=entropy_state.entropy_delta,
+            consecutive_plateau_count=entropy_state.consecutive_plateau_count,
+            plateau_confirmed=entropy_state.plateau_signal,
+            allocations={
+                node.node_id: allocation_by_id[node.node_id].expansion_budget
+                for node in next_frontier
+            },
+            previous_frontier_node_ids=(
+                set(previous_record.frontier_node_ids)
+                if previous_record is not None
+                else set()
+            ),
+            previous_positive_allocation_node_ids=(
+                {
+                    node_id
+                    for node_id, budget in previous_record.allocations.items()
+                    if budget > 0
+                }
+                if previous_record is not None
+                else set()
+            ),
+            previous_provisional_synthesis_node_ids=(
+                set(previous_gate.provisional_synthesis_node_ids)
+                if previous_gate is not None
+                else set()
+            ),
+            provisional_synthesis_node_ids=provisional.selected_node_ids,
+            ledger=state.epistemic_ledger,
+            previously_considered_epistemic_ids=considered_epistemic_ids,
+        )
+        state.continuation_gate_records.append(gate)
+        _queue_event(
+            state,
+            "continuation_gate_evaluated",
+            run_id=state.run_id,
+            status="committed",
+            input_graph_revision=input_graph_revision,
+            graph_revision=state.graph_revision,
+            controller_iteration=iteration,
+            committed_search_node_count=gate.committed_search_node_count,
+            remaining_search_node_slots=gate.remaining_search_node_slots,
+            canonical_frontier_count=gate.canonical_frontier_count,
+            entropy_delta=gate.entropy_delta,
+            consecutive_plateau_count=gate.consecutive_plateau_count,
+            material_yield_signals=gate.material_yield_signals,
+            continuation_target_node_ids=gate.continuation_target_node_ids,
+            decision=gate.decision,
+            reason=gate.reason,
+            usage_source="unavailable",
+        )
+        if gate.trigger_signals:
+            _queue_event(
+                state,
+                (
+                    "continuation_granted"
+                    if gate.decision == "continue"
+                    else "early_synthesis_selected"
+                ),
+                run_id=state.run_id,
+                status=gate.decision,
+                input_graph_revision=input_graph_revision,
+                graph_revision=state.graph_revision,
+                controller_iteration=iteration,
+                trigger_signals=gate.trigger_signals,
+                material_yield_signals=gate.material_yield_signals,
+                continuation_target_node_ids=gate.continuation_target_node_ids,
+                usage_source="unavailable",
+            )
+        if gate.decision == "prepare_synthesis":
+            return terminal_action, gate.reason
+    elif entropy_state.plateau_signal:
         return terminal_action, entropy_state.stop_reason or "entropy stopping policy reached"
     if any(allocation.expansion_budget > 0 for allocation in allocations):
         return "continue_controller", "deterministic controller progression assigned expansion budget"
@@ -2660,7 +3089,11 @@ def _prepare_terminal_or_relation(
     terminal_action: Literal["ready_for_synthesis", "run_complete"],
     terminal_reason: str,
     terminal_source: Literal[
-        "authorized_synthesis", "max_iterations", "controller_stop"
+        "authorized_synthesis",
+        "max_iterations",
+        "max_search_nodes",
+        "continuation_gate",
+        "controller_stop",
     ],
     runtime_limits: RuntimeLimits,
     profile: Literal["legacy-explicit", "native-guided", "native-autonomous"],
@@ -3103,6 +3536,10 @@ def next_app_episode(
     while True:
         parent = _select_executor_parent(state)
         if parent is not None:
+            remaining_slots = remaining_search_node_slots(
+                state.nodes,
+                state.spec.budget.max_committed_search_nodes,
+            )
             request = build_executor_episode_request(
                 state.graph(),
                 parent,
@@ -3111,6 +3548,7 @@ def next_app_episode(
                 max_returned_children=min(
                     parent.expansion_budget,
                     state.spec.budget.max_children_per_iteration,
+                    remaining_slots,
                 ),
                 objective=f"{state.spec.goal}: expand {parent.claim}",
                 constraints=list(state.spec.constraints),
@@ -3157,6 +3595,36 @@ def next_app_episode(
                 profile=profile,
             )
 
+        if (
+            state.spec.budget.continuation_policy == "bounded_node_yield_v1"
+            and count_committed_search_nodes(state.nodes)
+            >= state.spec.budget.max_committed_search_nodes
+        ):
+            terminal_action = (
+                "ready_for_synthesis" if state.spec.require_final_synthesis else "run_complete"
+            )
+            _queue_event(
+                state,
+                "search_node_budget_exhausted",
+                run_id=state.run_id,
+                status="exhausted",
+                input_graph_revision=state.graph_revision,
+                graph_revision=state.graph_revision,
+                controller_iteration=state.controller_iteration,
+                committed_search_node_count=count_committed_search_nodes(state.nodes),
+                remaining_search_node_slots=0,
+                usage_source="unavailable",
+            )
+            return _prepare_terminal_or_relation(
+                run_dir,
+                state,
+                terminal_action=terminal_action,
+                terminal_reason="maximum committed search nodes reached",
+                terminal_source="max_search_nodes",
+                runtime_limits=limits,
+                profile=profile,
+            )
+
         # The iteration cap prevents another controller allocation. It does
         # not revoke already-authorized Executor output: every committed child
         # must still pass a bounded Judge episode before Relation/readiness.
@@ -3182,7 +3650,13 @@ def next_app_episode(
         terminal_intent: tuple[
             Literal["ready_for_synthesis", "run_complete"],
             str,
-            Literal["authorized_synthesis", "controller_stop"],
+            Literal[
+                "authorized_synthesis",
+                "max_iterations",
+                "max_search_nodes",
+                "continuation_gate",
+                "controller_stop",
+            ],
         ] | None = None
         if state.synthesis_request is not None and _has_synthesis_safe_checkpoint(state):
             terminal_intent = (
@@ -3191,7 +3665,19 @@ def next_app_episode(
                 "authorized_synthesis",
             )
         elif action != "continue_controller":
-            terminal_intent = (action, reason, "controller_stop")  # type: ignore[assignment]
+            if reason == "maximum committed search nodes reached":
+                source = "max_search_nodes"
+            elif reason == "maximum controller iterations reached":
+                source = "max_iterations"
+            elif (
+                state.continuation_gate_records
+                and state.continuation_gate_records[-1].decision == "prepare_synthesis"
+                and reason == state.continuation_gate_records[-1].reason
+            ):
+                source = "continuation_gate"
+            else:
+                source = "controller_stop"
+            terminal_intent = (action, reason, source)  # type: ignore[assignment]
         if terminal_intent is not None:
             terminal_action, terminal_reason, terminal_source = terminal_intent
             if _select_executor_parent(state) is not None or _select_unjudged_frontier(state):

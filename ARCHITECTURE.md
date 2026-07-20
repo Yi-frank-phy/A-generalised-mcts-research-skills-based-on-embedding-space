@@ -212,7 +212,9 @@ The stable observability interface projects the authoritative App run state,
 committed episode results, controller iteration records, Relation/readiness
 ledgers, and append-only telemetry into versioned run, episode, node-lineage,
 allocation, Judge-posterior, Relation-yield, trajectory, rejection, and
-data-quality records.
+data-quality records. The trajectory includes irreversible committed search-node
+usage, remaining slots, canonical/live/merged counts, bounded continuation-gate
+decisions, and read-only frontier wait diagnostics.
 
 ```text
 authoritative persistent facts
@@ -225,6 +227,11 @@ nodes, or feed proxy statistics back into allocation. Derived mirrors and
 telemetry are cross-checked but do not become a second fact store. Legacy or
 missing data is represented as `null` plus explicit data-quality limitations,
 not as zero or a fabricated confidence score.
+
+Frontier wait and zero-allocation streaks are observational projections only.
+They never write node state, add an age term, alter UCB, or reopen a terminal
+run. Likewise, material-yield signals explain why one bounded continuation was
+allowed; they do not certify a claim or renew any hard budget.
 
 User, main-agent, and external-evaluator judgments are appended to an independent
 feedback ledger and remain bound to an existing run, episode, attempt, node,
@@ -307,6 +314,23 @@ Candidate selection may use:
 - near-tied Judge/UCB values;
 - explicit contradictory claims;
 - entropy plateau.
+
+## Bounded node budget and continuation
+
+The primary cost boundary is an irreversible count of committed search nodes:
+initial Seed nodes plus successfully committed Executor children. Merged nodes
+remain counted. The default cap is 20; the 10-iteration limit remains only a
+pathological-loop guard. Controller grants are trimmed to remaining node slots
+before an Executor episode is authorized, and the same bound is checked again
+at request validation and commit.
+
+Entropy remains an allocation-temperature input and produces a consecutive
+plateau signal. A confirmed plateau or a single canonical frontier invokes the
+versioned continuation gate; neither condition is an unconditional stop. The
+gate continues only with narrow, replayable material yield, a positively
+allocated frontier target, and remaining node budget. Each qualifying
+epistemic record may support one continuation decision at most. This is a
+bounded search heuristic, not correctness evidence or a cost term in UCB.
 
 Relation output is one of:
 

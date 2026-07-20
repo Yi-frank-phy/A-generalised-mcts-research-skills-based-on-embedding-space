@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping, get_args
 
 from .app_driver import AppRunState, _validate_loaded_state
+from .continuation import count_committed_search_nodes
 from .episode_models import (
     ExecutorEpisodeOutput,
     JudgeEpisodeOutput,
@@ -29,6 +30,7 @@ from .merge import resolve_merge_aliases
 from .observability_models import (
     AllocationOutcomeRecordV1,
     AttemptObservabilityRecordV1,
+    ContinuationGateObservabilityRecordV1,
     ControllerTrajectoryRecordV1,
     DescriptiveStatsV1,
     EpisodeFunnelV1,
@@ -37,6 +39,7 @@ from .observability_models import (
     FeedbackRecordV1,
     FeedbackSource,
     FeedbackTargetType,
+    FrontierWaitRecordV1,
     JudgeNodePosteriorRecordV1,
     JudgeOutcomeSummaryV1,
     NodeAllocationHistoryRecordV1,
@@ -1064,6 +1067,21 @@ def _build_lineage_and_allocations(
         frontier_node_count=sum(node.status == "frontier" for node in state.nodes),
         closed_node_count=sum(node.status == "closed" for node in state.nodes),
         merged_node_count=sum(node.status == "merged" for node in state.nodes),
+        committed_search_node_count=count_committed_search_nodes(state.nodes),
+        remaining_search_node_slots=max(
+            0,
+            state.spec.budget.max_committed_search_nodes
+            - count_committed_search_nodes(state.nodes),
+        ),
+        canonical_frontier_node_count=sum(
+            node.status == "frontier" and node.node_type != "synthesis"
+            for node in state.nodes
+        ),
+        canonical_live_node_count=sum(
+            node.status in {"frontier", "closed"}
+            and node.node_type != "synthesis"
+            for node in state.nodes
+        ),
         provisional_synthesis_selected_node_count=len(selected),
     )
     return lineage, allocation_outcomes, funnel
@@ -1260,6 +1278,10 @@ def _build_controller_trajectory(
                     for node_id in record.frontier_node_ids
                 ),
                 spatial_entropy=record.spatial_entropy,
+                entropy_delta=record.entropy_delta,
+                plateau_signal=record.plateau_signal,
+                consecutive_plateau_count=record.consecutive_plateau_count,
+                effective_child_cap=record.effective_child_cap,
                 allocation_mass_parameter=allocation_mass_parameter,
                 allocated_child_count=sum(record.allocations.values()),
                 positive_budget_parent_count=sum(
@@ -1330,6 +1352,85 @@ def _build_controller_trajectory(
                     event.get("graph_revision")
                     if isinstance(event.get("graph_revision"), int)
                     else None
+                ),
+            )
+        )
+    return output
+
+
+def _build_continuation_gate_trajectory(
+    state: AppRunState,
+) -> list[ContinuationGateObservabilityRecordV1]:
+    """Project the durable gate ledger without interpreting it as correctness."""
+
+    return [
+        ContinuationGateObservabilityRecordV1(
+            controller_iteration=record.iteration,
+            graph_revision=record.graph_revision,
+            committed_search_node_count=record.committed_search_node_count,
+            remaining_search_node_slots=record.remaining_search_node_slots,
+            canonical_frontier_count=record.canonical_frontier_count,
+            entropy_delta=record.entropy_delta,
+            consecutive_plateau_count=record.consecutive_plateau_count,
+            plateau_confirmed=record.plateau_confirmed,
+            trigger_signals=list(record.trigger_signals),
+            material_yield_signals=list(record.material_yield_signals),
+            material_epistemic_record_ids=list(
+                record.material_epistemic_record_ids
+            ),
+            continuation_target_node_ids=list(
+                record.continuation_target_node_ids
+            ),
+            provisional_synthesis_node_ids=list(
+                record.provisional_synthesis_node_ids
+            ),
+            positive_allocation_node_ids=list(
+                record.positive_allocation_node_ids
+            ),
+            decision=record.decision,
+            reason=record.reason,
+        )
+        for record in state.continuation_gate_records
+    ]
+
+
+def _build_frontier_wait(state: AppRunState) -> list[FrontierWaitRecordV1]:
+    """Derive starvation diagnostics without feeding them back into allocation."""
+
+    output: list[FrontierWaitRecordV1] = []
+    for node in sorted(state.nodes, key=lambda item: item.node_id):
+        if node.status != "frontier" or node.node_type == "synthesis":
+            continue
+        eligible = [
+            record
+            for record in state.controller_iteration_records
+            if node.node_id in record.frontier_node_ids
+        ]
+        zero_streak = 0
+        for record in reversed(eligible):
+            if record.allocations.get(node.node_id, 0) > 0:
+                break
+            zero_streak += 1
+        positive_iterations = [
+            record.iteration
+            for record in eligible
+            if record.allocations.get(node.node_id, 0) > 0
+        ]
+        latest = eligible[-1] if eligible else None
+        output.append(
+            FrontierWaitRecordV1(
+                node_id=node.node_id,
+                eligible_iteration_count=len(eligible),
+                zero_allocation_streak=zero_streak,
+                last_positive_allocation_iteration=(
+                    positive_iterations[-1] if positive_iterations else None
+                ),
+                current_score=node.score,
+                current_uncertainty=(
+                    None if latest is None else latest.uncertainties.get(node.node_id)
+                ),
+                current_ucb=(
+                    None if latest is None else latest.ucb_scores.get(node.node_id)
                 ),
             )
         )
@@ -1626,6 +1727,10 @@ def build_run_observability_summary(
         "spec.mode": (raw_spec, "mode"),
         "spec.embedding_provider": (raw_spec, "embedding_provider"),
         "spec.embedding_dimension": (raw_spec, "embedding_dimension"),
+        "spec.budget.max_committed_search_nodes": (
+            raw_budget,
+            "max_committed_search_nodes",
+        ),
         "spec.budget.max_iterations": (raw_budget, "max_iterations"),
         "spec.budget.allocation_mass_per_iteration": (
             raw_budget_presence,
@@ -1654,6 +1759,14 @@ def build_run_observability_summary(
         "spec.budget.entropy_change_threshold": (
             raw_budget,
             "entropy_change_threshold",
+        ),
+        "spec.budget.entropy_plateau_confirmations": (
+            raw_budget,
+            "entropy_plateau_confirmations",
+        ),
+        "spec.budget.continuation_policy": (
+            raw_budget,
+            "continuation_policy",
         ),
         "spec.budget.t_max": (raw_budget, "t_max"),
     }
@@ -1752,6 +1865,11 @@ def build_run_observability_summary(
             problem_sha256=_sha256_text(state.spec.problem),
             goal_sha256=_sha256_text(state.spec.goal),
             budget=RunBudgetSnapshotV1(
+                max_committed_search_nodes=(
+                    state.spec.budget.max_committed_search_nodes
+                    if "max_committed_search_nodes" in raw_budget
+                    else None
+                ),
                 max_iterations=(
                     state.spec.budget.max_iterations
                     if "max_iterations" in raw_budget
@@ -1790,6 +1908,16 @@ def build_run_observability_summary(
                 entropy_change_threshold=(
                     state.spec.budget.entropy_change_threshold
                     if "entropy_change_threshold" in raw_budget
+                    else None
+                ),
+                entropy_plateau_confirmations=(
+                    state.spec.budget.entropy_plateau_confirmations
+                    if "entropy_plateau_confirmations" in raw_budget
+                    else None
+                ),
+                continuation_policy=(
+                    state.spec.budget.continuation_policy
+                    if "continuation_policy" in raw_budget
                     else None
                 ),
                 t_max=(
@@ -1850,6 +1978,8 @@ def build_run_observability_summary(
                 else None
             ),
         ),
+        continuation_gate_trajectory=_build_continuation_gate_trajectory(state),
+        frontier_wait=_build_frontier_wait(state),
         rejections=_build_rejection_summary(state, events),
         feedback=feedback,
         data_quality=ObservabilityDataQualityV1(
@@ -1918,7 +2048,7 @@ def render_observability_text(summary: RunObservabilitySummaryV1) -> str:
             f"DTE observability summary ({summary.schema_version})",
             f"run: {run.run_id}",
             f"terminal: {run.terminal_action or 'not terminal'}"
-            + (f" — {run.terminal_reason}" if run.terminal_reason else ""),
+            + (f" - {run.terminal_reason}" if run.terminal_reason else ""),
             f"controller: {iteration_text} iteration(s), graph revision {run.graph_revision}",
             "episodes:",
             *role_lines,
@@ -1927,6 +2057,16 @@ def render_observability_text(summary: RunObservabilitySummaryV1) -> str:
                 f"{funnel.initial_node_count} initial -> {funnel.all_committed_node_count} committed "
                 f"-> {funnel.provisional_synthesis_selected_node_count} provisional-selected; "
                 f"{funnel.merged_node_count} merged"
+            ),
+            (
+                "search-node budget: "
+                f"{funnel.committed_search_node_count} committed, "
+                f"{funnel.remaining_search_node_slots} remaining; "
+                f"{funnel.canonical_frontier_node_count} canonical frontier"
+            ),
+            (
+                "continuation gates: "
+                f"{len(summary.continuation_gate_trajectory)} evaluated"
             ),
             "allocations: " + ("; ".join(allocations) if allocations else "none"),
             (

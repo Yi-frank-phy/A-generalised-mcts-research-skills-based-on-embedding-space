@@ -11,6 +11,12 @@ from .episode_adapter import AgentEpisodeAdapter
 from .episode_commit import EpisodeGraph
 from .cache import DTECache
 from .control import authorize_synthesis_control, record_forced_synthesis
+from .continuation import (
+    ContinuationGateRecord,
+    count_committed_search_nodes,
+    evaluate_continuation_gate,
+    remaining_search_node_slots,
+)
 from .embedding import get_embedding_provider
 from .entropy import EntropyState, evaluate_entropy_state
 from .expansion import expand_frontier
@@ -23,7 +29,7 @@ from .novelty import estimate_frontier_kde_state
 from .oracle_validation import validate_judge_output
 from .subprocess_oracles import JudgeAdapter
 from .role_pipeline import seed_frontier_from_roles
-from .synthesis import synthesize_report
+from .synthesis import select_provisional_synthesis_nodes, synthesize_report
 from .telemetry import EpisodeEventLog
 
 
@@ -34,6 +40,7 @@ class IterationTrace:
     notes: list[str] = field(default_factory=list)
     merges: list[MergeProposal] = field(default_factory=list)
     entropy_state: EntropyState | None = None
+    continuation_gate: ContinuationGateRecord | None = None
     human_question: HumanQuestion | None = None
 
 
@@ -106,10 +113,22 @@ def run_frontier_search(
     else:
         nodes, role_audit = _seed_nodes_from_spec(spec)
 
+    if (
+        spec.budget.continuation_policy == "bounded_node_yield_v1"
+        and count_committed_search_nodes(nodes)
+        > spec.budget.max_committed_search_nodes
+    ):
+        raise ValueError("initial search nodes exceed max_committed_search_nodes")
+
     traces: list[IterationTrace] = []
     cache = cache or DTECache()
     embedding_provider = get_embedding_provider(spec.embedding_provider, dim=spec.embedding_dimension)
     previous_entropy: float | None = None
+    previous_plateau_count = 0
+    previous_frontier_node_ids: set[str] = set()
+    previous_positive_allocation_node_ids: set[str] = set()
+    previous_provisional_synthesis_node_ids: set[str] = set()
+    considered_epistemic_record_ids: set[str] = set()
     stop_reason: str | None = None
     forced_synthesis: ForcedSynthesisRecord | None = None
     episode_graph = EpisodeGraph(nodes=nodes)
@@ -194,13 +213,50 @@ def run_frontier_search(
             min_iterations=spec.budget.min_iterations_before_synthesis,
             entropy_change_threshold=spec.budget.entropy_change_threshold,
             t_max=spec.budget.t_max,
+            previous_plateau_count=previous_plateau_count,
+            plateau_confirmations=spec.budget.entropy_plateau_confirmations,
         )
         previous_entropy = kde_state.spatial_entropy
+        previous_plateau_count = entropy_state.consecutive_plateau_count
+
+        if (
+            spec.budget.continuation_policy == "bounded_node_yield_v1"
+            and remaining_search_node_slots(
+                nodes,
+                spec.budget.max_committed_search_nodes,
+            )
+            == 0
+        ):
+            traces.append(
+                IterationTrace(
+                    iteration=iteration,
+                    allocations=[],
+                    merges=merges,
+                    notes=[
+                        f"frontier={len(frontier)}",
+                        "auto_synthesis_trigger=max_search_nodes",
+                    ],
+                    entropy_state=entropy_state,
+                )
+            )
+            stop_reason = "max_search_nodes"
+            maybe_checkpoint(nodes)
+            break
+
+        effective_child_cap = spec.budget.max_children_per_iteration
+        if spec.budget.continuation_policy == "bounded_node_yield_v1":
+            effective_child_cap = min(
+                effective_child_cap,
+                remaining_search_node_slots(
+                    nodes,
+                    spec.budget.max_committed_search_nodes,
+                ),
+            )
 
         allocations = allocate_frontier(
             nodes,
             allocation_mass_per_iteration=spec.budget.allocation_mass_per_iteration,
-            max_children_per_iteration=spec.budget.max_children_per_iteration,
+            max_children_per_iteration=effective_child_cap,
             tau=max(entropy_state.normalized_temperature, 0.05),
             c_explore=1.0,
             temperature=max(entropy_state.effective_temperature, 0.05),
@@ -214,8 +270,56 @@ def run_frontier_search(
 
         human_question = maybe_create_human_question(
             frontier,
-            entropy_plateau=entropy_state.should_synthesize,
+            entropy_plateau=entropy_state.plateau_signal,
         )
+        continuation_gate: ContinuationGateRecord | None = None
+        if spec.budget.continuation_policy == "bounded_node_yield_v1":
+            provisional = select_provisional_synthesis_nodes(
+                nodes,
+                graph_revision=episode_graph.revision,
+            )
+            allocation_map = {
+                allocation.node_id: allocation.expansion_budget
+                for allocation in allocations
+            }
+            continuation_gate = evaluate_continuation_gate(
+                iteration=iteration,
+                graph_revision=episode_graph.revision,
+                nodes=nodes,
+                max_committed_search_nodes=spec.budget.max_committed_search_nodes,
+                entropy_delta=entropy_state.entropy_delta,
+                consecutive_plateau_count=entropy_state.consecutive_plateau_count,
+                plateau_confirmed=(
+                    iteration >= spec.budget.min_iterations_before_synthesis
+                    and entropy_state.consecutive_plateau_count
+                    >= spec.budget.entropy_plateau_confirmations
+                ),
+                allocations=allocation_map,
+                previous_frontier_node_ids=previous_frontier_node_ids,
+                previous_positive_allocation_node_ids=(
+                    previous_positive_allocation_node_ids
+                ),
+                previous_provisional_synthesis_node_ids=(
+                    previous_provisional_synthesis_node_ids
+                ),
+                provisional_synthesis_node_ids=provisional.selected_node_ids,
+                ledger=episode_graph.epistemic_ledger,
+                previously_considered_epistemic_ids=(
+                    considered_epistemic_record_ids
+                ),
+            )
+            considered_epistemic_record_ids.update(
+                continuation_gate.considered_epistemic_record_ids
+            )
+            previous_frontier_node_ids = {node.node_id for node in frontier}
+            previous_positive_allocation_node_ids = {
+                allocation.node_id
+                for allocation in allocations
+                if allocation.expansion_budget > 0
+            }
+            previous_provisional_synthesis_node_ids = set(
+                provisional.selected_node_ids
+            )
         traces.append(
             IterationTrace(
                 iteration=iteration,
@@ -224,7 +328,7 @@ def run_frontier_search(
                 notes=[
                     f"frontier={len(frontier)}",
                     f"allocation_mass={spec.budget.allocation_mass_per_iteration}",
-                    f"max_children={spec.budget.max_children_per_iteration}",
+                    f"max_children={effective_child_cap}",
                     f"judge_cache_hits={cache.stats.judge_hits}",
                     f"embedding_cache_hits={cache.stats.embedding_hits}",
                     f"spatial_entropy={entropy_state.spatial_entropy:.4f}",
@@ -232,12 +336,23 @@ def run_frontier_search(
                     f"kde_bandwidth2={kde_state.bandwidth2:.4f}",
                 ],
                 entropy_state=entropy_state,
+                continuation_gate=continuation_gate,
                 human_question=human_question,
             )
         )
         maybe_checkpoint(nodes)
 
-        if entropy_state.should_synthesize:
+        if (
+            continuation_gate is not None
+            and continuation_gate.decision == "prepare_synthesis"
+        ):
+            traces[-1].notes.append("auto_synthesis_trigger=continuation_gate")
+            stop_reason = "continuation_gate"
+            break
+        if (
+            spec.budget.continuation_policy == "legacy_entropy_v1"
+            and entropy_state.should_synthesize
+        ):
             traces[-1].notes.append(f"auto_synthesis_trigger={entropy_state.stop_reason}")
             stop_reason = entropy_state.stop_reason
             break

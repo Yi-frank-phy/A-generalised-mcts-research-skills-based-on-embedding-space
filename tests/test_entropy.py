@@ -7,13 +7,28 @@ def test_spatial_entropy_increases_for_spread_nodes():
     assert spread >= identical
 
 
-def test_entropy_plateau_triggers_after_min_iteration():
-    state = evaluate_entropy_state(
+def test_entropy_plateau_requires_configured_confirmations():
+    first = evaluate_entropy_state(
         spatial_entropy=1.0,
         previous_entropy=1.01,
         iteration=2,
         min_iterations=2,
         entropy_change_threshold=0.05,
+        previous_plateau_count=0,
+        plateau_confirmations=2,
     )
-    assert state.should_synthesize
-    assert state.stop_reason == "entropy_plateau"
+    assert not first.plateau_signal
+    assert first.consecutive_plateau_count == 1
+
+    second = evaluate_entropy_state(
+        spatial_entropy=1.0,
+        previous_entropy=1.0,
+        iteration=3,
+        min_iterations=2,
+        entropy_change_threshold=0.05,
+        previous_plateau_count=first.consecutive_plateau_count,
+        plateau_confirmations=2,
+    )
+    assert second.plateau_signal
+    assert second.consecutive_plateau_count == 2
+    assert second.stop_reason == "entropy_plateau"

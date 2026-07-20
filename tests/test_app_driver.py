@@ -1,4 +1,5 @@
 import json
+import hashlib
 import subprocess
 import sys
 from datetime import timedelta
@@ -26,6 +27,7 @@ from dte_backend.episode_models import (
     RuntimeDiagnostics,
     RuntimeLimits,
     compute_output_hash,
+    canonical_json_bytes,
 )
 from dte_backend.control import OperatorAuthorizationError
 from dte_backend.embedding import HashEmbeddingProvider
@@ -66,6 +68,165 @@ def create_run(tmp_path):
     state.controller_action = action
     app_driver._save_state(run_dir, state)
     return run_dir
+
+
+def test_restart_preserves_bounded_continuation_gate_decision(tmp_path):
+    run_dir = create_run(tmp_path)
+    before = app_driver.load_app_run(run_dir)
+
+    after = app_driver.load_app_run(run_dir)
+
+    assert [
+        record.model_dump(mode="json")
+        for record in after.continuation_gate_records
+    ] == [
+        record.model_dump(mode="json")
+        for record in before.continuation_gate_records
+    ]
+
+
+def test_restart_rejects_tampered_continuation_gate_decision(tmp_path):
+    run_dir = create_run(tmp_path)
+    state_path = run_dir / "app_run_state.json"
+    payload = json.loads(state_path.read_text(encoding="utf-8"))
+    original = payload["continuation_gate_records"][0]["decision"]
+    payload["continuation_gate_records"][0]["decision"] = (
+        "prepare_synthesis" if original == "continue" else "continue"
+    )
+    state_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="continuation-gate record"):
+        app_driver.load_app_run(run_dir)
+
+
+def test_restart_replays_and_rejects_tampered_material_yield(tmp_path):
+    run_dir = create_run(tmp_path)
+    state_path = run_dir / "app_run_state.json"
+    payload = json.loads(state_path.read_text(encoding="utf-8"))
+    payload["continuation_gate_records"][0]["material_yield_signals"].append(
+        "epistemic_disposition:counterexample_found:forged"
+    )
+    state_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="continuation-gate record"):
+        app_driver.load_app_run(run_dir)
+
+
+def test_legacy_app_state_keeps_legacy_entropy_policy(tmp_path):
+    run_dir = create_run(tmp_path)
+    state_path = run_dir / "app_run_state.json"
+    payload = json.loads(state_path.read_text(encoding="utf-8"))
+    budget = payload["spec"]["budget"]
+    budget.pop("max_committed_search_nodes")
+    budget.pop("entropy_plateau_confirmations")
+    budget.pop("continuation_policy")
+    payload["continuation_gate_records"] = []
+    payload["spec_hash"] = hashlib.sha256(
+        canonical_json_bytes(payload["spec"])
+    ).hexdigest()
+    state_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    restored = app_driver.load_app_run(run_dir)
+
+    assert restored.spec.budget.continuation_policy == "legacy_entropy_v1"
+    assert restored.spec.budget.entropy_plateau_confirmations == 1
+    assert restored.continuation_gate_records == []
+
+
+def test_app_create_rejects_initial_nodes_above_search_node_cap(tmp_path):
+    bounded = spec().model_copy(
+        update={
+            "budget": spec().budget.model_copy(
+                update={"max_committed_search_nodes": 1}
+            )
+        }
+    )
+    with pytest.raises(
+        ValueError,
+        match="initial committed search nodes exceed max_committed_search_nodes",
+    ):
+        create_app_run(
+            tmp_path / "over-cap",
+            bounded,
+            [
+                SearchNode(node_id="one", claim="one"),
+                SearchNode(node_id="two", claim="two"),
+            ],
+        )
+
+
+def test_app_equal_search_node_cap_judges_before_terminal(tmp_path):
+    bounded = spec().model_copy(
+        update={
+            "budget": spec().budget.model_copy(
+                update={
+                    "max_committed_search_nodes": 1,
+                    "max_iterations": 10,
+                }
+            )
+        }
+    )
+    run_dir = tmp_path / "equal-cap"
+    create_app_run(run_dir, bounded, [parent()], run_id="equal-cap")
+    judge = next_app_episode(run_dir).request
+    assert judge.role == "judge"
+    submit_app_episode_result(run_dir, judge_result_for(judge))
+
+    terminal = next_app_episode(run_dir)
+    assert terminal.controller_action == "ready_for_synthesis"
+    state = app_run_status(run_dir)
+    assert state.nodes[0].score == pytest.approx(0.8)
+    assert state.terminal_record.source == "max_search_nodes"
+
+
+def test_app_allocation_and_executor_grant_share_remaining_node_slots(tmp_path):
+    bounded = spec().model_copy(
+        update={
+            "budget": spec().budget.model_copy(
+                update={
+                    "max_committed_search_nodes": 4,
+                    "max_iterations": 10,
+                    "allocation_mass_per_iteration": 5,
+                    "max_children_per_iteration": 5,
+                }
+            )
+        }
+    )
+    run_dir = tmp_path / "two-slots"
+    create_app_run(
+        run_dir,
+        bounded,
+        [
+            SearchNode(node_id="one", claim="one"),
+            SearchNode(node_id="two", claim="two"),
+        ],
+        run_id="two-slots",
+    )
+    while True:
+        request = next_app_episode(
+            run_dir, embedding_provider=HashEmbeddingProvider(dim=8)
+        ).request
+        if request.role == "executor":
+            executor = request
+            break
+        assert request.role == "judge"
+        submit_app_episode_result(run_dir, judge_result_for(request))
+
+    state = app_run_status(run_dir)
+    controller = state.controller_iteration_records[-1]
+    assert sum(controller.allocations.values()) == 2
+    assert controller.effective_child_cap == 2
+    assert executor.max_returned_children <= 2
+
+    rejected = submit_app_episode_result(
+        run_dir,
+        result_for(executor, children=executor.max_returned_children + 1),
+    )
+    assert rejected.commit_outcome.accepted is False
+    assert rejected.commit_outcome.rejection_reason == (
+        "returned child count exceeds grant"
+    )
+    assert len(app_run_status(run_dir).nodes) == 2
 
 
 def judge_result_for(request):

@@ -1,3 +1,16 @@
+from dte_backend.app_driver import (
+    app_run_status,
+    create_app_run,
+    next_app_episode,
+    submit_app_episode_result,
+)
+from dte_backend.episode_models import (
+    EpisodeResult,
+    JudgeEpisodeOutput,
+    JudgeObservation,
+    RuntimeDiagnostics,
+    compute_output_hash,
+)
 from dte_backend.models import BudgetSpec, DTERunSpec, SearchNode, SynthesisControlRequest
 from dte_backend.runner import run_frontier_search
 from dte_backend.synthesis import synthesize_report
@@ -137,7 +150,7 @@ def test_run_frontier_search_accepts_authorized_main_agent_request():
     assert "`entropy_plateau` convergence or algorithmic convergence" in result.report
 
 
-def test_controller_natural_entropy_stop_is_unchanged():
+def test_legacy_controller_natural_entropy_stop_is_unchanged():
     spec = DTERunSpec(
         problem="natural stop",
         goal="stop only when the controller converges",
@@ -147,6 +160,8 @@ def test_controller_natural_entropy_stop_is_unchanged():
             max_children_per_iteration=1,
             min_iterations_before_synthesis=2,
             entropy_change_threshold=0.05,
+            continuation_policy="legacy_entropy_v1",
+            entropy_plateau_confirmations=1,
         ),
     )
 
@@ -155,6 +170,130 @@ def test_controller_natural_entropy_stop_is_unchanged():
     assert result.stop_reason == "entropy_plateau"
     assert result.forced_synthesis is None
     assert any("auto_synthesis_trigger=entropy_plateau" in note for note in result.traces[-1].notes)
+
+
+def test_bounded_runner_rejects_initial_nodes_above_cap():
+    spec = DTERunSpec(
+        problem="bounded",
+        goal="reject excess seeds",
+        budget=BudgetSpec(max_committed_search_nodes=1),
+    )
+
+    with pytest.raises(ValueError, match="initial search nodes exceed"):
+        run_frontier_search(
+            spec,
+            [
+                SearchNode(node_id="a", claim="route A"),
+                SearchNode(node_id="b", claim="route B"),
+            ],
+        )
+
+
+def test_bounded_runner_judges_equal_cap_then_stops_without_expansion():
+    spec = DTERunSpec(
+        problem="bounded",
+        goal="judge before node-cap terminal",
+        budget=BudgetSpec(
+            max_committed_search_nodes=1,
+            max_iterations=10,
+        ),
+    )
+
+    result = run_frontier_search(
+        spec,
+        [SearchNode(node_id="a", claim="route A")],
+    )
+
+    assert result.stop_reason == "max_search_nodes"
+    assert len(result.nodes) == 1
+    assert result.nodes[0].score is not None
+    assert result.traces[0].allocations == []
+
+
+def test_app_native_and_strict_runner_share_equal_cap_stop(tmp_path):
+    spec = DTERunSpec(
+        problem="bounded",
+        goal="share node-cap stopping semantics",
+        budget=BudgetSpec(
+            max_committed_search_nodes=1,
+            max_iterations=10,
+        ),
+        embedding_provider="hash",
+        embedding_dimension=8,
+    )
+    strict = run_frontier_search(
+        spec,
+        [SearchNode(node_id="a", claim="route A")],
+    )
+
+    run_dir = tmp_path / "shared-cap"
+    create_app_run(
+        run_dir,
+        spec,
+        [SearchNode(node_id="a", claim="route A")],
+        run_id="shared-cap",
+    )
+    request = next_app_episode(run_dir).request
+    output = JudgeEpisodeOutput(
+        observations=[
+            JudgeObservation(
+                node_id="a",
+                score=0.8,
+                reasoning="bounded Judge observation",
+                risks=[],
+            )
+        ]
+    )
+    submit_app_episode_result(
+        run_dir,
+        EpisodeResult(
+            episode_id=request.episode_id,
+            attempt_id=request.attempt_id,
+            run_id=request.run_id,
+            role="judge",
+            input_graph_revision=request.input_graph_revision,
+            selected_node_revisions=request.selected_node_revisions,
+            status="completed",
+            structured_output=output,
+            runtime_diagnostics=RuntimeDiagnostics(
+                adapter_name="test",
+                transport_name="test",
+                profile="native-guided",
+                usage_source="unavailable",
+            ),
+            output_hash=compute_output_hash(output, request.output_schema_version),
+            schema_version=request.output_schema_version,
+        ),
+    )
+    app_outcome = next_app_episode(run_dir)
+    app_state = app_run_status(run_dir)
+
+    assert strict.stop_reason == "max_search_nodes"
+    assert app_outcome.controller_action == "ready_for_synthesis"
+    assert app_state.terminal_record.source == strict.stop_reason
+    assert app_state.nodes[0].score is not None
+
+
+def test_bounded_runner_trims_allocation_to_remaining_node_slots():
+    spec = DTERunSpec(
+        problem="bounded",
+        goal="grant only remaining slots",
+        budget=BudgetSpec(
+            max_committed_search_nodes=4,
+            max_iterations=1,
+            allocation_mass_per_iteration=5,
+            max_children_per_iteration=5,
+        ),
+    )
+    initial = [
+        SearchNode(node_id="a", claim="route A"),
+        SearchNode(node_id="b", claim="route B"),
+    ]
+
+    result = run_frontier_search(spec, initial)
+
+    assert sum(item.expansion_budget for item in result.traces[0].allocations) == 2
+    assert len(result.nodes) == 4
 
 
 def test_synthesis_mentions_protocol():

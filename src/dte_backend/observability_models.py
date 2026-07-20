@@ -48,6 +48,7 @@ RejectionCategory = Literal[
 
 
 class RunBudgetSnapshotV1(DTEBaseModel):
+    max_committed_search_nodes: int | None = Field(default=None, ge=1)
     max_iterations: int | None = Field(default=None, ge=0)
     allocation_mass_per_iteration: int | None = Field(default=None, ge=0)
     max_children_per_iteration: int | None = Field(default=None, ge=0)
@@ -56,6 +57,8 @@ class RunBudgetSnapshotV1(DTEBaseModel):
     max_research_iterations: int | None = Field(default=None, ge=0)
     min_iterations_before_synthesis: int | None = Field(default=None, ge=0)
     entropy_change_threshold: float | None = Field(default=None, ge=0.0)
+    entropy_plateau_confirmations: int | None = Field(default=None, ge=1)
+    continuation_policy: str | None = None
     t_max: float | None = Field(default=None, ge=0.0)
 
 
@@ -213,6 +216,10 @@ class NodeFunnelV1(DTEBaseModel):
     frontier_node_count: int = Field(ge=0)
     closed_node_count: int = Field(ge=0)
     merged_node_count: int = Field(ge=0)
+    committed_search_node_count: int = Field(ge=0)
+    remaining_search_node_slots: int = Field(ge=0)
+    canonical_frontier_node_count: int = Field(ge=0)
+    canonical_live_node_count: int = Field(ge=0)
     provisional_synthesis_selected_node_count: int = Field(ge=0)
 
 
@@ -367,6 +374,10 @@ class ControllerTrajectoryRecordV1(DTEBaseModel):
     frontier_size: int | None = Field(default=None, ge=0)
     judged_frontier_size: int | None = Field(default=None, ge=0)
     spatial_entropy: float | None = None
+    entropy_delta: float | None = Field(default=None, ge=0.0)
+    plateau_signal: bool | None = None
+    consecutive_plateau_count: int | None = Field(default=None, ge=0)
+    effective_child_cap: int | None = Field(default=None, ge=0)
     allocation_mass_parameter: int | None = Field(default=None, ge=0)
     allocated_child_count: int | None = Field(default=None, ge=0)
     positive_budget_parent_count: int | None = Field(default=None, ge=0)
@@ -374,6 +385,37 @@ class ControllerTrajectoryRecordV1(DTEBaseModel):
     graph_revision: int | None = Field(default=None, ge=0)
     readiness_transition: str | None = None
     terminal_transition: str | None = None
+
+
+class ContinuationGateObservabilityRecordV1(DTEBaseModel):
+    controller_iteration: int = Field(ge=1)
+    graph_revision: int = Field(ge=0)
+    committed_search_node_count: int = Field(ge=0)
+    remaining_search_node_slots: int = Field(ge=0)
+    canonical_frontier_count: int = Field(ge=0)
+    entropy_delta: float | None = Field(default=None, ge=0.0)
+    consecutive_plateau_count: int = Field(ge=0)
+    plateau_confirmed: bool
+    trigger_signals: list[str] = Field(default_factory=list)
+    material_yield_signals: list[str] = Field(default_factory=list)
+    material_epistemic_record_ids: list[str] = Field(default_factory=list)
+    continuation_target_node_ids: list[str] = Field(default_factory=list)
+    provisional_synthesis_node_ids: list[str] = Field(default_factory=list)
+    positive_allocation_node_ids: list[str] = Field(default_factory=list)
+    decision: Literal["continue", "prepare_synthesis"]
+    reason: str = Field(min_length=1)
+
+
+class FrontierWaitRecordV1(DTEBaseModel):
+    """Read-only allocation history; this record never changes UCB."""
+
+    node_id: str = Field(min_length=1)
+    eligible_iteration_count: int = Field(ge=0)
+    zero_allocation_streak: int = Field(ge=0)
+    last_positive_allocation_iteration: int | None = Field(default=None, ge=1)
+    current_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    current_uncertainty: float | None = Field(default=None, ge=0.0)
+    current_ucb: float | None = None
 
 
 class RejectionCategoryCountV1(DTEBaseModel):
@@ -470,6 +512,8 @@ class RunObservabilitySummaryV1(DTEBaseModel):
     judge_outcomes: JudgeOutcomeSummaryV1
     relation_outcomes: RelationOutcomeSummaryV1
     controller_trajectory: list[ControllerTrajectoryRecordV1]
+    continuation_gate_trajectory: list[ContinuationGateObservabilityRecordV1]
+    frontier_wait: list[FrontierWaitRecordV1]
     rejections: RejectionSummaryV1
     feedback: list[FeedbackRecordV1]
     data_quality: ObservabilityDataQualityV1

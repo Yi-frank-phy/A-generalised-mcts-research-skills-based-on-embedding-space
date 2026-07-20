@@ -4,8 +4,15 @@
       "additionalProperties": false,
       "description": "Hard budget limits for one DTE run.",
       "properties": {
+        "max_committed_search_nodes": {
+          "default": 20,
+          "maximum": 100,
+          "minimum": 1,
+          "title": "Max Committed Search Nodes",
+          "type": "integer"
+        },
         "max_iterations": {
-          "default": 2,
+          "default": 10,
           "maximum": 20,
           "minimum": 1,
           "title": "Max Iterations",
@@ -59,6 +66,22 @@
           "minimum": 0.0,
           "title": "Entropy Change Threshold",
           "type": "number"
+        },
+        "entropy_plateau_confirmations": {
+          "default": 2,
+          "maximum": 10,
+          "minimum": 1,
+          "title": "Entropy Plateau Confirmations",
+          "type": "integer"
+        },
+        "continuation_policy": {
+          "default": "bounded_node_yield_v1",
+          "enum": [
+            "legacy_entropy_v1",
+            "bounded_node_yield_v1"
+          ],
+          "title": "Continuation Policy",
+          "type": "string"
         },
         "t_max": {
           "default": 1.0,

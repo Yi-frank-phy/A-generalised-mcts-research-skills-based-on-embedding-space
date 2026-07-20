@@ -20,8 +20,20 @@ class EntropyState:
     entropy_delta: float | None
     effective_temperature: float
     normalized_temperature: float
-    should_synthesize: bool
-    stop_reason: str | None = None
+    plateau_signal: bool
+    consecutive_plateau_count: int
+
+    @property
+    def should_synthesize(self) -> bool:
+        """Deprecated compatibility alias; callers must treat this as a signal."""
+
+        return self.plateau_signal
+
+    @property
+    def stop_reason(self) -> str | None:
+        """Deprecated compatibility label, not a synthesis decision."""
+
+        return "entropy_plateau" if self.plateau_signal else None
 
 
 def spatial_entropy_from_embeddings(embeddings: list[list[float]]) -> float:
@@ -36,9 +48,11 @@ def evaluate_entropy_state(
     iteration: int,
     min_iterations: int,
     entropy_change_threshold: float,
+    previous_plateau_count: int = 0,
+    plateau_confirmations: int = 1,
     t_max: float = 1.0,
 ) -> EntropyState:
-    """Convert entropy history into normalized temperature and stop signal."""
+    """Convert entropy history into temperature and a non-authoritative plateau signal."""
 
     if previous_entropy is None:
         return EntropyState(
@@ -46,19 +60,26 @@ def evaluate_entropy_state(
             entropy_delta=None,
             effective_temperature=float(t_max),
             normalized_temperature=1.0,
-            should_synthesize=False,
-            stop_reason=None,
+            plateau_signal=False,
+            consecutive_plateau_count=0,
         )
 
     delta = abs(spatial_entropy - previous_entropy) / max(abs(previous_entropy), 1.0)
     normalized_temperature = min(1.0, delta / max(entropy_change_threshold, 1e-12))
     effective_temperature = float(t_max * normalized_temperature)
-    should_stop = iteration >= min_iterations and delta < entropy_change_threshold
+    current_is_plateau = delta < entropy_change_threshold
+    consecutive_plateau_count = (
+        previous_plateau_count + 1 if current_is_plateau else 0
+    )
+    plateau_signal = (
+        iteration >= min_iterations
+        and consecutive_plateau_count >= plateau_confirmations
+    )
     return EntropyState(
         spatial_entropy=spatial_entropy,
         entropy_delta=float(delta),
         effective_temperature=effective_temperature,
         normalized_temperature=float(normalized_temperature),
-        should_synthesize=should_stop,
-        stop_reason="entropy_plateau" if should_stop else None,
+        plateau_signal=plateau_signal,
+        consecutive_plateau_count=consecutive_plateau_count,
     )

@@ -20,7 +20,8 @@ class DTEBaseModel(BaseModel):
 class BudgetSpec(DTEBaseModel):
     """Hard budget limits for one DTE run."""
 
-    max_iterations: int = Field(default=2, ge=1, le=20)
+    max_committed_search_nodes: int = Field(default=20, ge=1, le=100)
+    max_iterations: int = Field(default=10, ge=1, le=20)
     allocation_mass_per_iteration: int = Field(default=3, ge=1, le=50)
     max_children_per_iteration: int = Field(default=5, ge=1, le=50)
     max_relation_pairs_per_episode: int = Field(default=3, ge=1, le=20)
@@ -28,6 +29,11 @@ class BudgetSpec(DTEBaseModel):
     max_research_iterations: int = Field(default=1, ge=0, le=5)
     min_iterations_before_synthesis: int = Field(default=2, ge=1, le=20)
     entropy_change_threshold: float = Field(default=0.05, ge=0.0, le=1.0)
+    entropy_plateau_confirmations: int = Field(default=2, ge=1, le=10)
+    continuation_policy: Literal[
+        "legacy_entropy_v1",
+        "bounded_node_yield_v1",
+    ] = "bounded_node_yield_v1"
     t_max: float = Field(default=1.0, gt=0.0, le=10.0)
 
     @model_validator(mode="before")

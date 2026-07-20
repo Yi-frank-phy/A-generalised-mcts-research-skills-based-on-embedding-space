@@ -288,13 +288,42 @@ When the user has not specified a stricter or cheaper budget, use this balanced 
 
 ```json
 "budget": {
-  "max_iterations": 5,
-  "min_iterations_before_synthesis": 3,
-  "entropy_change_threshold": 0.01
+  "max_committed_search_nodes": 20,
+  "max_iterations": 10,
+  "min_iterations_before_synthesis": 2,
+  "entropy_change_threshold": 0.01,
+  "entropy_plateau_confirmations": 2,
+  "continuation_policy": "bounded_node_yield_v1"
 }
 ```
 
-Keep `allocation_mass_per_iteration` and `max_children_per_iteration` explicit for the task. Do not set `min_iterations_before_synthesis` equal to `max_iterations`; the entropy stop condition must have room to operate before the hard cap.
+`max_committed_search_nodes` is the primary non-renewable search budget; merged
+nodes still count. `max_iterations` is only a pathological-loop safety cap.
+Keep `allocation_mass_per_iteration` and `max_children_per_iteration` explicit
+for the task. `min_iterations_before_synthesis` is the earliest iteration at
+which the entropy trigger may participate in the continuation gate; it is not a
+promise to spend that many iterations. A gate decision or reasoning-effort
+change cannot enlarge or reset either hard cap.
+
+## Runtime reasoning-effort guidance
+
+Keep backend budget and model routing separate. When the runtime exposes profile
+selection, or when the main agent must recommend a profile:
+
+- Default to Sol High. Native self-organized subagents remain available when
+  their bounded, non-overlapping work materially improves an episode.
+- Recommend XHigh or Max for one isolated, explicit hard proof kernel or
+  contradiction that benefits from extended single-track reasoning.
+- Recommend Ultra when there are multiple genuinely independent workstreams
+  requiring autonomous decomposition, cross-attack, and reconciliation.
+- Apply escalation only to the current bottleneck. It does not expand the DTE
+  node cap, iteration cap, allocation, child grant, or episode scope.
+- Do not escalate merely because a prompt is long, open-ended, or admits more
+  variations. Prefer a tighter episode obligation and deterministic verification
+  when those address the bottleneck.
+- Do not automatically downgrade research episodes to Terra. Do not claim that
+  reasoning effort changed when the current runtime exposes no switching
+  interface; report a recommendation instead.
 
 ## Prefix-cache rule for Codex backend LLM calls
 

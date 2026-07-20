@@ -101,11 +101,27 @@ sum_i children_i <= H
 The target default semantics are:
 
 ```text
+max_committed_search_nodes = 20
+max_iterations = 10
 allocation_mass_per_iteration = 3
 max_children_per_iteration = 5
+entropy_plateau_confirmations = 2
 max_relation_pairs_per_episode = 3
 max_relation_enrichment_pairs = 3
 ```
+
+`max_committed_search_nodes` is the primary, non-renewable search-cost
+budget. It counts Seed nodes and every successfully committed Executor child,
+including nodes later marked `closed`, `archived`, or `merged`, and excludes
+Synthesis nodes. Retry, rejection, failure, cancellation, and empty results do
+not consume a node slot. Merge reduces canonical graph complexity but never
+refunds already-spent node budget. Initial nodes above the cap are invalid;
+initial nodes equal to the cap are still judged before the terminal gate.
+
+Before issuing Executor grants, the controller caps the sum of all granted
+children by the remaining node slots. The Executor request and commit boundary
+revalidate that grant, so already-authorized work can drain without exceeding
+the cap. `max_iterations` is only an absolute pathological-loop guard.
 
 For temporary input compatibility, the legacy field `total_child_budget` is accepted only as a deprecated alias for `allocation_mass_per_iteration`. Canonical serialization and schemas use the new fields.
 
@@ -114,6 +130,15 @@ If tentative allocation exceeds `H`, the controller must trim children by a dete
 Python's built-in bankers rounding is not the normative rule. Half values below one use round-half-up semantics.
 
 By default `A_i = U_i`, so entropy and uncertainty affect actual expansion rather than merely display ranking.
+
+Entropy controls temperature and emits a replayable plateau signal. It has no
+direct Synthesis authority under `bounded_node_yield_v1`. A confirmed plateau
+or a single canonical frontier triggers a continuation gate. Continuation is
+granted only when committed facts show a narrow material-yield signal, a
+specific frontier target has positive allocation, and a node slot remains.
+Epistemic-ledger signals are one-use bounded heuristics, not scientific truth;
+they never change UCB, model strength, or either hard budget. Persisted legacy
+App runs retain `legacy_entropy_v1` behavior after hash-checked migration.
 
 ## 5. Status and ownership model
 
@@ -483,6 +508,9 @@ allocation outcomes and explicitly named internal proxy yields
 Judge score versus later observable state, labelled as non-causal posterior proxies
 Relation yields by scheduling class and candidate reason
 controller iteration trajectory
+committed/remaining search-node budget and canonical/live/merged counts
+bounded continuation-gate trajectory and its material-yield record identities
+read-only frontier eligibility and zero-allocation streak diagnostics
 deterministic rejection categories
 self-reported data-quality limitations
 ```
@@ -493,6 +521,12 @@ node, recompute a Judge score, or change controller decisions. Missing legacy
 fields remain `null` or are reported as missing; they are never silently treated
 as zero. Non-deterministic generation timestamps are not part of the core run
 summary.
+
+Frontier wait diagnostics are reconstructed only from controller iteration
+records. They are not stored on `SearchNode`, do not add an age bonus, and must
+not affect UCB or allocation. Continuation material-yield fields explain a
+bounded process heuristic; they are not scientific truth, convergence evidence,
+or permission to increase a node, iteration, child, or model-compute budget.
 
 Runtime aggregate diagnostics may include provider- or main-agent-reported
 counts for internal subagents, parallelism, tool calls, rounds, failures, and

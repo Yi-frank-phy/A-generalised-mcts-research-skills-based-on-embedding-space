@@ -55,6 +55,10 @@ def test_run_spec_serializes_only_canonical_budget_fields():
     assert serialized["max_children_per_iteration"] == 5
     assert serialized["max_relation_pairs_per_episode"] == 3
     assert serialized["max_relation_enrichment_pairs"] == 3
+    assert serialized["max_committed_search_nodes"] == 20
+    assert serialized["max_iterations"] == 10
+    assert serialized["entropy_plateau_confirmations"] == 2
+    assert serialized["continuation_policy"] == "bounded_node_yield_v1"
     assert "total_child_budget" not in serialized
 
 
@@ -65,6 +69,10 @@ def test_generated_budget_schema_uses_canonical_fields():
     assert schema["max_relation_pairs_per_episode"]["default"] == 3
     assert schema["max_relation_enrichment_pairs"]["default"] == 3
     assert schema["max_relation_enrichment_pairs"]["minimum"] == 0
+    assert schema["max_committed_search_nodes"]["default"] == 20
+    assert schema["max_committed_search_nodes"]["maximum"] == 100
+    assert schema["max_iterations"]["default"] == 10
+    assert schema["entropy_plateau_confirmations"]["default"] == 2
     assert "total_child_budget" not in schema
 
 
@@ -79,11 +87,17 @@ def test_checked_in_run_schema_and_example_use_canonical_budget_fields():
     assert "max_children_per_iteration" in schema_budget["properties"]
     assert "max_relation_pairs_per_episode" in schema_budget["properties"]
     assert "max_relation_enrichment_pairs" in schema_budget["properties"]
+    assert "max_committed_search_nodes" in schema_budget["properties"]
+    assert "entropy_plateau_confirmations" in schema_budget["properties"]
+    assert "continuation_policy" in schema_budget["properties"]
     assert "total_child_budget" not in schema_budget["properties"]
     assert example_budget["allocation_mass_per_iteration"] == 3
     assert example_budget["max_children_per_iteration"] == 5
     assert example_budget["max_relation_pairs_per_episode"] == 3
     assert example_budget["max_relation_enrichment_pairs"] == 3
+    assert example_budget["max_committed_search_nodes"] == 20
+    assert example_budget["entropy_plateau_confirmations"] == 2
+    assert example_budget["continuation_policy"] == "bounded_node_yield_v1"
     assert "total_child_budget" not in example_budget
     assert schema["$defs"]["OperatorPolicy"]["properties"]["main_agent_may_request_synthesis"]["default"] is True
     assert example["operator_policy"]["main_agent_may_request_synthesis"] is True

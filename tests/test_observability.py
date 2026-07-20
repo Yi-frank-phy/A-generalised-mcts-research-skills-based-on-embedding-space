@@ -317,6 +317,13 @@ def test_complete_lineage_allocation_judge_relation_and_trajectory(tmp_path):
     assert summary.node_funnel.all_committed_node_count == 4
     assert summary.node_funnel.committed_executor_child_count == 2
     assert summary.node_funnel.merged_node_count == 1
+    assert summary.node_funnel.committed_search_node_count == 4
+    assert summary.node_funnel.remaining_search_node_slots == 16
+    assert summary.node_funnel.canonical_frontier_node_count == 1
+    assert summary.node_funnel.canonical_live_node_count == 3
+    assert summary.run.budget.max_committed_search_nodes == 20
+    assert summary.run.budget.entropy_plateau_confirmations == 2
+    assert summary.run.budget.continuation_policy == "bounded_node_yield_v1"
     children = {
         node.node_id: node
         for node in summary.node_lineage
@@ -343,6 +350,54 @@ def test_complete_lineage_allocation_judge_relation_and_trajectory(tmp_path):
     assert exact.equivalent_yield == 1.0
     assert summary.controller_trajectory[0].positive_budget_parent_count == 2
     assert summary.controller_trajectory[0].children_committed == 2
+    assert len(summary.continuation_gate_trajectory) == 1
+    assert summary.continuation_gate_trajectory[0].decision == "continue"
+    assert summary.frontier_wait[0].node_id in children
+
+
+def test_frontier_wait_is_read_only_and_does_not_change_allocation(tmp_path):
+    run_dir = tmp_path / "frontier-wait"
+    create_app_run(
+        run_dir,
+        DTERunSpec(
+            problem="observe temporarily unallocated frontier nodes",
+            goal="derive wait metrics without changing UCB",
+            constraints=["wait metrics are read-only"],
+            budget=BudgetSpec(
+                max_iterations=2,
+                allocation_mass_per_iteration=1,
+                max_children_per_iteration=1,
+                max_relation_pairs_per_episode=1,
+                max_relation_enrichment_pairs=0,
+            ),
+            embedding_provider="hash",
+            embedding_dimension=8,
+        ),
+        [SearchNode(node_id=f"p{index}", claim=f"route {index}") for index in range(3)],
+        run_id="frontier-wait",
+    )
+    while True:
+        request = next_app_episode(
+            run_dir, embedding_provider=HashEmbeddingProvider(dim=8)
+        ).request
+        if request.role == "executor":
+            executor = request
+            break
+        assert request.role == "judge"
+        submit_app_episode_result(run_dir, judge_result(request))
+    assert executor.role == "executor"
+
+    before = file_snapshot(run_dir)
+    summary = build_run_observability_summary(run_dir)
+    assert file_snapshot(run_dir) == before
+    assert len(summary.frontier_wait) == 3
+    assert all(row.eligible_iteration_count == 1 for row in summary.frontier_wait)
+    assert sum(row.last_positive_allocation_iteration == 1 for row in summary.frontier_wait) == 1
+    assert sum(row.zero_allocation_streak == 1 for row in summary.frontier_wait) == 2
+    assert all(row.current_ucb is not None for row in summary.frontier_wait)
+    assert "frontier_wait_iterations" not in (
+        run_dir / "app_run_state.json"
+    ).read_text(encoding="utf-8")
 
 
 def test_material_conflict_and_disclosure_are_reported_without_verifier_claim(tmp_path):
@@ -983,6 +1038,13 @@ def test_skill_and_agents_require_terminal_summary_but_not_hidden_topology():
     assert "observability-summary --run-dir <run-dir> --format json" in combined
     assert "record-feedback" in skill
     assert "No fixed subagent count or topology is required" in skill
+    assert '"max_committed_search_nodes": 20' in skill
+    assert '"max_iterations": 10' in skill
+    assert "Default to Sol High" in skill
+    assert "Recommend XHigh or Max" in skill
+    assert "Recommend Ultra" in skill
+    assert "Do not automatically downgrade research episodes to Terra" in skill
+    assert "reasoning effort changed" in skill
     assert "Relation compares only the granted pairs; it is not a verifier" in agents
     assert "do not prove" in combined
     assert "require a complete hidden subagent topology" not in combined

@@ -30,7 +30,11 @@ The internal Python package still uses `dte_backend` for backward compatibility.
 
 ## Status
 
-This is an **alpha skill/backend**. The smoke path is fully local and should pass without external API keys. Real research mode requires a real Judge command, such as:
+This is a **feature-complete v1 protocol in public alpha**. The engineering
+architecture is ready for real use; the alpha label remains because comparative
+research effectiveness has not yet been established by real-run outcome data.
+The smoke path is fully local and should pass without external API keys. Real
+research mode requires a real Judge command, such as:
 
 ```bash
 python -m dte_backend strict-run \
@@ -42,6 +46,17 @@ python -m dte_backend strict-run \
 ```
 
 `examples/mock_*_adapter.py` are smoke-test tools only. Hash embedding is a debug/dry-run fallback, not real geometry.
+
+### V1 stability policy
+
+Development now prioritizes real-run use, evaluation, compatibility,
+maintenance, and fixes. Do not pre-emptively add a native final Synthesis
+episode, verifier or human-approval gate, dormant-node state, or more complex
+reward/convergence/reliability/control metrics. Reconsider one of these only
+after a reproducible real-run failure, comparative outcome evidence, or a
+concrete protocol requirement demonstrates that the current v1 mechanisms are
+insufficient. Passing tests establishes protocol behavior, not scientific
+correctness or research effectiveness.
 
 ## Repository layout
 

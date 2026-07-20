@@ -117,6 +117,12 @@ is an external artifact ignored by current DTE and must not be modified.
 - Prefer small Python modules over deep frameworks.
 - Use JSON schemas and Pydantic models for all machine-facing boundaries.
 - Add comments explaining shape, purpose, and assumptions.
+- Treat the v1 architecture as feature-complete. Do not pre-emptively add a
+  native final Synthesis episode, verifier or human-approval layer,
+  dormant-node state, or new reward/convergence/reliability/control metrics.
+  Such work requires a reproducible real-run failure, comparative outcome
+  evidence, or a concrete protocol requirement that the current design cannot
+  satisfy.
 
 ## Role contracts
 

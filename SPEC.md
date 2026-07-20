@@ -490,6 +490,28 @@ DTE must not:
 - depend on one specific transport such as `codex exec`;
 - introduce unbounded recursive agent fan-out.
 
+### 16.1 V1 architecture freeze and evidence-gated evolution
+
+The current protocol is feature-complete for the v1 research workflow.
+Repository development now moves from speculative architecture expansion to
+real-run use, evaluation, maintenance, and fixes.
+Do not pre-emptively add:
+
+- a native final Synthesis episode: terminal synthesis remains the main agent's
+  reporting step over backend-controlled provisional selection and handoffs;
+- a verifier, human-approval gate, or artifact-backed correctness authority;
+- a dormant-node state: zero-allocation candidates remain ordinary `frontier`
+  nodes and continue to participate in the existing allocation policy;
+- additional reward, convergence, learning, reliability, or control metrics
+  beyond the current read-only observability contract.
+
+These boundaries are not claims that no future change is possible. Reconsider
+one only when real runs provide a reproducible failure case, comparative outcome
+evidence, or a concrete protocol requirement that the current v1 mechanisms
+cannot satisfy. A new metric must first be justified as decision-relevant
+observability and must not become controller input by implication. Architecture
+may not expand merely because a plausible extension can be imagined.
+
 ## 17. Deterministic observability and feedback boundary
 
 Observability is a versioned, read-only projection over the persistent App run

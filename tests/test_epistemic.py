@@ -1259,3 +1259,27 @@ def test_skill_and_agents_require_both_terminal_summaries_without_learning_ledge
     assert "record-feedback" in combined
     assert "does not verify scientific truth" in combined.casefold()
     assert "most dangerous" in combined.casefold() or "最危险" in combined
+
+
+def test_spec_freezes_v1_architecture_until_real_run_evidence_justifies_change():
+    root = Path(__file__).resolve().parents[1]
+    spec_text = (root / "SPEC.md").read_text(encoding="utf-8").casefold()
+    architecture_text = (root / "ARCHITECTURE.md").read_text(
+        encoding="utf-8"
+    ).casefold()
+    operator_text = "\n".join(
+        (root / name).read_text(encoding="utf-8").casefold()
+        for name in ("README.md", "AGENTS.md", "SKILL.md")
+    )
+
+    assert "v1 architecture freeze and evidence-gated evolution" in spec_text
+    assert "native final synthesis episode" in spec_text
+    assert "verifier, human-approval gate" in spec_text
+    assert "dormant-node state" in spec_text
+    assert "additional reward, convergence, learning, reliability" in spec_text
+    assert "real runs provide a reproducible failure case" in spec_text
+    assert "v1 architecture is now frozen" in architecture_text
+    assert "future architecture work is evidence-gated" in architecture_text
+    assert "feature-complete v1" in operator_text
+    assert "dormant-node state" in operator_text
+    assert "comparative outcome evidence" in operator_text

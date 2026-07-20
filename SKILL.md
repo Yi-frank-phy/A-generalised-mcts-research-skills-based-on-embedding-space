@@ -317,6 +317,18 @@ selection, or when the main agent must recommend a profile:
   reasoning effort changed when the current runtime exposes no switching
   interface; report a recommendation instead.
 
+## V1 repository evolution policy
+
+The current protocol is feature-complete for v1. Use real runs to evaluate it;
+do not pre-emptively expand the architecture with a native final Synthesis
+episode, verifier or human-approval gate, dormant-node state, or additional
+reward/convergence/reliability/control metrics. These are not routine backlog
+items. Reconsider one only when a reproducible real-run failure, comparative
+outcome evidence, or a concrete protocol requirement shows that the existing
+main-agent terminal report, frontier semantics, or read-only observability
+contract is insufficient. A proposed metric remains observability unless an
+explicitly reviewed protocol change grants it controller authority.
+
 ## Prefix-cache rule for Codex backend LLM calls
 
 LLM backend prefix caches require stable prompt prefixes. Do not optimize by making every subagent prompt a different shortest summary.

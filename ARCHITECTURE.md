@@ -492,6 +492,18 @@ Do not:
 - depend permanently on `codex exec`;
 - enable unbounded recursive subagent fan-out.
 
+The v1 architecture is now frozen for normal feature development. Do not add a
+native final Synthesis episode, verifier or human-approval layer, dormant-node
+state, or further reward/convergence/reliability/control metrics merely as
+plausible improvements. The existing main-agent terminal report, frontier
+semantics, and read-only observability contract are deliberate boundaries.
+
+Future architecture work is evidence-gated: it requires a reproducible failure
+from real runs, comparative outcome evidence, or a concrete protocol obligation
+that the current design cannot meet. Until then, repository work should focus
+on real-run evaluation, compatibility, maintenance, and bounded fixes rather
+than expanding the role graph or controller surface.
+
 ## Final architecture
 
 ```text

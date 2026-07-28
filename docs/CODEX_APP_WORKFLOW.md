@@ -201,4 +201,3 @@ user's final research judgment remain outside its authority. The retired
 verifier or controller input.
 
 Do not present a checkpoint, standalone oracle output, or manually assembled subagent summary as the final DTE report.
-

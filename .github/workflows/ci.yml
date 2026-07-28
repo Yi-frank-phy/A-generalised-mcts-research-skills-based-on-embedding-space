@@ -82,4 +82,3 @@ jobs:
           assert requirements.count(f"--dte-hook-content-sha256={digest}") == 10
           assert requirements.count("--dte-skill-root=") == 10
           PY
-

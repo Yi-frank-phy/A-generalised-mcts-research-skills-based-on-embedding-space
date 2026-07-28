@@ -562,4 +562,3 @@ Guards + commit boundary
   -> validate the protocol boundary
   -> prevent model episodes from bypassing DTE
 ```
-

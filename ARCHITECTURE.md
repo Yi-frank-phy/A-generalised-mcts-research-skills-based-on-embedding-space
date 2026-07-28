@@ -193,9 +193,51 @@ timeout or failed episode     -> graph unchanged
 valid structured output       -> eligible for backend commit
 ```
 
-The current adapter validation is the basis of this firewall and should be extended with graph-revision checks, ID collision checks, and one atomic commit function.
+Adapter validation, graph and node revisions, ID-collision checks, and the single
+atomic episode commit function form the producer firewall.
 
-A prompt or Skill instruction alone is not a hard boundary. In the final architecture, DTE Driver calls the native runtime; the native runtime does not decide whether to call DTE.
+A prompt or Skill instruction alone is not a hard boundary. The implemented
+Codex App architecture therefore places a deterministic hook driver in front of
+the existing backend and gives `hook_enforced_v1` runs a versioned execution
+contract. The hook activates and restores the run, rewrites only legal driver
+calls with a single-use capability, blocks direct control/state access, and
+prevents an early Stop. The backend validates the session, manifest identity,
+and current capability at every public mutation and persistence boundary.
+The trusted handler definition binds both the dispatcher bytes and the exact
+supplying Skill root before backend import. During an active run the hook treats
+the complete `src/dte_backend` package as protected workflow source and resolves
+relative tool paths against the declared workdir before comparison. It
+recognizes both module and published console entrypoints. Windows user-hook
+commands use explicit PowerShell invocation and literal argument quoting.
+
+```text
+Codex lifecycle hook
+  -> hook-driver receipt/capability gate
+    -> existing AppRunState + next_app_episode
+      -> sole commit_episode_result boundary
+```
+
+The hook does not calculate Judge output, geometry, allocation, Relation, or
+termination. It is also not the final security boundary: supported tool hooks
+have platform coverage limits and PostToolUse cannot roll back side effects.
+Backend capability validation is what makes direct App mutators fail closed.
+The dispatcher hash is not presented as a hash of every backend module; the
+protected source tree and a read-only managed deployment are the corresponding
+ordinary-agent and administrator-controlled integrity layers.
+Old states default in memory to `direct_legacy`; no historical output or hash is
+rewritten. The enforcement lifetime ends after deterministic observability,
+epistemic, and terminal-handoff artifacts exist, after which the main agent owns
+only the natural-language report.
+
+The run-external Hook state uses a recoverable intent/receipt protocol around
+that backend boundary. Operation intent is durable before an App mutation;
+receipt data is durable before the manifest publishes a new chain head; and
+current/pending capability state allows restart to reconcile either the old or
+new complete App contract. A recovered operation emits an explicit recovery
+receipt and does not reconstruct an unavailable original response. Static Hook
+configuration is therefore necessary but insufficient: a trusted, restarted
+App must also acknowledge no-state prompt and denied-tool delivery probes before
+a production run begins.
 
 ### Observability is not authority
 
@@ -520,3 +562,4 @@ Guards + commit boundary
   -> validate the protocol boundary
   -> prevent model episodes from bypassing DTE
 ```
+

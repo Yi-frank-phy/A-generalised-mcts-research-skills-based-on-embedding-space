@@ -44,7 +44,14 @@ AlphaEvolve-style evaluators may provide local evidence for verifiable subclaims
 logical role separation != one model call per role
 ```
 
-Judge, Executor, Relation, Seed, and Synthesis remain separate contracts to reduce self-justification and preserve graph semantics. One native runtime may execute different role episodes at different times, and one Executor episode may internally use multiple subagents.
+Judge, Executor, Relation, Seed, and Synthesis remain separate authority
+contracts. This payload separation is not execution-context isolation. One
+native runtime may execute different role episodes, but results from a shared
+main conversation are explicitly `shared_context_single_agent`, carry
+correlated-error risk, and are not independent review. Only a fresh role
+session with a matching request-manifest attestation satisfies
+`strict_fresh_context`; strict submission fails closed on missing, mismatched,
+or reused isolation facts.
 
 ### DTE children are not subagent threads
 
@@ -284,8 +291,11 @@ benchmark, or later-outcome evidence.
 
 ### Epistemic provenance is committed fact, not verification
 
-Executor and Judge may add optional, bounded structured contributions to their
-role-valid output. The backend validates role authority, node and fact identity,
+Executor and Judge may add bounded structured contributions to their role-valid
+output. Nonmaterial nodes need no filler. Material node content may commit
+provisionally without them, but readiness records `provenance_incomplete` until
+the required structured provenance exists. The backend validates role
+authority, node and fact identity,
 safe artifact paths, lifecycle, provenance source, and references. It does not
 validate scientific truth. The records are installed in the same commit
 transaction as the episode result:
@@ -312,8 +322,10 @@ Relation projection prevents a competing Relation truth. Search lifecycle
 dispositions and epistemic dispositions are distinct, so non-selection, low
 Judge score, merge, and budget exhaustion cannot silently become contradiction.
 
-The terminal handoff describes provisional-selected node claims because the
-current App-native slice has no final Synthesis episode. Its model-profile and
+The terminal handoff contains material-scope claims, dependency closure, and
+explicit disclosures; it omits undisclosed nonmaterial node content. The
+headline scope is only a compact presentation projection. The current
+App-native slice has no final Synthesis episode, so its model-profile and
 support-source comparisons are correlated-error risk indicators, not correctness
 or scientific reliability scores. Artifact references are provenance only and
 do not verify an artifact or claim. Researcher learning, external-tool checks,
@@ -359,6 +371,15 @@ Candidate selection may use:
 - explicit contradictory claims;
 - entropy plateau.
 
+The backend first constructs a material review pool from coverage
+representatives, dependencies, counterexamples, counterfactual-material
+unselected disclosures, and shared-coverage alternatives. Critical conflicts
+and selected-versus-material challenges are scheduled before complementary or
+embedding-close enrichment. Oracle-visible Relation v2 payloads use blinded
+node aliases and omit selection membership, priority, candidate reason,
+materiality flags, and all Judge conclusions. Those facts remain backend-only
+and are reattached after classification.
+
 ## Bounded node budget and continuation
 
 The primary cost boundary is an irreversible count of committed search nodes:
@@ -371,7 +392,8 @@ at request validation and commit.
 Entropy remains an allocation-temperature input and produces a consecutive
 plateau signal. A confirmed plateau or a single canonical frontier invokes the
 versioned continuation gate; neither condition is an unconditional stop. The
-gate continues only with narrow, replayable material yield, a positively
+gate continues only with narrow, replayable epistemic or required-coverage
+yield, a positively
 allocated frontier target, and remaining node budget. Each qualifying
 epistemic record may support one continuation decision at most. This is a
 bounded search heuristic, not correctness evidence or a cost term in UCB.
@@ -387,7 +409,21 @@ independent
 
 The backend converts validated output into a merge proposal or persisted discriminator-task proposal. The model never applies the merge directly. Discriminator proposals are not executed in this slice and have no authority to close, reward, reject, certify, or select nodes.
 
-Relation is not a universal synchronous barrier. Exact duplicates may be handled immediately; ordinary proximity creates optional or high-priority tasks. Only unresolved material conflicts among branches selected for synthesis must be resolved or explicitly disclosed.
+Relation is not a universal synchronous barrier. Exact duplicates may be
+handled immediately; ordinary proximity creates optional or high-priority
+tasks. Unresolved material pairs across both material scope and
+counterfactual-material disclosures must be resolved or explicitly disclosed.
+
+## Coverage-aware Synthesis architecture
+
+Every App-native initial seed receives stable coverage ancestry, and explicit
+run obligations may add domain-neutral coverage IDs. Selection is
+lexicographic: satisfy required coverage, close dependencies, retain material
+counterexamples/limitations, then fill a maximum-eight headline projection by
+Judge score and stable ID. The headline cap never truncates material scope.
+Every other eligible node receives a durable counterfactual disposition.
+Missing coverage, undisposed material, incomplete material provenance, or
+unresolved blocking Relation work prevents readiness.
 
 In the App-native path, Relation is scheduled only after backend provisional Synthesis selection and before a new terminal action is committed. Blocking inventory generation completely enumerates selected-selected exact duplicates and shared-evidence divergent claims over the at-most-eight-node provisional set, so it has a hard upper bound of 28 pairs. These blockers are refreshed into the persistent candidate ledger before readiness and are never truncated by the separate enrichment window. Existing persisted terminal runs remain sticky and are reported as legacy-unchecked rather than reopened.
 
@@ -453,6 +489,12 @@ Minimum target infrastructure:
 - transport-neutral episode adapter;
 - cache namespaces that include provider/model/rubric/prompt/schema identity;
 - command-adapter fallback during SDK/App Server rollout.
+
+Hook-enforced initialization adds a deterministic invocation key and an atomic
+create-if-absent registry. Duplicate invocations return the same run. Explicit
+replays use distinct lineage-bound keys and persist the source run, source
+result hashes, trigger source, and model execution disposition. Neither a
+duplicate role label nor a replay is evidence of independent verification.
 
 Initial event types may include:
 

@@ -15,11 +15,26 @@ python -m dte_backend strict-run \
   --judge-command "python scripts/codex_judge_adapter.py"
 ```
 
-In Codex App / Work, the normal native production path is the persistent `create-run` / `next-episode` / current-App work / `submit-episode-result` loop. Repository code does not launch a second Codex process.
+In Codex App / Work, the only native production path is the Hook-enforced
+`activate` / `init` / (`step` / current-App work / `submit`)* / `handoff`
+loop. Repository code does not launch a second Codex process.
+
+```bash
+python -m dte_backend hook-driver activate
+python -m dte_backend hook-driver init --spec <spec.json> --nodes <nodes.json>
+python -m dte_backend hook-driver step
+# Perform exactly the returned bounded EpisodeRequest in the current App.
+python -m dte_backend hook-driver submit --result <result.json>
+python -m dte_backend hook-driver handoff
+```
 
 The model-facing main agent must not manually replay Judge → controller → Executor → Relation, hand-compute controller fields, claim algorithmic convergence, mutate the graph, or commit synthesis. It may supervise the production backend and issue a synthesis request through its validated command interface when `OperatorPolicy` authorizes it. Standalone role commands and guards are development interfaces, not a second production mode.
 
-The transport-neutral `EpisodeRequest -> EpisodeResult` boundary is backend-enforced for App-native Judge, Executor, and Relation roles. A free-form model-orchestrated harness remains non-production because it bypasses the persistent lifecycle and commit boundary.
+The transport-neutral `EpisodeRequest -> EpisodeResult` boundary is enforced by
+the Hook execution contract plus the backend commit boundary for App-native
+Judge, Executor, and Relation roles. A free-form model-orchestrated harness
+remains non-production because it bypasses the persistent lifecycle and commit
+boundary.
 
 ## Control ownership
 
@@ -186,3 +201,4 @@ user's final research judgment remain outside its authority. The retired
 verifier or controller input.
 
 Do not present a checkpoint, standalone oracle output, or manually assembled subagent summary as the final DTE report.
+

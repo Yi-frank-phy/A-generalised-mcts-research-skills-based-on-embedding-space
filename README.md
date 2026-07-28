@@ -223,4 +223,3 @@ Apache-2.0. See [`LICENSE`](./LICENSE).
 ## Design stance
 
 Freeze the research workflow. Package it as a skill-backed research backend. The user should provide task parameters, not rewrite the architecture for each run.
-

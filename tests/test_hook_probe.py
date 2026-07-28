@@ -116,4 +116,3 @@ def test_receipt_extraction_does_not_reparse_untrusted_nested_payload():
     }
 
     assert extract({"stdout": json.dumps(real_envelope)}) == [real_envelope]
-

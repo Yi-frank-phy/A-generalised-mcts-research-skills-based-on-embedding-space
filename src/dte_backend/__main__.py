@@ -35,6 +35,17 @@ from .epistemic import (
 )
 from .file_cache import FileDTECache
 from .guards import enforce_run_spec_guard
+from .hook_driver import (
+    activate_session,
+    control_session,
+    driver_environment,
+    handoff_session,
+    init_session,
+    record_driver_failure,
+    status_session,
+    step_session,
+    submit_session,
+)
 from .math_engine import allocate_frontier
 from .episode_models import RuntimeLimits
 from .models import DTERunSpec, ExpansionRequest, SearchNode, SynthesisControlRequest
@@ -342,6 +353,61 @@ def cmd_record_feedback(args: argparse.Namespace) -> None:
     )
 
 
+def cmd_hook_driver(args: argparse.Namespace) -> None:
+    operation = args.driver_action
+    session_id = os.environ.get("DTE_HOOK_SESSION_ID", "")
+    turn_id = os.environ.get("DTE_HOOK_TURN_ID", "")
+    try:
+        session_id, turn_id, cwd, capability = driver_environment()
+        if operation == "activate":
+            receipt = activate_session(
+                session_id,
+                turn_id,
+                cwd,
+                source=args.source,
+                capability=capability or None,
+            )
+        elif operation == "init":
+            receipt = init_session(
+                session_id,
+                turn_id,
+                capability,
+                args.spec,
+                args.nodes,
+            )
+        elif operation == "step":
+            receipt = step_session(session_id, turn_id, capability)
+        elif operation == "submit":
+            receipt = submit_session(
+                session_id,
+                turn_id,
+                capability,
+                args.result,
+            )
+        elif operation == "control":
+            receipt = control_session(
+                session_id,
+                turn_id,
+                capability,
+                args.action,
+                reason=args.reason,
+                requested_by=args.requested_by,
+                scope=args.scope,
+                node_ids=args.node_id,
+            )
+        elif operation == "status":
+            receipt = status_session(session_id, turn_id, capability)
+        elif operation == "handoff":
+            receipt = handoff_session(session_id, turn_id, capability)
+        else:  # pragma: no cover - argparse owns the command vocabulary.
+            raise ValueError(f"unsupported hook-driver operation: {operation}")
+    except Exception as exc:
+        receipt = record_driver_failure(operation, session_id, turn_id or None, exc)
+    print(receipt.model_dump_json(indent=2))
+    if not receipt.success:
+        raise SystemExit(1)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="DTE backend helper")
     sub = parser.add_subparsers(required=True)
@@ -544,6 +610,45 @@ def build_parser() -> argparse.ArgumentParser:
     feedback.add_argument("--feedback-id")
     feedback.set_defaults(func=cmd_record_feedback)
 
+    hook_driver = sub.add_parser(
+        "hook-driver",
+        help="deterministic Codex hook enforcement boundary for App-native DTE",
+    )
+    driver_sub = hook_driver.add_subparsers(dest="driver_action", required=True)
+
+    driver_activate = driver_sub.add_parser("activate")
+    driver_activate.add_argument(
+        "--source",
+        choices=["explicit", "main_agent"],
+        default="main_agent",
+    )
+
+    driver_init = driver_sub.add_parser("init")
+    driver_init.add_argument("--spec", required=True)
+    driver_init.add_argument("--nodes", required=True)
+
+    driver_sub.add_parser("step")
+
+    driver_submit = driver_sub.add_parser("submit")
+    driver_submit.add_argument("--result", required=True)
+
+    driver_control = driver_sub.add_parser("control")
+    driver_control.add_argument(
+        "--action",
+        required=True,
+        choices=["retry", "cancel", "request-synthesis"],
+    )
+    driver_control.add_argument("--reason")
+    driver_control.add_argument(
+        "--requested-by", choices=["user", "main_agent"], default="main_agent"
+    )
+    driver_control.add_argument("--scope", choices=["all", "node_ids"], default="all")
+    driver_control.add_argument("--node-id", action="append", default=[])
+
+    driver_sub.add_parser("status")
+    driver_sub.add_parser("handoff")
+    hook_driver.set_defaults(func=cmd_hook_driver)
+
     return parser
 
 
@@ -556,3 +661,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

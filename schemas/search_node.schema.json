@@ -56,6 +56,13 @@
       "title": "Parent Ids",
       "type": "array"
     },
+    "coverage_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Coverage Ids",
+      "type": "array"
+    },
     "confidence": {
       "default": 0.5,
       "maximum": 1.0,

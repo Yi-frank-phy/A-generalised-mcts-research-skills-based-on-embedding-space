@@ -514,10 +514,6 @@ def commit_episode_result(
                 or candidate.right_node_id != pair.right.node_id
                 or candidate.left_node_revision != pair.left_node_revision
                 or candidate.right_node_revision != pair.right_node_revision
-                or candidate.candidate_reason != pair.candidate_reason
-                or candidate.scheduling_class != pair.scheduling_class
-                or candidate.priority != pair.priority
-                or candidate.material_to_synthesis != pair.material_to_synthesis
             ):
                 return reject(
                     f"Relation candidate identity is stale or disagrees with its grant: "
@@ -631,7 +627,8 @@ def commit_episode_result(
                 independent_count=counts["independent"],
                 material_conflict_count=material_conflict_count,
                 enrichment_candidate_count=sum(
-                    pair.scheduling_class == "enrichment" for pair in granted_pairs.values()
+                    candidate_by_id[candidate_id].scheduling_class == "enrichment"
+                    for candidate_id in granted_pairs
                 ),
                 merge_count=len(equivalent_records),
                 schema_valid=True,
@@ -754,6 +751,12 @@ def commit_episode_result(
         next_revisions[next_parent.node_id] += 1
         for candidate in candidates:
             candidate_payload = _canonical_contract_payload(candidate)
+            candidate_payload["coverage_ids"] = sorted(
+                {
+                    *candidate_payload.get("coverage_ids", []),
+                    *next_parent.coverage_ids,
+                }
+            )
             next_nodes.append(SearchNode.model_validate(candidate_payload))
             next_revisions[candidate.node_id] = 0
     except Exception as exc:

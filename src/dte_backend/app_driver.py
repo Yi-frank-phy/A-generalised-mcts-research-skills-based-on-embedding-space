@@ -47,8 +47,11 @@ from .episode_models import (
     EpisodeResult,
     ExecutorEpisodeOutput,
     JudgeEpisodeOutput,
+    RoleIsolationAttestation,
     RuntimeLimits,
+    bind_role_execution_contract,
     canonical_json_bytes,
+    compute_role_context_manifest_hash,
     compute_output_hash,
 )
 from .file_cache import FileDTECache
@@ -74,6 +77,7 @@ from .relation_models import (
     RelationEpisodeOutput,
     RelationRecord,
     SynthesisReadinessRecord,
+    UnselectedNodeDisposition,
     stable_relation_id,
 )
 from .relation_readiness import evaluate_synthesis_readiness
@@ -133,6 +137,22 @@ class DriverExecutionContext(DTEBaseModel):
     session_id: str
     manifest_identity_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     capability: str = Field(min_length=32)
+
+
+class RoleSessionRecord(DTEBaseModel):
+    episode_id: str
+    attempt_id: str
+    role: Literal["executor", "seed", "judge", "relation", "synthesis"]
+    isolation_mode: Literal[
+        "strict_fresh_context",
+        "shared_context_single_agent",
+        "legacy_unverified",
+    ]
+    role_session_id: str | None = None
+    context_manifest_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    context_manifest_version: str
+    isolation_attestation_source: str
+    isolation_verified: bool
 
 
 def _now() -> datetime:
@@ -197,6 +217,7 @@ class EpisodeAttemptRecord(DTEBaseModel):
     failure_reason: str | None = None
     superseded_from_status: AttemptStatus | None = None
     retry_exhaustion_released: bool = False
+    canonical_node_id_map: dict[str, str] = Field(default_factory=dict)
 
 
 class EpisodeLifecycleRecord(DTEBaseModel):
@@ -276,12 +297,25 @@ class AppRunState(DTEBaseModel):
     continuation_gate_records: list[ContinuationGateRecord] = Field(
         default_factory=list
     )
+    role_session_registry: list[RoleSessionRecord] = Field(default_factory=list)
+    correlated_error_risk: bool = False
+    hook_trigger_source: str | None = None
+    hook_invocation_key: str | None = Field(
+        default=None, pattern=r"^[0-9a-f]{64}$"
+    )
+    replay_of_run_id: str | None = None
+    source_episode_result_hashes: list[str] = Field(default_factory=list)
+    model_execution_disposition: Literal["reused", "rerun", "unknown"] | None = None
     previous_spatial_entropy: float | None = None
     relation_candidates: list[RelationCandidate] = Field(default_factory=list)
     relation_ledger: list[RelationRecord] = Field(default_factory=list)
     merge_applications: list[MergeApplicationRecord] = Field(default_factory=list)
     epistemic_ledger: EpistemicLedgerV1 = Field(default_factory=EpistemicLedgerV1)
     provisional_synthesis_selection: ProvisionalSynthesisSelection | None = None
+    unselected_node_dispositions: list[UnselectedNodeDisposition] = Field(
+        default_factory=list
+    )
+    provenance_incomplete_node_ids: list[str] = Field(default_factory=list)
     synthesis_readiness: SynthesisReadinessRecord | None = None
     relation_readiness_status: Literal["not_evaluated", "evaluated", "legacy_unchecked"] = "not_evaluated"
     pending_terminal_action: Literal["ready_for_synthesis", "run_complete"] | None = None
@@ -709,7 +743,10 @@ def _validate_persisted_epistemic_ledger(
         )
         if bundle is None:
             continue
-        authorized = set(attempt.request.selected_node_revisions)
+        authorized = {
+            attempt.canonical_node_id_map.get(node_id, node_id)
+            for node_id in attempt.request.selected_node_revisions
+        }
         if isinstance(output, ExecutorEpisodeOutput):
             authorized.update(item.node_id for item in output.nodes)
         local_statement_ids = {
@@ -1125,6 +1162,9 @@ def _validate_loaded_state(state: AppRunState) -> None:
                 provisional_synthesis_node_ids=gate.provisional_synthesis_node_ids,
                 ledger=ledger_at_revision(gate.graph_revision),
                 previously_considered_epistemic_ids=previously_considered_ids,
+                legacy_process_yield_allowed=(
+                    state.spec.role_isolation_mode == "legacy_unverified"
+                ),
             )
             expected_committed_count = count_committed_search_nodes(
                 nodes_at_revision
@@ -1284,6 +1324,10 @@ def _validate_loaded_state(state: AppRunState) -> None:
             assert outcome is not None
             if result is None:
                 raise ValueError("persisted committed attempt lacks its authoritative result")
+            canonical_selected_node_revisions = {
+                attempt.canonical_node_id_map.get(node_id, node_id): revision
+                for node_id, revision in attempt.request.selected_node_revisions.items()
+            }
             if (
                 result.episode_id != episode.episode_id
                 or result.attempt_id != attempt.attempt_id
@@ -1291,7 +1335,7 @@ def _validate_loaded_state(state: AppRunState) -> None:
                 or result.role != episode.role
                 or result.status != "completed"
                 or result.input_graph_revision != attempt.request.input_graph_revision
-                or result.selected_node_revisions != attempt.request.selected_node_revisions
+                or result.selected_node_revisions != canonical_selected_node_revisions
                 or result.schema_version != attempt.request.output_schema_version
                 or result.output_hash != attempt.result_hash
                 or result.output_hash
@@ -1411,12 +1455,82 @@ def _validate_loaded_state(state: AppRunState) -> None:
                     or len(granted_node_ids) != len(set(granted_node_ids))
                 ):
                     raise ValueError("persisted Relation grant is not node-disjoint and bounded")
+            if (
+                request.role_execution_contract.context_manifest_hash
+                != compute_role_context_manifest_hash(request)
+            ):
+                raise ValueError(
+                    "persisted episode request has an inconsistent role context manifest"
+                )
             identity = (episode.episode_id, attempt.attempt_id)
             attempts_by_identity[identity] = (episode, attempt)
             if attempt.status in active_statuses:
                 active_lifecycle_records.append((episode, attempt))
     if len(active_lifecycle_records) > 1:
         raise ValueError("persisted App state contains multiple active attempt lifecycles")
+
+    require_unique(
+        [
+            f"{record.episode_id}\x1f{record.attempt_id}"
+            for record in state.role_session_registry
+        ],
+        "role-session registry attempt identities",
+    )
+    strict_session_ids: list[str] = []
+    registry_identities: set[tuple[str, str]] = set()
+    for record in state.role_session_registry:
+        identity = (record.episode_id, record.attempt_id)
+        registry_identities.add(identity)
+        owner = attempts_by_identity.get(identity)
+        if owner is None:
+            raise ValueError("role-session registry references a missing attempt")
+        episode, attempt = owner
+        result = attempt.committed_result
+        if (
+            attempt.status != "committed"
+            or episode.committed_attempt_id != attempt.attempt_id
+            or result is None
+        ):
+            raise ValueError("role-session registry references an uncommitted attempt")
+        contract = attempt.request.role_execution_contract
+        attestation = result.role_isolation_attestation
+        expected_source = (
+            attestation.isolation_attestation_source
+            if attestation.role_session_id is not None
+            else contract.isolation_attestation_source
+        )
+        if (
+            record.role != episode.role
+            or record.isolation_mode != contract.isolation_mode
+            or record.role_session_id != attestation.role_session_id
+            or record.context_manifest_hash != contract.context_manifest_hash
+            or record.context_manifest_version != contract.context_manifest_version
+            or record.isolation_attestation_source != expected_source
+            or record.isolation_verified != attestation.isolation_verified
+        ):
+            raise ValueError(
+                "role-session registry disagrees with its committed role contract"
+            )
+        if contract.isolation_mode == "strict_fresh_context":
+            if record.role_session_id is None or not record.isolation_verified:
+                raise ValueError(
+                    "strict role-session registry lacks verified fresh-context facts"
+                )
+            strict_session_ids.append(record.role_session_id)
+    require_unique(strict_session_ids, "strict role-session IDs")
+    required_registry_identities = {
+        identity
+        for identity, (_, attempt) in attempts_by_identity.items()
+        if attempt.status == "committed"
+        and attempt.request.role_execution_contract.isolation_mode
+        != "legacy_unverified"
+    }
+    if not required_registry_identities.issubset(registry_identities):
+        raise ValueError("nonlegacy committed attempt lacks a role-session registry fact")
+    if state.role_session_registry and state.correlated_error_risk != any(
+        not record.isolation_verified for record in state.role_session_registry
+    ):
+        raise ValueError("correlated-error risk disagrees with role-session facts")
 
     _validate_persisted_epistemic_ledger(
         state,
@@ -1508,12 +1622,20 @@ def _validate_loaded_state(state: AppRunState) -> None:
             raise ValueError("committed Judge attempt lacks its authoritative observations")
         output_ids = [item.node_id for item in result.structured_output.observations]
         payload = attempt.request.judge_payload
-        payload_ids = (
+        blinded_payload_ids = (
             [] if payload is None else [item.node_id for item in payload.selected_frontier_nodes]
         )
+        payload_ids = [
+            attempt.canonical_node_id_map.get(node_id, node_id)
+            for node_id in blinded_payload_ids
+        ]
+        granted_ids = {
+            attempt.canonical_node_id_map.get(node_id, node_id)
+            for node_id in attempt.request.selected_node_revisions
+        }
         if (
             len(output_ids) != len(set(output_ids))
-            or set(output_ids) != set(attempt.request.selected_node_revisions)
+            or set(output_ids) != granted_ids
             or set(payload_ids) != set(output_ids)
         ):
             raise ValueError("committed Judge attempt does not cover its exact grant")
@@ -1706,6 +1828,10 @@ def _validate_loaded_state(state: AppRunState) -> None:
             "schema_version": attempt.request.output_schema_version,
             "output_hash": attempt.result_hash or "",
         }
+        granted_revision = {
+            attempt.canonical_node_id_map.get(node_id, node_id): revision
+            for node_id, revision in attempt.request.selected_node_revisions.items()
+        }[node.node_id]
         if (
             node.score != observation.score
             or node.judge_reasoning != observation.reasoning
@@ -1713,7 +1839,7 @@ def _validate_loaded_state(state: AppRunState) -> None:
             or node.judge_uncertainty_evidence != observation.uncertainty_evidence
             or node.judge_result_provenance != expected_provenance
             or state.node_revisions.get(node.node_id, -1)
-            <= attempt.request.selected_node_revisions[node.node_id]
+            <= granted_revision
         ):
             raise ValueError("persisted Judge-owned node state disagrees with committed output")
 
@@ -1781,6 +1907,10 @@ def _validate_loaded_state(state: AppRunState) -> None:
             raise ValueError("Relation ledger record references a missing attempt")
         owner_episode, owner_attempt = owner
         request = owner_attempt.request
+        canonical_selected = {
+            owner_attempt.canonical_node_id_map.get(node_id, node_id): revision
+            for node_id, revision in request.selected_node_revisions.items()
+        }
         outcome = owner_attempt.commit_outcome
         if (
             owner_episode.role != "relation"
@@ -1793,7 +1923,7 @@ def _validate_loaded_state(state: AppRunState) -> None:
             or outcome.graph_revision_before != request.input_graph_revision
             or request.relation_payload is None
             or record.input_graph_revision != request.input_graph_revision
-            or record.selected_node_revisions != request.selected_node_revisions
+            or record.selected_node_revisions != canonical_selected
             or record.schema_version != request.output_schema_version
         ):
             raise ValueError("Relation ledger record disagrees with its committed attempt")
@@ -1806,23 +1936,15 @@ def _validate_loaded_state(state: AppRunState) -> None:
             None,
         )
         if pair is None or (
-            pair.left.node_id,
-            pair.right.node_id,
+            owner_attempt.canonical_node_id_map.get(pair.left.node_id, pair.left.node_id),
+            owner_attempt.canonical_node_id_map.get(pair.right.node_id, pair.right.node_id),
             pair.left_node_revision,
             pair.right_node_revision,
-            pair.scheduling_class,
-            pair.candidate_reason,
-            pair.priority,
-            pair.material_to_synthesis,
         ) != (
             record.left_node_id,
             record.right_node_id,
             record.selected_node_revisions.get(record.left_node_id),
             record.selected_node_revisions.get(record.right_node_id),
-            record.scheduling_class,
-            candidate.candidate_reason,
-            candidate.priority,
-            record.material_to_synthesis,
         ):
             raise ValueError("Relation ledger record disagrees with its granted pair")
         expected_disclosure = bool(
@@ -1976,15 +2098,19 @@ def _validate_loaded_state(state: AppRunState) -> None:
             assert isinstance(payload, tuple)
             episode, attempt = payload
             request = attempt.request
-            if request.selected_node_revisions != {
+            selected_node_revisions = {
+                attempt.canonical_node_id_map.get(node_id, node_id): revision
+                for node_id, revision in request.selected_node_revisions.items()
+            }
+            if selected_node_revisions != {
                 node_id: replay_node_revisions.get(node_id, -1)
-                for node_id in request.selected_node_revisions
+                for node_id in selected_node_revisions
             }:
                 raise ValueError("episode grant disagrees with replayed node revisions")
             result = attempt.committed_result
             assert result is not None
             if transition_kind == "judge":
-                for node_id in request.selected_node_revisions:
+                for node_id in selected_node_revisions:
                     if replay_statuses.get(node_id) != "frontier":
                         raise ValueError("Judge transition targeted a non-frontier node")
                     replay_node_revisions[node_id] += 1
@@ -2001,7 +2127,7 @@ def _validate_loaded_state(state: AppRunState) -> None:
                     replay_node_revisions[candidate.node_id] = 0
                     replay_statuses[candidate.node_id] = "frontier"
             elif transition_kind == "relation":
-                for node_id in request.selected_node_revisions:
+                for node_id in selected_node_revisions:
                     if replay_statuses.get(node_id) == "merged":
                         raise ValueError("Relation transition targeted an already merged node")
                 for record in records_by_attempt.get(
@@ -2122,10 +2248,15 @@ def _validate_loaded_state(state: AppRunState) -> None:
             raise ValueError("persisted App state references a missing active attempt")
         if active_record[1].status not in active_statuses:
             raise ValueError("persisted App state points at a non-active attempt lifecycle")
-        request = active_record[1].request
+        active_attempt = active_record[1]
+        request = active_attempt.request
+        canonical_selected = {
+            active_attempt.canonical_node_id_map.get(node_id, node_id): revision
+            for node_id, revision in request.selected_node_revisions.items()
+        }
         if request.input_graph_revision != state.graph_revision or any(
             state.node_revisions.get(node_id) != revision
-            for node_id, revision in request.selected_node_revisions.items()
+            for node_id, revision in canonical_selected.items()
         ):
             raise ValueError("active episode grant is stale relative to committed graph state")
         judge_input_fields = {
@@ -2138,7 +2269,7 @@ def _validate_loaded_state(state: AppRunState) -> None:
             "risks",
             "confidence",
         }
-        executor_parent_fields = judge_input_fields | {"parent_ids"}
+        executor_parent_fields = judge_input_fields | {"parent_ids", "coverage_ids"}
         if request.role == "executor":
             parent = nodes_by_id.get(request.parent_node_id or "")
             payload = request.executor_payload
@@ -2171,16 +2302,25 @@ def _validate_loaded_state(state: AppRunState) -> None:
             payload = request.judge_payload
             if (
                 payload is None
-                or list(request.selected_node_revisions)
-                != [node.node_id for node in expected_nodes]
+                or set(canonical_selected)
+                != {node.node_id for node in expected_nodes}
                 or payload.problem != state.spec.problem
                 or payload.goal != state.spec.goal
                 or payload.constraints != state.spec.constraints
-                or [item.model_dump(mode="json") for item in payload.selected_frontier_nodes]
-                != [
-                    node.model_dump(mode="json", include=judge_input_fields)
-                    for node in expected_nodes
-                ]
+                or any(
+                    {
+                        **item.model_dump(mode="json"),
+                        "node_id": active_attempt.canonical_node_id_map.get(
+                            item.node_id, item.node_id
+                        ),
+                    }
+                    != nodes_by_id[
+                        active_attempt.canonical_node_id_map.get(
+                            item.node_id, item.node_id
+                        )
+                    ].model_dump(mode="json", include=judge_input_fields)
+                    for item in payload.selected_frontier_nodes
+                )
             ):
                 raise ValueError("active Judge grant disagrees with current unjudged frontier")
         elif request.role == "relation":
@@ -2229,23 +2369,15 @@ def _validate_loaded_state(state: AppRunState) -> None:
             None,
         )
         if pair is None or (
-            pair.left.node_id,
-            pair.right.node_id,
+            owner_attempt.canonical_node_id_map.get(pair.left.node_id, pair.left.node_id),
+            owner_attempt.canonical_node_id_map.get(pair.right.node_id, pair.right.node_id),
             pair.left_node_revision,
             pair.right_node_revision,
-            pair.candidate_reason,
-            pair.scheduling_class,
-            pair.priority,
-            pair.material_to_synthesis,
         ) != (
             candidate.left_node_id,
             candidate.right_node_id,
             candidate.left_node_revision,
             candidate.right_node_revision,
-            candidate.candidate_reason,
-            candidate.scheduling_class,
-            candidate.priority,
-            candidate.material_to_synthesis,
         ):
             raise ValueError("granted Relation candidate disagrees with its attempt request")
         if owner_identity != active_identity and not (
@@ -2404,7 +2536,8 @@ def _validate_loaded_state(state: AppRunState) -> None:
             not readiness.ready
             or readiness.graph_revision != state.graph_revision
             or selection.selection_revision != state.graph_revision
-            or readiness.provisional_selected_node_ids != selection.selected_node_ids
+            or readiness.provisional_selected_node_ids
+            != selection.material_scope_node_ids
         ):
             raise ValueError("terminal synthesis readiness is stale or internally inconsistent")
         eligible_ids = {
@@ -2421,19 +2554,60 @@ def _validate_loaded_state(state: AppRunState) -> None:
             state.nodes,
             graph_revision=state.graph_revision,
             synthesis_request=synthesis_request,
+            required_coverage_ids=_required_coverage_ids(state),
         )
         if selection.model_dump(mode="json") != expected_selection.model_dump(mode="json"):
             raise ValueError("terminal synthesis selection disagrees with committed graph ranking")
+        expected_dispositions = _build_unselected_dispositions(
+            state, expected_selection
+        )
+        if (
+            state.spec.role_isolation_mode != "legacy_unverified"
+            or state.unselected_node_dispositions
+        ) and (
+            state.unselected_node_dispositions
+            != expected_dispositions
+        ):
+            raise ValueError(
+                "terminal unselected-node dispositions cannot be reproduced"
+            )
+        expected_provenance_incomplete = _provenance_incomplete_material_nodes(
+            state, expected_selection
+        )
+        if (
+            state.spec.role_isolation_mode != "legacy_unverified"
+            or state.provenance_incomplete_node_ids
+        ) and (
+            state.provenance_incomplete_node_ids
+            != expected_provenance_incomplete
+        ):
+            raise ValueError(
+                "terminal provenance completeness cannot be reproduced"
+            )
+        material_unselected_ids = [
+            item.node_id
+            for item in expected_dispositions
+            if item.counterfactual_material
+        ]
+        relation_review_pool_ids = _material_relation_review_pool_ids(
+            state,
+            expected_selection,
+            expected_dispositions,
+        )
         expected_blocking = generate_blocking_relation_obligations(
             state.nodes,
             node_revisions=state.node_revisions,
             graph_revision=state.graph_revision,
-            provisional_synthesis_node_ids=expected_selection.selected_node_ids,
+            provisional_synthesis_node_ids=relation_review_pool_ids,
+            include_material_review_pool=(
+                state.spec.role_isolation_mode != "legacy_unverified"
+            ),
+            material_unselected_node_ids=material_unselected_ids,
         )
         enrichment_committed = _relation_enrichment_pairs_committed(state)
         expected_readiness = evaluate_synthesis_readiness(
             graph_revision=state.graph_revision,
-            provisional_selected_node_ids=expected_selection.selected_node_ids,
+            provisional_selected_node_ids=expected_selection.material_scope_node_ids,
             candidates=state.relation_candidates,
             relation_ledger=state.relation_ledger,
             merge_applications=state.merge_applications,
@@ -2451,6 +2625,23 @@ def _validate_loaded_state(state: AppRunState) -> None:
                 and candidate.priority == "high"
                 and candidate.status == "pending"
             ],
+            material_scope_node_ids=expected_selection.material_scope_node_ids,
+            presentation_headline_node_ids=expected_selection.selected_node_ids,
+            unresolved_coverage_ids=expected_selection.unresolved_coverage_ids,
+            undisposed_material_node_ids=[],
+            provenance_incomplete_node_ids=state.provenance_incomplete_node_ids,
+            budget_skipped_enrichment_pair_ids=(
+                [
+                    candidate.candidate_id
+                    for candidate in state.relation_candidates
+                    if candidate.scheduling_class == "enrichment"
+                    and candidate.priority == "high"
+                    and candidate.status == "pending"
+                ]
+                if enrichment_committed
+                >= state.spec.budget.max_relation_enrichment_pairs
+                else []
+            ),
         )
         if readiness.model_dump(mode="json") != expected_readiness.model_dump(mode="json"):
             raise ValueError("terminal synthesis readiness cannot be reproduced from durable facts")
@@ -2584,6 +2775,11 @@ def create_app_run(
     run_id: str | None = None,
     execution_contract: ExecutionContract | None = None,
     creation_capability: str | None = None,
+    hook_trigger_source: str | None = None,
+    hook_invocation_key: str | None = None,
+    replay_of_run_id: str | None = None,
+    source_episode_result_hashes: list[str] | None = None,
+    model_execution_disposition: Literal["reused", "rerun", "unknown"] | None = None,
 ) -> AppRunState:
     """Create committed state for an App-driven run without starting a runtime."""
 
@@ -2592,6 +2788,27 @@ def create_app_run(
         raise FileExistsError(f"App run already exists: {path}")
     validated_spec = DTERunSpec.model_validate(spec.model_dump(mode="json"))
     validated_initial_nodes = _validate_initial_nodes(initial_nodes)
+    by_id = {node.node_id: node for node in validated_initial_nodes}
+    coverage_cache: dict[str, set[str]] = {}
+
+    def seed_coverage(node_id: str) -> set[str]:
+        if node_id in coverage_cache:
+            return coverage_cache[node_id]
+        node = by_id[node_id]
+        value = {
+            *node.coverage_ids,
+            f"seed:{node.node_id}",
+            *(
+                coverage_id
+                for parent_id in node.parent_ids
+                for coverage_id in seed_coverage(parent_id)
+            ),
+        }
+        coverage_cache[node_id] = value
+        return value
+
+    for node in validated_initial_nodes:
+        node.coverage_ids = sorted(seed_coverage(node.node_id))
     initial_search_node_count = count_committed_search_nodes(validated_initial_nodes)
     if initial_search_node_count > validated_spec.budget.max_committed_search_nodes:
         raise ValueError(
@@ -2618,6 +2835,11 @@ def create_app_run(
         controller_action="continue_controller",
         created_at=created,
         updated_at=created,
+        hook_trigger_source=hook_trigger_source,
+        hook_invocation_key=hook_invocation_key,
+        replay_of_run_id=replay_of_run_id,
+        source_episode_result_hashes=source_episode_result_hashes or [],
+        model_execution_disposition=model_execution_disposition,
     )
     if state.execution_contract.mode == "hook_enforced_v1":
         if (
@@ -2943,6 +3165,7 @@ def _progress_controller(
             state.nodes,
             graph_revision=state.graph_revision,
             synthesis_request=synthesis_request,
+            required_coverage_ids=_required_coverage_ids(state),
         )
         previous_record = (
             state.controller_iteration_records[-2]
@@ -2993,6 +3216,9 @@ def _progress_controller(
             provisional_synthesis_node_ids=provisional.selected_node_ids,
             ledger=state.epistemic_ledger,
             previously_considered_epistemic_ids=considered_epistemic_ids,
+            legacy_process_yield_allowed=(
+                state.spec.role_isolation_mode == "legacy_unverified"
+            ),
         )
         state.continuation_gate_records.append(gate)
         _queue_event(
@@ -3041,6 +3267,95 @@ def _progress_controller(
     return terminal_action, "controller produced no positive expandable frontier allocation"
 
 
+def _required_coverage_ids(state: AppRunState) -> list[str]:
+    explicit = {
+        item.coverage_id
+        for item in state.spec.coverage_obligations
+        if item.required
+    }
+    if state.spec.role_isolation_mode == "legacy_unverified":
+        return sorted(explicit)
+    return sorted({*explicit, *(f"seed:{node.node_id}" for node in state.initial_nodes)})
+
+
+def _build_unselected_dispositions(
+    state: AppRunState,
+    selection: ProvisionalSynthesisSelection,
+) -> list[UnselectedNodeDisposition]:
+    material = set(selection.material_scope_node_ids)
+    dispositions: list[UnselectedNodeDisposition] = []
+    for node in sorted(state.nodes, key=lambda item: item.node_id):
+        if (
+            node.node_id in material
+            or node.status not in {"frontier", "closed"}
+            or node.node_type == "synthesis"
+        ):
+            continue
+        score = node.score if node.score is not None else node.confidence
+        high_value = score >= 0.9
+        if high_value:
+            disposition = "unresolved_high_value"
+        elif score < 0.5:
+            disposition = "future_work_unverified"
+        else:
+            disposition = "budget_excluded"
+        dispositions.append(
+            UnselectedNodeDisposition(
+                node_id=node.node_id,
+                node_revision=state.node_revisions[node.node_id],
+                disposition=disposition,
+                basis_refs=[f"node-claim:{node.node_id}"],
+                backend_facts=[
+                    "eligible committed node",
+                    f"judge_or_confidence={score:.6f}",
+                    "not required by structured coverage or dependency closure",
+                ],
+                omission_changes_coverage=False,
+                omission_changes_assumptions=bool(node.assumptions),
+                omission_changes_evidence=bool(node.evidence),
+                omission_changes_limitations=bool(node.risks),
+                omission_changes_conflicts=node.node_type == "counterexample",
+                disclosure_required=high_value or bool(node.risks),
+                counterfactual_material=high_value or node.node_type == "counterexample",
+            )
+        )
+    return dispositions
+
+
+def _material_relation_review_pool_ids(
+    state: AppRunState,
+    selection: ProvisionalSynthesisSelection,
+    dispositions: list[UnselectedNodeDisposition],
+) -> list[str]:
+    material = set(selection.material_scope_node_ids)
+    if state.spec.role_isolation_mode != "legacy_unverified":
+        material.update(
+            item.node_id for item in dispositions if item.counterfactual_material
+        )
+    return sorted(material)
+
+
+def _provenance_incomplete_material_nodes(
+    state: AppRunState,
+    selection: ProvisionalSynthesisSelection,
+) -> list[str]:
+    if (
+        state.spec.role_isolation_mode == "legacy_unverified"
+        and not state.spec.coverage_obligations
+    ):
+        return []
+    covered: set[str] = set()
+    for statement in state.epistemic_ledger.statements:
+        covered.add(statement.target_node_id)
+    for disposition in state.epistemic_ledger.path_dispositions:
+        covered.add(disposition.target_node_id)
+    for edge in state.epistemic_ledger.edges:
+        for ref in (edge.source_ref, edge.target_ref):
+            if ref.startswith("node-claim:"):
+                covered.add(ref.removeprefix("node-claim:"))
+    return sorted(set(selection.material_scope_node_ids) - covered)
+
+
 def _evaluate_relation_gate(
     run_dir: str | Path,
     state: AppRunState,
@@ -3056,12 +3371,33 @@ def _evaluate_relation_gate(
         state.nodes,
         graph_revision=state.graph_revision,
         synthesis_request=state.synthesis_request,
+        required_coverage_ids=_required_coverage_ids(state),
+    )
+    state.unselected_node_dispositions = _build_unselected_dispositions(
+        state, selection
+    )
+    state.provenance_incomplete_node_ids = _provenance_incomplete_material_nodes(
+        state, selection
+    )
+    material_unselected_ids = [
+        item.node_id
+        for item in state.unselected_node_dispositions
+        if item.counterfactual_material
+    ]
+    relation_review_pool_ids = _material_relation_review_pool_ids(
+        state,
+        selection,
+        state.unselected_node_dispositions,
     )
     blocking_inventory = generate_blocking_relation_obligations(
         state.nodes,
         node_revisions=state.node_revisions,
         graph_revision=state.graph_revision,
-        provisional_synthesis_node_ids=selection.selected_node_ids,
+        provisional_synthesis_node_ids=relation_review_pool_ids,
+        include_material_review_pool=(
+            state.spec.role_isolation_mode != "legacy_unverified"
+        ),
+        material_unselected_node_ids=material_unselected_ids,
     )
     previous_ids = {candidate.candidate_id for candidate in state.relation_candidates}
     state.relation_candidates = refresh_relation_candidates(
@@ -3075,7 +3411,7 @@ def _evaluate_relation_gate(
         state.nodes,
         node_revisions=state.node_revisions,
         graph_revision=state.graph_revision,
-        provisional_synthesis_node_ids=selection.selected_node_ids,
+        provisional_synthesis_node_ids=relation_review_pool_ids,
         existing=state.relation_candidates,
         relation_ledger=state.relation_ledger,
         entropy_plateau=entropy_plateau,
@@ -3099,7 +3435,7 @@ def _evaluate_relation_gate(
     ]
     readiness = evaluate_synthesis_readiness(
         graph_revision=state.graph_revision,
-        provisional_selected_node_ids=selection.selected_node_ids,
+        provisional_selected_node_ids=selection.material_scope_node_ids,
         candidates=state.relation_candidates,
         relation_ledger=state.relation_ledger,
         merge_applications=state.merge_applications,
@@ -3109,6 +3445,16 @@ def _evaluate_relation_gate(
         enrichment_budget_limit=state.spec.budget.max_relation_enrichment_pairs,
         enrichment_pairs_committed=enrichment_committed,
         eligible_enrichment_candidate_ids=eligible_enrichment_ids,
+        material_scope_node_ids=selection.material_scope_node_ids,
+        presentation_headline_node_ids=selection.selected_node_ids,
+        unresolved_coverage_ids=selection.unresolved_coverage_ids,
+        undisposed_material_node_ids=[],
+        provenance_incomplete_node_ids=state.provenance_incomplete_node_ids,
+        budget_skipped_enrichment_pair_ids=(
+            eligible_enrichment_ids
+            if enrichment_committed >= state.spec.budget.max_relation_enrichment_pairs
+            else []
+        ),
     )
     state.provisional_synthesis_selection = selection
     state.synthesis_readiness = readiness
@@ -3224,6 +3570,9 @@ def _prepare_terminal_or_relation(
     pending = select_node_disjoint_relation_batch(
         ordered_pending,
         max_pairs=state.spec.budget.max_relation_pairs_per_episode,
+        maximize_material_priority=(
+            state.spec.role_isolation_mode != "legacy_unverified"
+        ),
     )
     if pending:
         assert state.provisional_synthesis_selection is not None
@@ -3239,6 +3588,12 @@ def _prepare_terminal_or_relation(
             native_orchestration_allowed=True,
             runtime_limits=runtime_limits,
             transport_hints={"profile": profile, "runtime": "current-codex-app"},
+            isolation_mode=state.spec.role_isolation_mode,
+            previous_role_session_ids=[
+                item.role_session_id
+                for item in state.role_session_registry
+                if item.role_session_id is not None
+            ],
         )
         for candidate in pending:
             candidate.status = "granted"
@@ -3275,6 +3630,9 @@ def _prepare_terminal_or_relation(
             state.spec.budget.max_relation_pairs_per_episode,
             readiness.enrichment_pairs_remaining,
         ),
+        maximize_material_priority=(
+            state.spec.role_isolation_mode != "legacy_unverified"
+        ),
     )
     if readiness.enrichment_pending and enrichment_pending:
         assert state.provisional_synthesis_selection is not None
@@ -3290,6 +3648,12 @@ def _prepare_terminal_or_relation(
             native_orchestration_allowed=True,
             runtime_limits=runtime_limits,
             transport_hints={"profile": profile, "runtime": "current-codex-app"},
+            isolation_mode=state.spec.role_isolation_mode,
+            previous_role_session_ids=[
+                item.role_session_id
+                for item in state.role_session_registry
+                if item.role_session_id is not None
+            ],
         )
         for candidate in enrichment_pending:
             candidate.status = "granted"
@@ -3444,6 +3808,7 @@ def _grant_new_episode(
     # Re-parse even builder-produced Pydantic instances.  Pydantic does not
     # revalidate nested model instances by default, and assignment validation
     # is intentionally not relied on at this machine-facing boundary.
+    canonical_node_id_map = dict(request._canonical_node_id_map)
     request = EpisodeRequest.model_validate(request.model_dump(mode="json"))
     if request.run_id != state.run_id:
         raise ValueError("episode grant run_id does not match App run state")
@@ -3469,6 +3834,7 @@ def _grant_new_episode(
         request_hash=_episode_request_hash(request),
         granted_at=_iso(granted_at),
         deadline_at=None if deadline is None else _iso(deadline),
+        canonical_node_id_map=canonical_node_id_map,
     )
     state.episodes.append(
         EpisodeLifecycleRecord(
@@ -3496,9 +3862,18 @@ def _grant_new_episode(
     _queue_event(state, "episode_granted", status="granted", **common)
     _queue_event(state, "episode_started", status="in_progress", **common)
     if request.role == "relation":
+        granted_candidate_ids = {
+            pair.candidate_id
+            for pair in (
+                request.relation_payload.candidate_pairs
+                if request.relation_payload
+                else []
+            )
+        }
         scheduling_classes = {
-            pair.scheduling_class
-            for pair in (request.relation_payload.candidate_pairs if request.relation_payload else [])
+            candidate.scheduling_class
+            for candidate in state.relation_candidates
+            if candidate.candidate_id in granted_candidate_ids
         }
         _queue_event(
             state,
@@ -3518,7 +3893,9 @@ def _grant_new_episode(
                 selected_pair_count=len(request.relation_payload.candidate_pairs),
                 graph_revision=state.graph_revision,
                 provisional_selected_node_count=len(
-                    request.relation_payload.provisional_synthesis_node_ids
+                    []
+                    if state.provisional_synthesis_selection is None
+                    else state.provisional_synthesis_selection.selected_node_ids
                 ),
                 blocking_pair_count=(
                     None if state.synthesis_readiness is None else state.synthesis_readiness.blocking_pair_count
@@ -3609,6 +3986,11 @@ def next_app_episode(
             controller_action="await_operator_decision",
             reason="the previous attempt requires an explicit retry or operator decision",
         )
+    previous_role_session_ids = [
+        item.role_session_id
+        for item in state.role_session_registry
+        if item.role_session_id is not None
+    ]
     # The loop consumes backend-only transitions. It never asks the App main
     # agent to interpret `continue_controller` or run controller mathematics.
     while True:
@@ -3633,6 +4015,8 @@ def next_app_episode(
                 native_orchestration_allowed=state.spec.allow_self_organized_executor,
                 runtime_limits=limits,
                 transport_hints={"profile": profile, "runtime": "current-codex-app"},
+                isolation_mode=state.spec.role_isolation_mode,
+                previous_role_session_ids=previous_role_session_ids,
             )
             return _grant_new_episode(run_dir, state, request, profile=profile)
 
@@ -3648,6 +4032,8 @@ def next_app_episode(
                 native_orchestration_allowed=True,
                 runtime_limits=limits,
                 transport_hints={"profile": profile, "runtime": "current-codex-app"},
+                isolation_mode=state.spec.role_isolation_mode,
+                previous_role_session_ids=previous_role_session_ids,
             )
             return _grant_new_episode(run_dir, state, request, profile=profile)
 
@@ -3841,6 +4227,153 @@ def _rejection_outcome(state: AppRunState, request: EpisodeRequest, reason: str)
     )
 
 
+def _validate_role_isolation(
+    state: AppRunState,
+    request: EpisodeRequest,
+    payload: Mapping[str, Any],
+) -> tuple[RoleIsolationAttestation, str | None]:
+    contract = request.role_execution_contract
+    if contract.context_manifest_hash != compute_role_context_manifest_hash(request):
+        return RoleIsolationAttestation(), "request context manifest hash is inconsistent"
+    try:
+        result = EpisodeResult.model_validate(payload)
+    except Exception as exc:
+        return RoleIsolationAttestation(), f"episode result schema validation failed: {exc}"
+    attestation = result.role_isolation_attestation
+    if contract.isolation_mode == "strict_fresh_context":
+        if (
+            attestation.isolation_mode != "strict_fresh_context"
+            or not attestation.isolation_verified
+            or attestation.context_manifest_hash != contract.context_manifest_hash
+            or attestation.context_manifest_version != contract.context_manifest_version
+            or not attestation.role_session_id
+            or attestation.isolation_attestation_source
+            not in {"runtime_reported", "backend_verified"}
+        ):
+            return attestation, "strict role isolation attestation is missing or mismatched"
+        used = {
+            item.role_session_id
+            for item in state.role_session_registry
+            if item.role_session_id is not None
+        }
+        if attestation.role_session_id in used:
+            return attestation, "strict role isolation reused role_session_id"
+    else:
+        if (
+            contract.isolation_mode == "shared_context_single_agent"
+            and attestation == RoleIsolationAttestation()
+        ):
+            attestation = RoleIsolationAttestation(
+                isolation_mode="shared_context_single_agent",
+                isolation_attestation_source="backend_fallback",
+                isolation_verified=False,
+            )
+        if attestation.isolation_mode != contract.isolation_mode:
+            return attestation, "role isolation fallback mode is mismatched"
+        if attestation.isolation_verified:
+            return (
+                attestation,
+                "shared or legacy role context cannot claim verified isolation",
+            )
+    return attestation, None
+
+
+def _canonicalize_blinded_contract(
+    request: EpisodeRequest,
+    payload: Mapping[str, Any],
+    canonical_node_id_map: Mapping[str, str],
+) -> tuple[EpisodeRequest, dict[str, Any]]:
+    """Reattach backend-only node identities after blind role execution."""
+
+    if not canonical_node_id_map:
+        return request, dict(payload)
+    request_payload = request.model_dump(mode="json")
+    request_payload["selected_node_revisions"] = {
+        canonical_node_id_map.get(node_id, node_id): revision
+        for node_id, revision in request_payload["selected_node_revisions"].items()
+    }
+    if request.role == "judge":
+        for node in request_payload["judge_payload"]["selected_frontier_nodes"]:
+            node["node_id"] = canonical_node_id_map[node["node_id"]]
+    elif request.role == "relation":
+        for pair in request_payload["relation_payload"]["candidate_pairs"]:
+            pair["left"]["node_id"] = canonical_node_id_map[pair["left"]["node_id"]]
+            pair["right"]["node_id"] = canonical_node_id_map[pair["right"]["node_id"]]
+    canonical_request = EpisodeRequest.model_validate(request_payload)
+
+    result_payload = json.loads(
+        json.dumps(dict(payload), ensure_ascii=False, sort_keys=True, allow_nan=False)
+    )
+    original = EpisodeResult.model_validate(result_payload)
+    if original.output_hash != compute_output_hash(
+        original.structured_output, original.schema_version
+    ):
+        raise ValueError("output hash mismatch before blinded identity reattachment")
+    result_payload["selected_node_revisions"] = {
+        canonical_node_id_map.get(node_id, node_id): revision
+        for node_id, revision in result_payload["selected_node_revisions"].items()
+    }
+    output = result_payload.get("structured_output")
+    def canonical_ref(value: str) -> str:
+        prefix = "node-claim:"
+        if value.startswith(prefix):
+            node_id = value.removeprefix(prefix)
+            return prefix + canonical_node_id_map.get(node_id, node_id)
+        return value
+
+    if isinstance(output, dict):
+        contributions = output.get("epistemic_contributions")
+        if isinstance(contributions, dict):
+            for statement in contributions.get("statements", []):
+                statement["target_node_id"] = canonical_node_id_map.get(
+                    statement["target_node_id"], statement["target_node_id"]
+                )
+                statement["basis_refs"] = [
+                    canonical_ref(ref) for ref in statement.get("basis_refs", [])
+                ]
+            for edge in contributions.get("edges", []):
+                edge["source_ref"] = canonical_ref(edge["source_ref"])
+                edge["target_ref"] = canonical_ref(edge["target_ref"])
+                edge["basis_refs"] = [
+                    canonical_ref(ref) for ref in edge.get("basis_refs", [])
+                ]
+            for disposition in contributions.get("path_dispositions", []):
+                disposition["target_node_id"] = canonical_node_id_map.get(
+                    disposition["target_node_id"], disposition["target_node_id"]
+                )
+                disposition["basis_refs"] = [
+                    canonical_ref(ref)
+                    for ref in disposition.get("basis_refs", [])
+                ]
+    if request.role == "judge" and isinstance(output, dict):
+        for observation in output.get("observations", []):
+            observation["node_id"] = canonical_node_id_map[observation["node_id"]]
+    elif request.role == "relation" and isinstance(output, dict):
+        for observation in output.get("observations", []):
+            observation["left_node_id"] = canonical_node_id_map[
+                observation["left_node_id"]
+            ]
+            observation["right_node_id"] = canonical_node_id_map[
+                observation["right_node_id"]
+            ]
+    canonical_result = EpisodeResult.model_validate(
+        {
+            **result_payload,
+            "output_hash": compute_output_hash(
+                EpisodeResult.model_validate(
+                    {
+                        **result_payload,
+                        "output_hash": original.output_hash,
+                    }
+                ).structured_output,
+                original.schema_version,
+            ),
+        }
+    )
+    result_payload = canonical_result.model_dump(mode="json")
+    return canonical_request, result_payload
+
+
 def _identity_rejection(
     run_dir: str | Path,
     state: AppRunState,
@@ -3980,6 +4513,17 @@ def submit_app_episode_result(
         reason = f"attempt lifecycle forbids commit: status={attempt.status}"
     else:
         reason = ""
+    attestation = RoleIsolationAttestation()
+    if not reason:
+        attestation, isolation_error = _validate_role_isolation(
+            state, attempt.request, payload
+        )
+        if isolation_error is not None:
+            reason = isolation_error
+        else:
+            payload["role_isolation_attestation"] = attestation.model_dump(
+                mode="json"
+            )
 
     if reason:
         outcome = _rejection_outcome(state, attempt.request, reason)
@@ -4042,12 +4586,39 @@ def submit_app_episode_result(
     attempt.submitted_at = _iso(submitted_at)
     attempt.status = "completed_uncommitted"
     _write_json_atomic(result_path, payload)
+    try:
+        commit_request, commit_payload = _canonicalize_blinded_contract(
+            attempt.request,
+            payload,
+            attempt.canonical_node_id_map,
+        )
+    except Exception as exc:
+        commit_request = attempt.request
+        commit_payload = payload
+        outcome = _rejection_outcome(
+            state,
+            attempt.request,
+            f"blinded identity reattachment failed: {exc}",
+        )
+        attempt.commit_outcome = outcome
+        attempt.status = "rejected"
+        state.active_episode_id = None
+        state.active_attempt_id = None
+        state.controller_action = "await_operator_decision"
+        _save_state(run_dir, state)
+        return SubmitEpisodeOutcome(
+            run_id=state.run_id,
+            episode_id=episode_id,
+            attempt_id=attempt_id,
+            commit_outcome=outcome,
+            next_controller_action=state.controller_action,
+        )
     graph = state.graph()
     buffered_events = _BufferedEpisodeEvents()
     outcome = commit_episode_result(
         graph,
-        attempt.request,
-        payload,
+        commit_request,
+        commit_payload,
         telemetry=buffered_events,  # type: ignore[arg-type]
         epistemic_context=epistemic_context,
     )
@@ -4061,9 +4632,32 @@ def submit_app_episode_result(
             )
         attempt.status = "committed"
         episode.committed_attempt_id = attempt_id
-        parsed = EpisodeResult.model_validate(payload)
+        parsed = EpisodeResult.model_validate(commit_payload)
         attempt.result_hash = parsed.output_hash
         attempt.committed_result = parsed.model_copy(deep=True)
+        state.role_session_registry.append(
+            RoleSessionRecord(
+                episode_id=episode_id,
+                attempt_id=attempt_id,
+                role=episode.role,
+                isolation_mode=attempt.request.role_execution_contract.isolation_mode,
+                role_session_id=attestation.role_session_id,
+                context_manifest_hash=(
+                    attempt.request.role_execution_contract.context_manifest_hash
+                ),
+                context_manifest_version=(
+                    attempt.request.role_execution_contract.context_manifest_version
+                ),
+                isolation_attestation_source=(
+                    attestation.isolation_attestation_source
+                    if attestation.role_session_id is not None
+                    else attempt.request.role_execution_contract.isolation_attestation_source
+                ),
+                isolation_verified=attestation.isolation_verified,
+            )
+        )
+        if not attestation.isolation_verified:
+            state.correlated_error_risk = True
         state.active_episode_id = None
         state.active_attempt_id = None
         state.controller_action = "continue_controller"
@@ -4094,9 +4688,14 @@ def submit_app_episode_result(
             schema_valid=True,
         )
         if episode.role == "relation" and attempt.request.relation_payload is not None:
-            enrichment_count = sum(
-                pair.scheduling_class == "enrichment"
+            granted_candidate_ids = {
+                pair.candidate_id
                 for pair in attempt.request.relation_payload.candidate_pairs
+            }
+            enrichment_count = sum(
+                candidate.scheduling_class == "enrichment"
+                for candidate in state.relation_candidates
+                if candidate.candidate_id in granted_candidate_ids
             )
             if enrichment_count:
                 committed = _relation_enrichment_pairs_committed(state)
@@ -4112,7 +4711,9 @@ def submit_app_episode_result(
                     input_graph_revision=attempt.request.input_graph_revision,
                     graph_revision=state.graph_revision,
                     provisional_selected_node_count=len(
-                        attempt.request.relation_payload.provisional_synthesis_node_ids
+                        []
+                        if state.provisional_synthesis_selection is None
+                        else state.provisional_synthesis_selection.selected_node_ids
                     ),
                     blocking_pair_count=(None if readiness is None else readiness.blocking_pair_count),
                     resolved_blocking_pair_count=(
@@ -4324,9 +4925,20 @@ def retry_app_episode(
             runtime_limits=limits,
             tool_policy=previous.request.tool_policy,
             transport_hints=previous.request.transport_hints,
+            isolation_mode=state.spec.role_isolation_mode,
+            previous_role_session_ids=[
+                item.role_session_id
+                for item in state.role_session_registry
+                if item.role_session_id is not None
+            ],
         )
     elif previous.request.role == "judge":
-        nodes = [graph.node_by_id(node_id) for node_id in previous.request.selected_node_revisions]
+        nodes = [
+            graph.node_by_id(
+                previous.canonical_node_id_map.get(node_id, node_id)
+            )
+            for node_id in previous.request.selected_node_revisions
+        ]
         if any(node is None or node.status != "frontier" for node in nodes):
             raise ValueError("Judge retry targets are no longer committed frontier nodes")
         request = build_judge_episode_request(
@@ -4345,6 +4957,12 @@ def retry_app_episode(
             runtime_limits=limits,
             tool_policy=previous.request.tool_policy,
             transport_hints=previous.request.transport_hints,
+            isolation_mode=state.spec.role_isolation_mode,
+            previous_role_session_ids=[
+                item.role_session_id
+                for item in state.role_session_registry
+                if item.role_session_id is not None
+            ],
         )
     elif previous.request.role == "relation":
         if previous.request.relation_payload is None:
@@ -4378,6 +4996,9 @@ def retry_app_episode(
         retry_candidates = select_node_disjoint_relation_batch(
             candidates,
             max_pairs=retry_cap,
+            maximize_material_priority=(
+                state.spec.role_isolation_mode != "legacy_unverified"
+            ),
         )
         if not retry_candidates:
             raise ValueError("Relation retry has no node-disjoint candidates within remaining budget")
@@ -4389,7 +5010,9 @@ def retry_app_episode(
             goal=state.spec.goal,
             constraints=list(state.spec.constraints),
             provisional_synthesis_node_ids=(
-                previous.request.relation_payload.provisional_synthesis_node_ids
+                []
+                if state.provisional_synthesis_selection is None
+                else state.provisional_synthesis_selection.selected_node_ids
             ),
             max_relation_pairs_per_episode=state.spec.budget.max_relation_pairs_per_episode,
             rubric_version=previous.request.relation_payload.rubric_version,
@@ -4397,6 +5020,12 @@ def retry_app_episode(
             runtime_limits=limits,
             tool_policy=previous.request.tool_policy,
             transport_hints=previous.request.transport_hints,
+            isolation_mode=state.spec.role_isolation_mode,
+            previous_role_session_ids=[
+                item.role_session_id
+                for item in state.role_session_registry
+                if item.role_session_id is not None
+            ],
         )
         retry_candidate_ids = {candidate.candidate_id for candidate in retry_candidates}
         for candidate in candidates:
@@ -4408,6 +5037,15 @@ def retry_app_episode(
         raise ValueError(f"retry is not implemented for role={previous.request.role}")
     # A retry is another attempt of the same logical episode.
     request.episode_id = episode_id
+    bind_role_execution_contract(
+        request,
+        isolation_mode=state.spec.role_isolation_mode,
+        previous_role_session_ids=[
+            item.role_session_id
+            for item in state.role_session_registry
+            if item.role_session_id is not None
+        ],
+    )
     if request.role == "relation":
         assert request.relation_payload is not None
         retry_candidate_ids = {
@@ -4430,6 +5068,7 @@ def retry_app_episode(
         request_hash=_episode_request_hash(request),
         granted_at=_iso(granted_at),
         deadline_at=None if deadline is None else _iso(deadline),
+        canonical_node_id_map=dict(request._canonical_node_id_map),
     )
     episode.attempts.append(attempt)
     state.active_episode_id = episode_id

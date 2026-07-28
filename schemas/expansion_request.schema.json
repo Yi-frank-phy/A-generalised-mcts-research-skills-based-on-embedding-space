@@ -94,6 +94,32 @@
       "title": "BudgetSpec",
       "type": "object"
     },
+    "CoverageObligation": {
+      "additionalProperties": false,
+      "description": "Structured, domain-neutral synthesis coverage required by a run.",
+      "properties": {
+        "coverage_id": {
+          "minLength": 1,
+          "title": "Coverage Id",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "title": "Description",
+          "type": "string"
+        },
+        "required": {
+          "default": true,
+          "title": "Required",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "coverage_id"
+      ],
+      "title": "CoverageObligation",
+      "type": "object"
+    },
     "DTERunSpec": {
       "additionalProperties": false,
       "description": "Top-level run specification.\n\nThis is the source of truth. Free-form Markdown or prompt text cannot\noverride this object after validation.",
@@ -152,6 +178,23 @@
           "minimum": 8,
           "title": "Embedding Dimension",
           "type": "integer"
+        },
+        "coverage_obligations": {
+          "items": {
+            "$ref": "#/$defs/CoverageObligation"
+          },
+          "title": "Coverage Obligations",
+          "type": "array"
+        },
+        "role_isolation_mode": {
+          "default": "legacy_unverified",
+          "enum": [
+            "strict_fresh_context",
+            "shared_context_single_agent",
+            "legacy_unverified"
+          ],
+          "title": "Role Isolation Mode",
+          "type": "string"
         }
       },
       "required": [
@@ -230,6 +273,13 @@
             "type": "string"
           },
           "title": "Parent Ids",
+          "type": "array"
+        },
+        "coverage_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Coverage Ids",
           "type": "array"
         },
         "confidence": {

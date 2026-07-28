@@ -81,6 +81,28 @@ class RunIdentityObservabilityV1(DTEBaseModel):
     observability_status: Literal["current", "partial_legacy"]
     created_at: str | None = None
     updated_at: str | None = None
+    isolation_mode_by_role: dict[str, list[str]] = Field(default_factory=dict)
+    role_session_hashes: list[str] = Field(default_factory=list)
+    context_manifest_hashes_by_role: dict[str, list[str]] = Field(
+        default_factory=dict
+    )
+    cross_role_session_reuse_count: int = Field(default=0, ge=0)
+    isolation_verified: bool = False
+    correlated_error_risk: bool = False
+    material_synthesis_scope: list[str] = Field(default_factory=list)
+    presentation_headline_scope: list[str] = Field(default_factory=list)
+    unselected_node_dispositions: list[dict[str, Any]] = Field(default_factory=list)
+    unresolved_high_value_node_ids: list[str] = Field(default_factory=list)
+    budget_excluded_node_ids: list[str] = Field(default_factory=list)
+    provenance_incomplete_node_ids: list[str] = Field(default_factory=list)
+    material_relation_pairs_omitted_for_budget: list[str] = Field(
+        default_factory=list
+    )
+    hook_trigger_source: str | None = None
+    hook_invocation_key: str | None = None
+    replay_of_run_id: str | None = None
+    source_episode_result_hashes: list[str] = Field(default_factory=list)
+    model_execution_disposition: str | None = None
 
 
 class RuntimeAggregateDiagnosticsV1(DTEBaseModel):

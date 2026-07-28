@@ -81,6 +81,11 @@ class HookSessionManifest(DTEBaseModel):
     manifest_identity_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     repeated_stop_count: int = Field(default=0, ge=0)
     failure_reason: str | None = None
+    trigger_source: str | None = None
+    invocation_key: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    replay_of_run_id: str | None = None
+    source_episode_result_hashes: list[str] = Field(default_factory=list)
+    model_execution_disposition: Literal["reused", "rerun", "unknown"] | None = None
 
 
 class HookDriverReceipt(DTEBaseModel):
@@ -131,6 +136,10 @@ def receipts_dir(session_id: str) -> Path:
 
 def transaction_path(session_id: str) -> Path:
     return state_root() / "transactions" / f"{_session_component(session_id)}.json"
+
+
+def invocation_path(invocation_key: str) -> Path:
+    return state_root() / "invocations" / f"{invocation_key}.json"
 
 
 def _atomic_json(path: Path, payload: Any) -> None:
@@ -284,6 +293,49 @@ def save_manifest(manifest: HookSessionManifest) -> None:
 
 def _canonical_hash(value: Any) -> str:
     return hashlib.sha256(canonical_json_bytes(value)).hexdigest()
+
+
+def _commit_worktree_identity(cwd: str) -> str:
+    root = Path(cwd).resolve()
+    git_entry = root / ".git"
+    if git_entry.is_file():
+        pointer = git_entry.read_text(encoding="utf-8", errors="replace").strip()
+        if pointer.startswith("gitdir:"):
+            git_entry = (root / pointer.split(":", 1)[1].strip()).resolve()
+    head = ""
+    if git_entry.is_dir() and (git_entry / "HEAD").is_file():
+        head = (git_entry / "HEAD").read_text(
+            encoding="utf-8", errors="replace"
+        ).strip()
+        if head.startswith("ref:"):
+            ref_path = git_entry / head.split(":", 1)[1].strip()
+            if ref_path.is_file():
+                head = f"{head}:{ref_path.read_text(encoding='ascii').strip()}"
+    return _canonical_hash({"cwd": str(root), "git_head": head or "unavailable"})
+
+
+def hook_invocation_key(
+    *,
+    cwd: str,
+    hook_type: str,
+    spec: DTERunSpec,
+    nodes: list[SearchNode],
+    invocation_nonce: str | None = None,
+    replay_of_run_id: str | None = None,
+) -> str:
+    return _canonical_hash(
+        {
+            "repository_identity": str(Path(cwd).resolve()),
+            "commit_worktree_identity": _commit_worktree_identity(cwd),
+            "hook_type": hook_type,
+            "run_spec_hash": _canonical_hash(spec.model_dump(mode="json")),
+            "initial_node_hash": _canonical_hash(
+                [node.model_dump(mode="json") for node in nodes]
+            ),
+            "invocation_nonce": invocation_nonce,
+            "replay_of_run_id": replay_of_run_id,
+        }
+    )
 
 
 def _capability_hash(value: str) -> str:
@@ -1020,18 +1072,105 @@ def init_session(
     capability: str,
     spec_path: str,
     nodes_path: str,
+    *,
+    invocation_nonce: str | None = None,
+    replay_of_run_id: str | None = None,
 ) -> HookDriverReceipt:
     with session_lock(session_id):
         manifest = load_manifest(session_id)
-        if manifest is None or manifest.phase != "awaiting_init":
+        if manifest is None:
             raise ValueError("session is not awaiting initialization")
         if manifest.active_root_turn_id != turn_id:
             raise PermissionError("only the active root turn may initialize DTE")
         _execution_context(manifest, capability)
-        before = state_identity_hash(manifest)
         spec = load_json_model(spec_path, DTERunSpec)
+        if spec.role_isolation_mode == "legacy_unverified":
+            raise ValueError(
+                "hook-enforced App runs require an explicit role_isolation_mode: "
+                "strict_fresh_context or shared_context_single_agent"
+            )
         enforce_run_spec_guard(spec)
         nodes = load_json_list(nodes_path, SearchNode)
+        invocation_key = hook_invocation_key(
+            cwd=manifest.cwd,
+            hook_type="init",
+            spec=spec,
+            nodes=nodes,
+            invocation_nonce=invocation_nonce,
+            replay_of_run_id=replay_of_run_id,
+        )
+        before = state_identity_hash(manifest)
+        if manifest.phase != "awaiting_init":
+            if manifest.invocation_key != invocation_key or manifest.run_dir is None:
+                raise ValueError("session is not awaiting initialization")
+            return _record_receipt(
+                manifest,
+                operation="init",
+                success=True,
+                before_hash=before,
+                controller_action=manifest.phase,
+                payload={
+                    "run_dir": manifest.run_dir,
+                    "duplicate_invocation": True,
+                    "invocation_key": invocation_key,
+                    "model_execution_disposition": "reused",
+                },
+            )
+        registry = invocation_path(invocation_key)
+        registry.parent.mkdir(parents=True, exist_ok=True)
+        owner_payload = {
+            "schema_version": "dte-hook-invocation.v1",
+            "status": "initializing",
+            "invocation_key": invocation_key,
+            "session_id": session_id,
+            "trigger_source": manifest.activation_source,
+        }
+        try:
+            descriptor = os.open(
+                registry, os.O_CREAT | os.O_EXCL | os.O_WRONLY
+            )
+        except FileExistsError:
+            existing = json.loads(registry.read_text(encoding="utf-8"))
+            if (
+                existing.get("status") == "complete"
+                and isinstance(existing.get("run_dir"), str)
+            ):
+                return _record_receipt(
+                    manifest,
+                    operation="init",
+                    success=True,
+                    before_hash=before,
+                    controller_action="existing_run",
+                    payload={
+                        "run_dir": existing["run_dir"],
+                        "run_id": existing.get("run_id"),
+                        "duplicate_invocation": True,
+                        "invocation_key": invocation_key,
+                        "model_execution_disposition": "reused",
+                    },
+                )
+            raise RuntimeError(
+                "an identical hook invocation is already initializing"
+            )
+        else:
+            encoded = json.dumps(owner_payload, sort_keys=True).encode("utf-8")
+            try:
+                os.write(descriptor, encoded)
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
+        source_hashes: list[str] = []
+        if replay_of_run_id is not None:
+            source_dir = Path(manifest.cwd) / ".dte" / "runs" / replay_of_run_id
+            source_state = load_app_run(source_dir)
+            source_hashes = sorted(
+                {
+                    attempt.result_hash
+                    for episode in source_state.episodes
+                    for attempt in episode.attempts
+                    if attempt.result_hash is not None
+                }
+            )
         run_id = str(uuid.uuid4())
         runs_root = Path(manifest.cwd) / ".dte" / "runs"
         final_dir = (runs_root / run_id).resolve()
@@ -1068,6 +1207,13 @@ def init_session(
                 run_id=run_id,
                 execution_contract=contract,
                 creation_capability=next_capability,
+                hook_trigger_source=manifest.activation_source,
+                hook_invocation_key=invocation_key,
+                replay_of_run_id=replay_of_run_id,
+                source_episode_result_hashes=source_hashes,
+                model_execution_disposition=(
+                    "rerun" if replay_of_run_id is not None else "unknown"
+                ),
             )
             _atomic_json(temporary_dir / "run_spec.json", spec.model_dump(mode="json"))
             _atomic_json(
@@ -1076,12 +1222,41 @@ def init_session(
             )
             final_dir.parent.mkdir(parents=True, exist_ok=True)
             temporary_dir.replace(final_dir)
-        except Exception:
+        except Exception as exc:
             if temporary_dir.is_dir() and runs_root.resolve() in temporary_dir.parents:
                 shutil.rmtree(temporary_dir)
+            _atomic_json(
+                registry,
+                {
+                    **owner_payload,
+                    "status": "failed",
+                    "error_type": type(exc).__name__,
+                },
+            )
             raise
+        _atomic_json(
+            registry,
+            {
+                **owner_payload,
+                "status": "complete",
+                "run_id": run_id,
+                "run_dir": str(final_dir),
+                "replay_of_run_id": replay_of_run_id,
+                "source_episode_result_hashes": source_hashes,
+                "model_execution_disposition": (
+                    "rerun" if replay_of_run_id is not None else "unknown"
+                ),
+            },
+        )
         manifest.run_id = run_id
         manifest.run_dir = str(final_dir)
+        manifest.trigger_source = manifest.activation_source
+        manifest.invocation_key = invocation_key
+        manifest.replay_of_run_id = replay_of_run_id
+        manifest.source_episode_result_hashes = source_hashes
+        manifest.model_execution_disposition = (
+            "rerun" if replay_of_run_id is not None else "unknown"
+        )
         manifest.manifest_identity_hash = identity
         manifest.capability_hash = _capability_hash(next_capability)
         manifest.protected_paths = _protected_paths(manifest.cwd, str(final_dir))
@@ -1093,7 +1268,14 @@ def init_session(
             success=True,
             before_hash=before,
             controller_action=state.controller_action,
-            payload={"run_dir": str(final_dir)},
+            payload={
+                "run_dir": str(final_dir),
+                "invocation_key": invocation_key,
+                "duplicate_invocation": False,
+                "replay_of_run_id": replay_of_run_id,
+                "source_episode_result_hashes": source_hashes,
+                "model_execution_disposition": manifest.model_execution_disposition,
+            },
         )
 
 

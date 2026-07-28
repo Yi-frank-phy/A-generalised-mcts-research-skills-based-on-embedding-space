@@ -1943,6 +1943,24 @@ def build_run_observability_summary(
         if state.terminal_record is not None
         else state.pending_terminal_source
     )
+    isolation_mode_by_role: dict[str, list[str]] = {}
+    context_manifest_hashes_by_role: dict[str, list[str]] = {}
+    for item in state.role_session_registry:
+        isolation_mode_by_role.setdefault(item.role, []).append(item.isolation_mode)
+        context_manifest_hashes_by_role.setdefault(item.role, []).append(
+            item.context_manifest_hash
+        )
+    role_session_ids = [
+        item.role_session_id
+        for item in state.role_session_registry
+        if item.role_session_id is not None
+    ]
+    role_session_hashes = sorted(
+        {_sha256_text(item) for item in role_session_ids}
+    )
+    reuse_count = len(role_session_ids) - len(set(role_session_ids))
+    selection = state.provisional_synthesis_selection
+    dispositions = state.unselected_node_dispositions
     summary = RunObservabilitySummaryV1(
         run=RunIdentityObservabilityV1(
             run_id=state.run_id,
@@ -2040,6 +2058,51 @@ def build_run_observability_summary(
             observability_status="partial_legacy" if partial else "current",
             created_at=state.created_at,
             updated_at=state.updated_at,
+            isolation_mode_by_role={
+                role: sorted(modes)
+                for role, modes in sorted(isolation_mode_by_role.items())
+            },
+            role_session_hashes=role_session_hashes,
+            context_manifest_hashes_by_role={
+                role: sorted(set(hashes))
+                for role, hashes in sorted(
+                    context_manifest_hashes_by_role.items()
+                )
+            },
+            cross_role_session_reuse_count=reuse_count,
+            isolation_verified=bool(state.role_session_registry)
+            and all(item.isolation_verified for item in state.role_session_registry),
+            correlated_error_risk=state.correlated_error_risk,
+            material_synthesis_scope=(
+                [] if selection is None else selection.material_scope_node_ids
+            ),
+            presentation_headline_scope=(
+                [] if selection is None else selection.selected_node_ids
+            ),
+            unselected_node_dispositions=[
+                item.model_dump(mode="json") for item in dispositions
+            ],
+            unresolved_high_value_node_ids=[
+                item.node_id
+                for item in dispositions
+                if item.disposition == "unresolved_high_value"
+            ],
+            budget_excluded_node_ids=[
+                item.node_id
+                for item in dispositions
+                if item.disposition == "budget_excluded"
+            ],
+            provenance_incomplete_node_ids=state.provenance_incomplete_node_ids,
+            material_relation_pairs_omitted_for_budget=(
+                []
+                if state.synthesis_readiness is None
+                else state.synthesis_readiness.budget_skipped_enrichment_pair_ids
+            ),
+            hook_trigger_source=state.hook_trigger_source,
+            hook_invocation_key=state.hook_invocation_key,
+            replay_of_run_id=state.replay_of_run_id,
+            source_episode_result_hashes=state.source_episode_result_hashes,
+            model_execution_disposition=state.model_execution_disposition,
         ),
         episode_funnel=episode_funnel,
         node_funnel=node_funnel,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import time
 from collections.abc import Callable, Sequence
 from typing import Any, Protocol
@@ -19,10 +20,15 @@ from .episode_models import (
     JudgeNodeInput,
     RuntimeDiagnostics,
     RuntimeLimits,
+    RoleIsolationMode,
+    bind_role_execution_contract,
     compute_output_hash,
 )
 from .models import ExpansionRequest, SearchNode
 from .relation_models import (
+    BlindRelationEpisodePayload,
+    BlindRelationNodeInput,
+    BlindRelationPairInput,
     RelationCandidate,
     RelationEpisodePayload,
     RelationEvidenceInput,
@@ -57,6 +63,8 @@ def build_executor_episode_request(
     runtime_limits: RuntimeLimits | None = None,
     tool_policy: Any = None,
     transport_hints: dict[str, Any] | None = None,
+    isolation_mode: RoleIsolationMode = "legacy_unverified",
+    previous_role_session_ids: list[str] | None = None,
 ) -> EpisodeRequest:
     """Create a producer-safe Executor grant from committed graph state."""
 
@@ -81,7 +89,7 @@ def build_executor_episode_request(
         }
     }
     parent_revision = graph.node_revisions[parent.node_id]
-    return EpisodeRequest(
+    request = EpisodeRequest(
         episode_id=str(uuid.uuid4()),
         attempt_id=str(uuid.uuid4()),
         run_id=run_id,
@@ -110,6 +118,11 @@ def build_executor_episode_request(
             "constraints": constraints or [],
         },
     )
+    return bind_role_execution_contract(
+        request,
+        isolation_mode=isolation_mode,
+        previous_role_session_ids=previous_role_session_ids,
+    )
 
 
 def build_judge_episode_request(
@@ -125,37 +138,61 @@ def build_judge_episode_request(
     runtime_limits: RuntimeLimits | None = None,
     tool_policy: Any = None,
     transport_hints: dict[str, Any] | None = None,
+    isolation_mode: RoleIsolationMode = "legacy_unverified",
+    previous_role_session_ids: list[str] | None = None,
 ) -> EpisodeRequest:
     """Create one bounded observable Judge grant from committed frontier nodes."""
 
     if not nodes:
         raise ValueError("Judge grant requires at least one selected node")
+    episode_id = str(uuid.uuid4())
+    attempt_id = str(uuid.uuid4())
+    ordered_nodes = (
+        list(nodes)
+        if isolation_mode == "legacy_unverified"
+        else sorted(
+            nodes,
+            key=lambda item: (
+                hashlib.sha256(
+                    f"{attempt_id}\x1f{item.node_id}".encode("utf-8")
+                ).hexdigest(),
+                item.node_id,
+            ),
+        )
+    )
     selected_revisions: dict[str, int] = {}
     selected_inputs: list[JudgeNodeInput] = []
-    for node in nodes:
+    canonical_map: dict[str, str] = {}
+    for index, node in enumerate(ordered_nodes, 1):
         if node.status != "frontier" or node.node_id not in graph.node_revisions:
             raise ValueError("Judge grants require committed frontier nodes")
-        selected_revisions[node.node_id] = graph.node_revisions[node.node_id]
-        selected_inputs.append(
-            JudgeNodeInput.model_validate(
-                node.model_dump(
-                    mode="json",
-                    include={
-                        "node_id",
-                        "node_type",
-                        "claim",
-                        "rationale",
-                        "assumptions",
-                        "evidence",
-                        "risks",
-                        "confidence",
-                    },
-                )
-            )
+        alias = (
+            node.node_id
+            if isolation_mode == "legacy_unverified"
+            else f"judge-node-{index:04d}"
         )
-    return EpisodeRequest(
-        episode_id=str(uuid.uuid4()),
-        attempt_id=str(uuid.uuid4()),
+        if alias != node.node_id:
+            canonical_map[alias] = node.node_id
+        selected_revisions[alias] = graph.node_revisions[node.node_id]
+        payload = node.model_dump(
+            mode="json",
+            include={
+                "node_type",
+                "claim",
+                "rationale",
+                "assumptions",
+                "evidence",
+                "risks",
+                "confidence",
+            },
+        )
+        payload["node_id"] = alias
+        selected_inputs.append(
+            JudgeNodeInput.model_validate(payload)
+        )
+    request = EpisodeRequest(
+        episode_id=episode_id,
+        attempt_id=attempt_id,
         run_id=run_id,
         role="judge",
         input_graph_revision=graph.revision,
@@ -184,9 +221,49 @@ def build_judge_episode_request(
             required_output_fields=["node_id", "score", "reasoning", "risks"],
         ),
     )
+    request._canonical_node_id_map = canonical_map
+    return bind_role_execution_contract(
+        request,
+        isolation_mode=isolation_mode,
+        previous_role_session_ids=previous_role_session_ids,
+    )
 
 
-def _relation_node_input(node: SearchNode, revision: int) -> RelationNodeInput:
+def _blind_ref(value: str, *, attempt_id: str, prefix: str) -> str:
+    digest = hashlib.sha256(f"{attempt_id}\x1f{value}".encode("utf-8")).hexdigest()[:16]
+    return f"{prefix}-{digest}"
+
+
+def _relation_node_input(
+    node: SearchNode,
+    *,
+    alias: str,
+    attempt_id: str,
+) -> BlindRelationNodeInput:
+    return BlindRelationNodeInput(
+        node_id=alias,
+        node_type=node.node_type,
+        claim=node.claim,
+        rationale=node.rationale,
+        assumptions=list(node.assumptions),
+        evidence=[
+            RelationEvidenceInput(
+                evidence_ref=f"{alias}:evidence:{index}",
+                text=value,
+            )
+            for index, value in enumerate(node.evidence)
+        ],
+        risks=list(node.risks),
+        parent_ids=[
+            _blind_ref(parent_id, attempt_id=attempt_id, prefix="ancestor")
+            for parent_id in node.parent_ids
+        ],
+    )
+
+
+def _legacy_relation_node_input(
+    node: SearchNode, revision: int
+) -> RelationNodeInput:
     return RelationNodeInput(
         node_id=node.node_id,
         node_revision=revision,
@@ -207,7 +284,9 @@ def _relation_node_input(node: SearchNode, revision: int) -> RelationNodeInput:
         judge_risks=list(node.judge_risks),
         judge_uncertainty_evidence=list(node.judge_uncertainty_evidence),
         judge_result_provenance=(
-            None if node.judge_result_provenance is None else dict(node.judge_result_provenance)
+            None
+            if node.judge_result_provenance is None
+            else dict(node.judge_result_provenance)
         ),
         parent_ids=list(node.parent_ids),
     )
@@ -228,6 +307,8 @@ def build_relation_episode_request(
     runtime_limits: RuntimeLimits | None = None,
     tool_policy: Any = None,
     transport_hints: dict[str, Any] | None = None,
+    isolation_mode: RoleIsolationMode = "legacy_unverified",
+    previous_role_session_ids: list[str] | None = None,
 ) -> EpisodeRequest:
     """Build one bounded Relation grant from exact backend-selected candidates."""
 
@@ -240,9 +321,12 @@ def build_relation_episode_request(
         if candidate.left_node_id in used_nodes or candidate.right_node_id in used_nodes:
             raise ValueError("Relation episode candidate pairs must be node-disjoint")
         used_nodes.update((candidate.left_node_id, candidate.right_node_id))
+    episode_id = str(uuid.uuid4())
+    attempt_id = str(uuid.uuid4())
     selected_revisions: dict[str, int] = {}
-    pair_inputs: list[RelationPairInput] = []
-    for candidate in candidates:
+    pair_inputs: list[RelationPairInput | BlindRelationPairInput] = []
+    canonical_map: dict[str, str] = {}
+    for index, candidate in enumerate(candidates, 1):
         left = graph.node_by_id(candidate.left_node_id)
         right = graph.node_by_id(candidate.right_node_id)
         if left is None or right is None:
@@ -254,24 +338,49 @@ def build_relation_episode_request(
             or candidate.right_node_revision != right_revision
         ):
             raise ValueError("Relation candidate revision is stale")
-        selected_revisions[left.node_id] = left_revision
-        selected_revisions[right.node_id] = right_revision
-        pair_inputs.append(
-            RelationPairInput(
+        legacy = isolation_mode == "legacy_unverified"
+        left_alias = left.node_id if legacy else f"relation-pair-{index:04d}-left"
+        right_alias = right.node_id if legacy else f"relation-pair-{index:04d}-right"
+        if not legacy:
+            canonical_map[left_alias] = left.node_id
+            canonical_map[right_alias] = right.node_id
+        selected_revisions[left_alias] = left_revision
+        selected_revisions[right_alias] = right_revision
+        if legacy:
+            pair_inputs.append(
+                RelationPairInput(
+                    candidate_id=candidate.candidate_id,
+                    left=_legacy_relation_node_input(left, left_revision),
+                    right=_legacy_relation_node_input(right, right_revision),
+                    left_node_revision=left_revision,
+                    right_node_revision=right_revision,
+                    candidate_reason=candidate.candidate_reason,
+                    scheduling_class=candidate.scheduling_class,
+                    priority=candidate.priority,
+                    material_to_synthesis=candidate.material_to_synthesis,
+                )
+            )
+        else:
+            pair_inputs.append(
+                BlindRelationPairInput(
                 candidate_id=candidate.candidate_id,
-                left=_relation_node_input(left, left_revision),
-                right=_relation_node_input(right, right_revision),
+                left=_relation_node_input(
+                    left,
+                    alias=left_alias,
+                    attempt_id=attempt_id,
+                ),
+                right=_relation_node_input(
+                    right,
+                    alias=right_alias,
+                    attempt_id=attempt_id,
+                ),
                 left_node_revision=left_revision,
                 right_node_revision=right_revision,
-                candidate_reason=candidate.candidate_reason,
-                scheduling_class=candidate.scheduling_class,
-                priority=candidate.priority,
-                material_to_synthesis=candidate.material_to_synthesis,
             )
         )
-    return EpisodeRequest(
-        episode_id=str(uuid.uuid4()),
-        attempt_id=str(uuid.uuid4()),
+    request = EpisodeRequest(
+        episode_id=episode_id,
+        attempt_id=attempt_id,
         run_id=run_id,
         role="relation",
         input_graph_revision=graph.revision,
@@ -289,14 +398,32 @@ def build_relation_episode_request(
         tool_policy=tool_policy,
         transport_hints=transport_hints,
         required_parent_id_on_children=False,
-        relation_payload=RelationEpisodePayload(
-            rubric_version=rubric_version,
-            problem=problem,
-            goal=goal,
-            constraints=list(constraints),
-            candidate_pairs=pair_inputs,
-            provisional_synthesis_node_ids=list(provisional_synthesis_node_ids),
+        relation_payload=(
+            RelationEpisodePayload(
+                rubric_version=rubric_version,
+                problem=problem,
+                goal=goal,
+                constraints=list(constraints),
+                candidate_pairs=pair_inputs,
+                provisional_synthesis_node_ids=list(
+                    provisional_synthesis_node_ids
+                ),
+            )
+            if isolation_mode == "legacy_unverified"
+            else BlindRelationEpisodePayload(
+                rubric_version=rubric_version,
+                problem=problem,
+                goal=goal,
+                constraints=list(constraints),
+                candidate_pairs=pair_inputs,
+            )
         ),
+    )
+    request._canonical_node_id_map = canonical_map
+    return bind_role_execution_contract(
+        request,
+        isolation_mode=isolation_mode,
+        previous_role_session_ids=previous_role_session_ids,
     )
 
 

@@ -94,6 +94,32 @@
       "title": "BudgetSpec",
       "type": "object"
     },
+    "CoverageObligation": {
+      "additionalProperties": false,
+      "description": "Structured, domain-neutral synthesis coverage required by a run.",
+      "properties": {
+        "coverage_id": {
+          "minLength": 1,
+          "title": "Coverage Id",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "title": "Description",
+          "type": "string"
+        },
+        "required": {
+          "default": true,
+          "title": "Required",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "coverage_id"
+      ],
+      "title": "CoverageObligation",
+      "type": "object"
+    },
     "OperatorPolicy": {
       "additionalProperties": false,
       "description": "Narrow delegation policy for privileged controller commands.",
@@ -165,6 +191,23 @@
       "minimum": 8,
       "title": "Embedding Dimension",
       "type": "integer"
+    },
+    "coverage_obligations": {
+      "items": {
+        "$ref": "#/$defs/CoverageObligation"
+      },
+      "title": "Coverage Obligations",
+      "type": "array"
+    },
+    "role_isolation_mode": {
+      "default": "legacy_unverified",
+      "enum": [
+        "strict_fresh_context",
+        "shared_context_single_agent",
+        "legacy_unverified"
+      ],
+      "title": "Role Isolation Mode",
+      "type": "string"
     }
   },
   "required": [

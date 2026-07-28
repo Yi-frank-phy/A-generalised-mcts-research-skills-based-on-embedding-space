@@ -17,6 +17,10 @@ from dte_backend.episode_models import (
     compute_output_hash,
 )
 from dte_backend.hook_driver import HookDriverReceipt, HookSessionManifest
+from dte_backend.epistemic_models import (
+    EpistemicContributionBundle,
+    EpistemicStatementContribution,
+)
 from dte_backend.models import DTERunSpec, SearchNode
 
 
@@ -90,6 +94,7 @@ def run_driver(tmp_path: Path, *arguments: str, capability: str | None = None):
 
 def write_inputs(tmp_path: Path) -> tuple[Path, Path]:
     spec = json.loads((ROOT / "examples" / "run_spec.json").read_text(encoding="utf-8"))
+    spec["role_isolation_mode"] = "shared_context_single_agent"
     spec["budget"]["max_committed_search_nodes"] = 2
     spec["budget"]["max_iterations"] = 1
     spec_path = tmp_path / "spec.json"
@@ -467,7 +472,20 @@ def test_terminal_handoff_is_generated_before_stop_allows_report(tmp_path):
                 risks=[],
             )
             for node_id in request.selected_node_revisions
-        ]
+        ],
+        epistemic_contributions=EpistemicContributionBundle(
+            statements=[
+                EpistemicStatementContribution(
+                    local_id=f"evidence-{index}",
+                    statement_type="evidence",
+                    text="bounded Judge evidence for the selected material claim",
+                    target_node_id=node_id,
+                    source_type="agent_reported",
+                    basis_refs=[],
+                )
+                for index, node_id in enumerate(request.selected_node_revisions)
+            ]
+        ),
     )
     result = EpisodeResult(
         episode_id=request.episode_id,
@@ -522,6 +540,177 @@ def test_terminal_handoff_is_generated_before_stop_allows_report(tmp_path):
     allowed = run_hook(tmp_path, stop)
     assert allowed.returncode == 0
     assert allowed.stdout == ""
+
+
+def test_duplicate_hook_init_is_idempotent_and_reuses_one_run(tmp_path):
+    assert run_hook(tmp_path, explicit_payload(tmp_path)).returncode == 0
+    spec_path, nodes_path = write_inputs(tmp_path)
+    first = run_driver(
+        tmp_path,
+        "init",
+        "--spec",
+        str(spec_path),
+        "--nodes",
+        str(nodes_path),
+    )
+    assert first.returncode == 0, first.stdout + first.stderr
+    first_receipt = HookDriverReceipt.model_validate_json(first.stdout)
+    first_run_dir = first_receipt.payload["run_dir"]
+
+    duplicate = run_driver(
+        tmp_path,
+        "init",
+        "--spec",
+        str(spec_path),
+        "--nodes",
+        str(nodes_path),
+    )
+    assert duplicate.returncode == 0, duplicate.stdout + duplicate.stderr
+    duplicate_receipt = HookDriverReceipt.model_validate_json(duplicate.stdout)
+    assert duplicate_receipt.payload["duplicate_invocation"] is True
+    assert duplicate_receipt.payload["run_dir"] == first_run_dir
+    runs = [
+        path
+        for path in (tmp_path / "workspace" / ".dte" / "runs").iterdir()
+        if path.is_dir() and not path.name.startswith(".")
+    ]
+    assert runs == [Path(first_run_dir)]
+
+
+def test_hook_init_requires_explicit_shared_or_strict_isolation_mode(tmp_path):
+    assert run_hook(tmp_path, explicit_payload(tmp_path)).returncode == 0
+    spec_path, nodes_path = write_inputs(tmp_path)
+    spec = json.loads(spec_path.read_text(encoding="utf-8"))
+    spec["role_isolation_mode"] = "legacy_unverified"
+    spec_path.write_text(json.dumps(spec), encoding="utf-8")
+    rejected = run_driver(
+        tmp_path,
+        "init",
+        "--spec",
+        str(spec_path),
+        "--nodes",
+        str(nodes_path),
+    )
+    receipt = HookDriverReceipt.model_validate_json(rejected.stdout)
+    assert receipt.success is False
+    assert "explicit role_isolation_mode" in (receipt.error or "")
+
+
+def test_explicit_replay_records_source_lineage_and_uses_a_distinct_key(tmp_path):
+    assert run_hook(tmp_path, explicit_payload(tmp_path)).returncode == 0
+    spec_path, nodes_path = write_inputs(tmp_path)
+    source = run_driver(
+        tmp_path,
+        "init",
+        "--spec",
+        str(spec_path),
+        "--nodes",
+        str(nodes_path),
+    )
+    assert source.returncode == 0, source.stdout + source.stderr
+    source_receipt = HookDriverReceipt.model_validate_json(source.stdout)
+    source_manifest = HookSessionManifest.model_validate_json(
+        manifest_file(tmp_path).read_text(encoding="utf-8")
+    )
+    assert source_manifest.run_id is not None
+    source_grant = run_driver(tmp_path, "step")
+    source_request = EpisodeRequest.model_validate(
+        HookDriverReceipt.model_validate_json(source_grant.stdout).payload[
+            "outcome"
+        ]["request"]
+    )
+    source_output = JudgeEpisodeOutput(
+        observations=[
+            JudgeObservation(
+                node_id=node_id,
+                score=0.8,
+                reasoning="source replay-lineage observation",
+                risks=[],
+            )
+            for node_id in source_request.selected_node_revisions
+        ]
+    )
+    source_result = EpisodeResult(
+        episode_id=source_request.episode_id,
+        attempt_id=source_request.attempt_id,
+        run_id=source_request.run_id,
+        role=source_request.role,
+        input_graph_revision=source_request.input_graph_revision,
+        selected_node_revisions=source_request.selected_node_revisions,
+        status="completed",
+        structured_output=source_output,
+        runtime_diagnostics=RuntimeDiagnostics(
+            adapter_name="codex-app-main-agent",
+            transport_name="current-app-runtime",
+            profile="native-autonomous",
+            usage_source="unavailable",
+        ),
+        output_hash=compute_output_hash(
+            source_output, source_request.output_schema_version
+        ),
+        schema_version=source_request.output_schema_version,
+    )
+    source_result_path = tmp_path / "source-replay-result.json"
+    source_result_path.write_text(
+        source_result.model_dump_json(indent=2), encoding="utf-8"
+    )
+    source_submit = run_driver(
+        tmp_path, "submit", "--result", str(source_result_path)
+    )
+    assert (
+        HookDriverReceipt.model_validate_json(
+            source_submit.stdout
+        ).submission_accepted
+        is True
+    )
+    source_state = load_app_run(source_receipt.payload["run_dir"])
+    source_hashes = sorted(
+        attempt.result_hash
+        for episode in source_state.episodes
+        for attempt in episode.attempts
+        if attempt.result_hash is not None
+    )
+    assert source_hashes
+
+    assert (
+        run_hook(
+            tmp_path,
+            explicit_payload(tmp_path, session="session-b", turn="turn-b"),
+        ).returncode
+        == 0
+    )
+    replay = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "dte_backend",
+            "hook-driver",
+            "init",
+            "--spec",
+            str(spec_path),
+            "--nodes",
+            str(nodes_path),
+            "--replay-of-run-id",
+            source_manifest.run_id,
+        ],
+        capture_output=True,
+        text=True,
+        env=driver_env(
+            tmp_path,
+            capability=capability_value(tmp_path, "session-b"),
+            session="session-b",
+            turn="turn-b",
+        ),
+        cwd=ROOT,
+    )
+    assert replay.returncode == 0, replay.stdout + replay.stderr
+    replay_receipt = HookDriverReceipt.model_validate_json(replay.stdout)
+    replay_state = load_app_run(replay_receipt.payload["run_dir"])
+    assert replay_state.replay_of_run_id == source_manifest.run_id
+    assert replay_state.source_episode_result_hashes == source_hashes
+    assert replay_state.model_execution_disposition == "rerun"
+    assert replay_state.hook_invocation_key != source_manifest.invocation_key
+    assert replay_receipt.payload["run_dir"] != source_receipt.payload["run_dir"]
 
 
 def test_receipt_manifest_transaction_recovers_after_manifest_write_failure(

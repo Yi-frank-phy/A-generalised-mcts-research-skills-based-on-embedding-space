@@ -43,6 +43,7 @@ def select_node_disjoint_relation_batch(
     candidates: list[RelationCandidate],
     *,
     max_pairs: int,
+    maximize_material_priority: bool = False,
 ) -> list[RelationCandidate]:
     """Select an ordered Relation batch in which every node appears at most once."""
 
@@ -50,16 +51,68 @@ def select_node_disjoint_relation_batch(
         raise ValueError("Relation batch max_pairs must be non-negative")
     if max_pairs == 0:
         return []
-    selected: list[RelationCandidate] = []
-    used_nodes: set[str] = set()
-    for candidate in candidates:
-        if candidate.left_node_id in used_nodes or candidate.right_node_id in used_nodes:
-            continue
-        selected.append(candidate)
-        used_nodes.update((candidate.left_node_id, candidate.right_node_id))
-        if len(selected) >= max_pairs:
-            break
-    return selected
+    if not maximize_material_priority:
+        selected: list[RelationCandidate] = []
+        used_nodes: set[str] = set()
+        for candidate in candidates:
+            if (
+                candidate.left_node_id in used_nodes
+                or candidate.right_node_id in used_nodes
+            ):
+                continue
+            selected.append(candidate)
+            used_nodes.update((candidate.left_node_id, candidate.right_node_id))
+            if len(selected) >= max_pairs:
+                break
+        return selected
+    reason_rank = {
+        "potential_material_conflict": 0,
+        "exact_duplicate": 1,
+        "shared_evidence_divergence": 2,
+        "synthesis_set_overlap": 3,
+        "high_score_near_tie": 4,
+        "embedding_close": 5,
+        "entropy_plateau": 6,
+        "manual_operator_request": 7,
+    }
+    priority_weight = {"critical": 4, "high": 3, "medium": 2, "low": 1}
+    best: tuple[tuple[object, ...], tuple[RelationCandidate, ...]] | None = None
+    upper = min(max_pairs, len(candidates))
+    for size in range(1, upper + 1):
+        for batch in combinations(candidates, size):
+            endpoints = [
+                node_id
+                for candidate in batch
+                for node_id in (candidate.left_node_id, candidate.right_node_id)
+            ]
+            if len(endpoints) != len(set(endpoints)):
+                continue
+            ordered_ids = tuple(sorted(candidate.candidate_id for candidate in batch))
+            score: tuple[object, ...] = (
+                sum(candidate.priority == "critical" for candidate in batch),
+                sum(
+                    candidate.candidate_reason == "potential_material_conflict"
+                    for candidate in batch
+                ),
+                sum(candidate.material_to_synthesis for candidate in batch),
+                sum(priority_weight[candidate.priority] for candidate in batch),
+                len(batch),
+                tuple(-reason_rank[candidate.candidate_reason] for candidate in batch),
+                tuple(reversed(ordered_ids)),
+            )
+            if best is None or score > best[0]:
+                best = (score, batch)
+    if best is None:
+        return []
+    return sorted(
+        best[1],
+        key=lambda candidate: (
+            -priority_weight[candidate.priority],
+            reason_rank[candidate.candidate_reason],
+            candidate.left_node_id,
+            candidate.right_node_id,
+        ),
+    )
 
 
 def _normalized_claim(text: str) -> str:
@@ -180,12 +233,10 @@ def generate_blocking_relation_obligations(
     node_revisions: dict[str, int],
     graph_revision: int,
     provisional_synthesis_node_ids: list[str],
+    include_material_review_pool: bool = False,
+    material_unselected_node_ids: list[str] | None = None,
 ) -> list[RelationCandidate]:
-    """Completely enumerate blockers over the bounded provisional set.
-
-    The provisional selector is capped at eight nodes, so this is at most 28
-    pairs.  No enrichment window is allowed to truncate this inventory.
-    """
+    """Completely enumerate blockers over the material review pool."""
 
     eligible = [
         node
@@ -194,12 +245,25 @@ def generate_blocking_relation_obligations(
     ]
     by_id = {node.node_id: node for node in eligible}
     selected = [by_id[node_id] for node_id in provisional_synthesis_node_ids if node_id in by_id]
+    material_unselected = set(material_unselected_node_ids or [])
     candidates: list[RelationCandidate] = []
     for left, right in combinations(selected, 2):
         reason: RelationCandidateReason | None = None
         if _normalized_claim(left.claim) == _normalized_claim(right.claim):
             reason = "exact_duplicate"
         elif _normalized_evidence(left).intersection(_normalized_evidence(right)):
+            reason = "potential_material_conflict"
+        elif include_material_review_pool and (
+            left.node_type == "counterexample"
+            or right.node_type == "counterexample"
+            or left.node_id in right.parent_ids
+            or right.node_id in left.parent_ids
+            or set(left.coverage_ids).intersection(right.coverage_ids)
+            or (
+                (left.node_id in material_unselected)
+                != (right.node_id in material_unselected)
+            )
+        ):
             reason = "potential_material_conflict"
         if reason is not None:
             candidates.append(

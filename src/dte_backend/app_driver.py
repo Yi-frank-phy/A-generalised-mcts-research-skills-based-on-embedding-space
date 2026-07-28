@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 50660)
-Total output lines: 4568
-
 """Persistent backend protocol driven by the current Codex App main agent.
 
 This module never launches Codex. It grants bounded logical episodes, persists
@@ -2196,7 +2193,62 @@ def _validate_loaded_state(state: AppRunState) -> None:
                 raise ValueError("active Relation grant exceeds the run pair budget")
     if active_lifecycle_records:
         lifecycle_identity = (
-            active_lifecycle_records[…660 tokens truncated…    if owner_identity != active_identity and not (
+            active_lifecycle_records[0][0].episode_id,
+            active_lifecycle_records[0][1].attempt_id,
+        )
+        if lifecycle_identity != active_identity:
+            raise ValueError("persisted active lifecycle disagrees with App active identity")
+    elif active_identity[0] is not None:
+        raise ValueError("persisted App active identity has no active lifecycle")
+    if active_record is not None and state.controller_action != "episode_required":
+        raise ValueError("persisted active attempt requires controller_action='episode_required'")
+    if active_record is None and state.controller_action == "episode_required":
+        raise ValueError("persisted episode_required action has no active attempt")
+
+    if state.synthesis_readiness is not None:
+        readiness_evaluated_at = _parse_time(state.synthesis_readiness.evaluated_at)
+        if readiness_evaluated_at < created_at or readiness_evaluated_at > updated_at:
+            raise ValueError("synthesis readiness timestamp is outside the run lifetime")
+
+    for candidate in state.relation_candidates:
+        if candidate.status != "granted":
+            continue
+        owner_identity = (
+            candidate.granted_episode_id or "",
+            candidate.granted_attempt_id or "",
+        )
+        owner = attempts_by_identity.get(owner_identity)
+        if owner is None:
+            raise ValueError("granted Relation candidate references a missing attempt")
+        owner_episode, owner_attempt = owner
+        payload = owner_attempt.request.relation_payload
+        if owner_attempt.request.role != "relation" or payload is None:
+            raise ValueError("granted Relation candidate is owned by a non-Relation attempt")
+        pair = next(
+            (item for item in payload.candidate_pairs if item.candidate_id == candidate.candidate_id),
+            None,
+        )
+        if pair is None or (
+            pair.left.node_id,
+            pair.right.node_id,
+            pair.left_node_revision,
+            pair.right_node_revision,
+            pair.candidate_reason,
+            pair.scheduling_class,
+            pair.priority,
+            pair.material_to_synthesis,
+        ) != (
+            candidate.left_node_id,
+            candidate.right_node_id,
+            candidate.left_node_revision,
+            candidate.right_node_revision,
+            candidate.candidate_reason,
+            candidate.scheduling_class,
+            candidate.priority,
+            candidate.material_to_synthesis,
+        ):
+            raise ValueError("granted Relation candidate disagrees with its attempt request")
+        if owner_identity != active_identity and not (
             owner_attempt.status == "rejected"
             and owner_episode.committed_attempt_id is None
             and owner_attempt is owner_episode.attempts[-1]
@@ -4513,4 +4565,3 @@ def app_run_status(
         # migrated or reopened.  The status response labels the missing gate.
         state.relation_readiness_status = "legacy_unchecked"
     return state
-

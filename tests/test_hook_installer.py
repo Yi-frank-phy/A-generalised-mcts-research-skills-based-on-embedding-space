@@ -336,4 +336,3 @@ def test_v1_rollback_preserves_installed_hook_without_post_install_hash(tmp_path
         "no recorded post-install hash" in conflict
         for conflict in payload["preserved_conflicts"]
     )
-

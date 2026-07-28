@@ -1535,4 +1535,3 @@ def mark_stop_impasse(
             controller_action=manifest.phase,
             error=reason,
         )
-

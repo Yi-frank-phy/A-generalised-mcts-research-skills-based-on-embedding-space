@@ -1035,7 +1035,9 @@ def test_skill_and_agents_require_terminal_summary_but_not_hidden_topology():
     agents = (root / "AGENTS.md").read_text(encoding="utf-8")
     combined = skill + agents
 
-    assert "observability-summary --run-dir <run-dir> --format json" in combined
+    assert "hook-driver handoff" in combined
+    assert "observability-summary.json" in combined
+    assert "terminal-handoff.json" in combined
     assert "record-feedback" in skill
     assert "No fixed subagent count or topology is required" in skill
     assert '"max_committed_search_nodes": 20' in skill
@@ -1048,3 +1050,4 @@ def test_skill_and_agents_require_terminal_summary_but_not_hidden_topology():
     assert "Relation compares only the granted pairs; it is not a verifier" in agents
     assert "do not prove" in combined
     assert "require a complete hidden subagent topology" not in combined
+

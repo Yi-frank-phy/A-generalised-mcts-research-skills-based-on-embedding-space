@@ -1050,4 +1050,3 @@ def test_skill_and_agents_require_terminal_summary_but_not_hidden_topology():
     assert "Relation compares only the granted pairs; it is not a verifier" in agents
     assert "do not prove" in combined
     assert "require a complete hidden subagent topology" not in combined
-

@@ -47,4 +47,3 @@ command = "python3 /opt/codex/dte/hooks/dte_enforcement_hook.py --dte-hook-conte
 command_windows = 'python C:\ProgramData\Codex\DTE\hooks\dte_enforcement_hook.py --dte-hook-content-sha256=439482a46e6ba5d31e2afa6211e03e4309df06447bbe7b2a1650ecadda1af247 --dte-skill-root=C:\ProgramData\Codex\DTE'
 timeout = 30
 statusMessage = "Enforcing App-native DTE protocol"
-

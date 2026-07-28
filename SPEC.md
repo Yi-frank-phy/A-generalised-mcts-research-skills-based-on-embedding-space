@@ -441,7 +441,7 @@ The CLI polls this path by default:
 <out-dir>/strict_run_control.json
 ```
 
-`--control-path <operator-controlled-path>` may select another location. `requested_by` identifies the actor for audit; `operator_policy` determines whether that actor is authorized. The JSON field is not cryptographic proof of identity and does not create authority by itself. This phase trusts the root/operator execution context invoking the backend. A future external DTE Driver must provide stronger actor/capability isolation.
+`--control-path <operator-controlled-path>` may select another location. `requested_by` identifies the actor for audit; `operator_policy` determines whether that actor is authorized. The JSON field is not cryptographic proof of identity and does not create authority by itself. This headless compatibility phase trusts the root/operator execution context invoking the backend. Codex App runs instead use the hook-enforced driver contract in Section 19.
 
 Supported control object:
 
@@ -702,3 +702,81 @@ and report a partial-data limitation; it never converts them to
 fail-closed for such an invalid legacy authority source rather than rewriting
 the run or recomputing a historical EpisodeResult hash. Normal PR #19/#20 runs,
 whose commit boundary already rejected that source, resume unchanged.
+
+## 19. Hook-enforced Codex App execution contract
+
+The production Codex App entrypoint is the deterministic `hook-driver` protocol:
+
+```text
+activate -> init -> (step -> bounded App episode -> submit)* -> handoff
+```
+
+The hook dispatcher owns activation, lifecycle interception, resume context, and
+early-stop prevention. It never computes Judge output, embeddings, KDE density,
+entropy, uncertainty, UCB, allocation, Relation classifications, readiness, or a
+terminal decision. Those remain backend-owned transitions. The main agent may
+only execute the currently granted `EpisodeRequest` and submit one complete
+structured `EpisodeResult`.
+
+Every new production App run persists an `execution_contract` with mode
+`hook_enforced_v1`, the enforcing Codex session identity, activation source,
+manifest identity hash, driver protocol version, and a hash of the current
+single-use capability. A mutating App API validates that contract before it
+loads or changes protected run state. A direct call which omits the capability,
+uses another session, presents an old capability, or disagrees with the manifest
+identity fails closed. After every accepted state transition the driver rotates
+the capability. Hook filtering is therefore a lifecycle guardrail, while the
+backend mutation boundary is the anti-bypass authority.
+
+Existing persisted states and explicit development, fixture, smoke, and
+headless-legacy runs use `direct_legacy`. Loading an old state supplies that
+compatibility contract in memory without rewriting historical result payloads,
+hashes, revisions, or telemetry. `strict-run --mode real` remains an explicitly
+labelled headless legacy path and is not an App-native production entrypoint.
+
+One Codex `session_id` has at most one nonterminal DTE hook session. Its
+`dte-hook-session.v1` manifest is stored outside the run and points to a run
+under `<activation-cwd>/.dte/runs/<run_id>`. It records the root turn, phase,
+current episode/attempt/revision identity, previous receipt hash, the unique next
+action, and protected paths. Protected paths include the complete supplying
+`src/dte_backend` package, not only the driver modules. Hook path comparisons
+resolve relative targets against the tool's declared workdir or event cwd and
+handle Windows cross-drive paths without treating an unformable relative path
+as authority. Direct production
+mutators and headless-real entrypoints are recognized through both
+`python -m dte_backend` and the published `dte-backend` console command.
+Driver receipts use `dte-hook-receipt.v1`, include
+before/after state hashes and the preceding receipt hash, and are atomically
+written as an append-only reconstructable chain. Timestamps may be recorded for
+operations but never participate in receipt or manifest state identity.
+
+Before any App call which may persist state, the driver writes a run-external
+internal operation intent. Recovery distinguishes an unchanged authoritative
+App state, which is safe to retry, from a fully advanced App state, which is
+reconciled into an explicit `recovery:<operation>` receipt without inventing the
+lost original return payload. Capability rotation records current and pending
+values before changing the App execution contract. A prepared receipt is
+persisted before the manifest advances its sequence/head; restart idempotently
+completes receipt, manifest, capability promotion, and terminal artifact
+materialization. The external session, receipt, and capability schemas remain
+stable; the internal journal is not model-facing authority.
+
+Static installation verification proves only the expected handler definitions,
+matcher, dispatcher content hash, normalized pinned Skill root, and local
+self-test. The trusted command passes both bindings before the dispatcher
+imports the backend, so an unrelated editable package cannot become the
+enforcement implementation. Production use also requires a trusted definition,
+full App restart, and explicit no-state
+`UserPromptSubmit` plus denied `PreToolUse` delivery probes. Missing probe
+acknowledgement is an App integration failure and never authorizes a direct
+mutator fallback.
+
+The enforced terminal boundary ends only after both deterministic terminal read
+models and `terminal-handoff.json` have been generated for a backend terminal
+state. The main agent then writes the final natural-language report. The hook
+does not grade that prose and the handoff does not assert scientific correctness.
+This contract protects protocol safety and workflow completeness against normal
+Codex agents and ordinary user permissions; it is not a defence against an
+administrator changing managed files, disabling the platform, or replacing the
+installed backend.
+

@@ -17,7 +17,7 @@ def _contains_any(text: str, tokens: list[str]) -> bool:
 
 def main() -> int:
     try:
-        payload = json.load(sys.stdin)
+        payload = json.loads(sys.stdin.buffer.read().decode("utf-8"))
     except Exception:
         return 0
 
@@ -67,16 +67,14 @@ def main() -> int:
         "Relation oracle 直接生成最终用户报告。"
     )
 
-    print(
-        json.dumps(
-            {
-                "hookSpecificOutput": {
-                    "hookEventName": "UserPromptSubmit",
-                    "additionalContext": reminder,
-                }
-            },
-            ensure_ascii=False,
-        )
+    response = {
+        "hookSpecificOutput": {
+            "hookEventName": "UserPromptSubmit",
+            "additionalContext": reminder,
+        }
+    }
+    sys.stdout.buffer.write(
+        (json.dumps(response, ensure_ascii=False) + "\n").encode("utf-8")
     )
     return 0
 

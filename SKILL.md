@@ -499,4 +499,3 @@ The final answer/report must include:
 - Do not place dynamic content before `prompts/DTE_STATIC_PREFIX.md` in subagent prompts.
 - In Codex App / Work, do not launch `codex exec`, SDK/App Server, or another Codex process as the normal native episode path; the current App main agent performs the episode.
 - Do not require hidden App subagent topology, traces, token usage, or quota before accepting an otherwise valid structured result.
-

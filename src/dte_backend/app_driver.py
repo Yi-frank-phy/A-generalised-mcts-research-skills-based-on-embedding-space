@@ -1,3 +1,6 @@
+Warning: truncated output (original token count: 50660)
+Total output lines: 4568
+
 """Persistent backend protocol driven by the current Codex App main agent.
 
 This module never launches Codex. It grants bounded logical episodes, persists
@@ -9,6 +12,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+import hmac
 import math
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -16,7 +20,7 @@ from pathlib import Path, PurePosixPath
 from collections.abc import Mapping
 from typing import Any, Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from .control import authorize_synthesis_control
 from .continuation import (
@@ -98,6 +102,40 @@ ControllerAction = Literal[
     "ready_for_synthesis",
     "run_complete",
 ]
+
+
+class ExecutionContract(DTEBaseModel):
+    """Versioned authority boundary for persistent App-run mutations."""
+
+    mode: Literal["hook_enforced_v1", "direct_legacy"] = "direct_legacy"
+    enforcement_session_id: str | None = None
+    activation_source: Literal["explicit", "main_agent"] | None = None
+    manifest_identity_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    driver_protocol_version: str | None = None
+    capability_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+
+    @model_validator(mode="after")
+    def validate_enforced_fields(self) -> "ExecutionContract":
+        required = (
+            self.enforcement_session_id,
+            self.activation_source,
+            self.manifest_identity_hash,
+            self.driver_protocol_version,
+            self.capability_hash,
+        )
+        if self.mode == "hook_enforced_v1" and any(value is None for value in required):
+            raise ValueError("hook_enforced_v1 requires a complete execution contract")
+        if self.mode == "direct_legacy" and any(value is not None for value in required):
+            raise ValueError("direct_legacy cannot carry hook enforcement authority")
+        return self
+
+
+class DriverExecutionContext(DTEBaseModel):
+    """Single-use proof presented by the deterministic hook driver."""
+
+    session_id: str
+    manifest_identity_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    capability: str = Field(min_length=32)
 
 
 def _now() -> datetime:
@@ -221,6 +259,7 @@ class ControllerIterationRecord(DTEBaseModel):
 class AppRunState(DTEBaseModel):
     state_schema_version: Literal["app-run-state.v2"] = "app-run-state.v2"
     run_id: str
+    execution_contract: ExecutionContract = Field(default_factory=ExecutionContract)
     spec: DTERunSpec
     spec_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     initial_nodes: list[SearchNode]
@@ -430,6 +469,44 @@ def _write_json_atomic(path: Path, payload: Any) -> None:
     temporary.replace(path)
 
 
+def _capability_hash(capability: str) -> str:
+    return hashlib.sha256(capability.encode("utf-8")).hexdigest()
+
+
+def _authorize_mutation(
+    state: AppRunState,
+    execution_context: DriverExecutionContext | None,
+) -> None:
+    """Reject direct mutation of a hook-enforced run before any state change."""
+
+    contract = state.execution_contract
+    if contract.mode == "direct_legacy":
+        return
+    if execution_context is None:
+        raise PermissionError(
+            "hook_enforced_v1 run requires the deterministic hook-driver boundary"
+        )
+    context = DriverExecutionContext.model_validate(
+        execution_context.model_dump(mode="json")
+    )
+    if not hmac.compare_digest(
+        context.session_id,
+        contract.enforcement_session_id or "",
+    ):
+        raise PermissionError("driver session does not own this enforced run")
+    if not hmac.compare_digest(
+        context.manifest_identity_hash,
+        contract.manifest_identity_hash or "",
+    ):
+        raise PermissionError("driver manifest identity does not match the enforced run")
+    if not hmac.compare_digest(
+        _capability_hash(context.capability),
+        contract.capability_hash or "",
+    ):
+        raise PermissionError("driver capability is missing, stale, or invalid")
+    object.__setattr__(state, "_driver_capability_proof", context.capability)
+
+
 class _BufferedEpisodeEvents:
     """Collect commit-boundary events until authoritative state is durable."""
 
@@ -494,6 +571,15 @@ def _flush_pending_events(run_dir: str | Path, state: AppRunState) -> None:
 
 
 def _save_state(run_dir: str | Path, state: AppRunState) -> None:
+    if state.execution_contract.mode == "hook_enforced_v1":
+        proof = getattr(state, "_driver_capability_proof", None)
+        if not isinstance(proof, str) or not hmac.compare_digest(
+            _capability_hash(proof),
+            state.execution_contract.capability_hash or "",
+        ):
+            raise PermissionError(
+                "hook-enforced state persistence requires a validated driver capability"
+            )
     state.updated_at = _iso()
     # Treat every persistence call as another machine-facing boundary.  This
     # catches invalid values introduced through assignment on nested Pydantic
@@ -2110,62 +2196,7 @@ def _validate_loaded_state(state: AppRunState) -> None:
                 raise ValueError("active Relation grant exceeds the run pair budget")
     if active_lifecycle_records:
         lifecycle_identity = (
-            active_lifecycle_records[0][0].episode_id,
-            active_lifecycle_records[0][1].attempt_id,
-        )
-        if lifecycle_identity != active_identity:
-            raise ValueError("persisted active lifecycle disagrees with App active identity")
-    elif active_identity[0] is not None:
-        raise ValueError("persisted App active identity has no active lifecycle")
-    if active_record is not None and state.controller_action != "episode_required":
-        raise ValueError("persisted active attempt requires controller_action='episode_required'")
-    if active_record is None and state.controller_action == "episode_required":
-        raise ValueError("persisted episode_required action has no active attempt")
-
-    if state.synthesis_readiness is not None:
-        readiness_evaluated_at = _parse_time(state.synthesis_readiness.evaluated_at)
-        if readiness_evaluated_at < created_at or readiness_evaluated_at > updated_at:
-            raise ValueError("synthesis readiness timestamp is outside the run lifetime")
-
-    for candidate in state.relation_candidates:
-        if candidate.status != "granted":
-            continue
-        owner_identity = (
-            candidate.granted_episode_id or "",
-            candidate.granted_attempt_id or "",
-        )
-        owner = attempts_by_identity.get(owner_identity)
-        if owner is None:
-            raise ValueError("granted Relation candidate references a missing attempt")
-        owner_episode, owner_attempt = owner
-        payload = owner_attempt.request.relation_payload
-        if owner_attempt.request.role != "relation" or payload is None:
-            raise ValueError("granted Relation candidate is owned by a non-Relation attempt")
-        pair = next(
-            (item for item in payload.candidate_pairs if item.candidate_id == candidate.candidate_id),
-            None,
-        )
-        if pair is None or (
-            pair.left.node_id,
-            pair.right.node_id,
-            pair.left_node_revision,
-            pair.right_node_revision,
-            pair.candidate_reason,
-            pair.scheduling_class,
-            pair.priority,
-            pair.material_to_synthesis,
-        ) != (
-            candidate.left_node_id,
-            candidate.right_node_id,
-            candidate.left_node_revision,
-            candidate.right_node_revision,
-            candidate.candidate_reason,
-            candidate.scheduling_class,
-            candidate.priority,
-            candidate.material_to_synthesis,
-        ):
-            raise ValueError("granted Relation candidate disagrees with its attempt request")
-        if owner_identity != active_identity and not (
+            active_lifecycle_records[…660 tokens truncated…    if owner_identity != active_identity and not (
             owner_attempt.status == "rejected"
             and owner_episode.committed_attempt_id is None
             and owner_attempt is owner_episode.attempts[-1]
@@ -2499,6 +2530,8 @@ def create_app_run(
     initial_nodes: list[SearchNode],
     *,
     run_id: str | None = None,
+    execution_contract: ExecutionContract | None = None,
+    creation_capability: str | None = None,
 ) -> AppRunState:
     """Create committed state for an App-driven run without starting a runtime."""
 
@@ -2516,6 +2549,13 @@ def create_app_run(
     created = _iso()
     state = AppRunState(
         run_id=run_id or str(uuid.uuid4()),
+        execution_contract=(
+            ExecutionContract()
+            if execution_contract is None
+            else ExecutionContract.model_validate(
+                execution_contract.model_dump(mode="json")
+            )
+        ),
         spec=validated_spec,
         spec_hash=_run_spec_hash(validated_spec),
         initial_nodes=[node.model_copy(deep=True) for node in validated_initial_nodes],
@@ -2527,6 +2567,16 @@ def create_app_run(
         created_at=created,
         updated_at=created,
     )
+    if state.execution_contract.mode == "hook_enforced_v1":
+        if (
+            creation_capability is None
+            or _capability_hash(creation_capability)
+            != state.execution_contract.capability_hash
+        ):
+            raise PermissionError(
+                "hook-enforced run creation requires its initial driver capability"
+            )
+        object.__setattr__(state, "_driver_capability_proof", creation_capability)
     _queue_event(
         state,
         "run_created",
@@ -3461,10 +3511,12 @@ def next_app_episode(
     runtime_limits: RuntimeLimits | None = None,
     profile: Literal["legacy-explicit", "native-guided", "native-autonomous"] = "native-autonomous",
     embedding_provider: EmbeddingProvider | None = None,
+    execution_context: DriverExecutionContext | None = None,
 ) -> NextEpisodeOutcome:
     """Grant or resume one episode; never invoke a model runtime or subprocess."""
 
     state = load_app_run(run_dir)
+    _authorize_mutation(state, execution_context)
     active = _active_attempt(state)
     if active is not None:
         _, attempt = active
@@ -3779,10 +3831,13 @@ def _identity_rejection(
 def submit_app_episode_result(
     run_dir: str | Path,
     raw_result: Any,
+    *,
+    execution_context: DriverExecutionContext | None = None,
 ) -> SubmitEpisodeOutcome:
     """Validate lifecycle plus result, then commit through the sole graph boundary."""
 
     state = load_app_run(run_dir)
+    _authorize_mutation(state, execution_context)
     try:
         payload = _result_payload(raw_result)
     except Exception as exc:
@@ -4057,8 +4112,10 @@ def _transition_attempt(
     *,
     status: Literal["failed", "cancelled"],
     reason: str,
+    execution_context: DriverExecutionContext | None = None,
 ) -> TransitionOutcome:
     state = load_app_run(run_dir)
+    _authorize_mutation(state, execution_context)
     _ensure_nonterminal(state, f"mark an episode {status}")
     episode = _find_episode(state, episode_id)
     attempt = _find_attempt(episode, attempt_id)
@@ -4098,23 +4155,39 @@ def _transition_attempt(
     )
 
 
-def fail_app_episode(run_dir: str | Path, episode_id: str, attempt_id: str, reason: str) -> TransitionOutcome:
+def fail_app_episode(
+    run_dir: str | Path,
+    episode_id: str,
+    attempt_id: str,
+    reason: str,
+    *,
+    execution_context: DriverExecutionContext | None = None,
+) -> TransitionOutcome:
     return _transition_attempt(
         run_dir,
         episode_id,
         attempt_id,
         status="failed",
         reason=reason,
+        execution_context=execution_context,
     )
 
 
-def cancel_app_episode(run_dir: str | Path, episode_id: str, attempt_id: str, reason: str) -> TransitionOutcome:
+def cancel_app_episode(
+    run_dir: str | Path,
+    episode_id: str,
+    attempt_id: str,
+    reason: str,
+    *,
+    execution_context: DriverExecutionContext | None = None,
+) -> TransitionOutcome:
     return _transition_attempt(
         run_dir,
         episode_id,
         attempt_id,
         status="cancelled",
         reason=reason,
+        execution_context=execution_context,
     )
 
 
@@ -4124,10 +4197,12 @@ def retry_app_episode(
     *,
     selected_by: Literal["user", "main_agent", "run_default"] = "main_agent",
     wall_clock_seconds: int | None = None,
+    execution_context: DriverExecutionContext | None = None,
 ) -> TransitionOutcome:
     """Supersede the latest non-committed attempt and issue a fresh attempt ID."""
 
     state = load_app_run(run_dir)
+    _authorize_mutation(state, execution_context)
     _ensure_nonterminal(state, "retry an episode")
     active = _active_attempt(state)
     if active is not None:
@@ -4353,10 +4428,13 @@ def retry_app_episode(
 def request_app_synthesis(
     run_dir: str | Path,
     request: SynthesisControlRequest,
+    *,
+    execution_context: DriverExecutionContext | None = None,
 ) -> AppRunState:
     """Apply the existing OperatorPolicy authorization without committing synthesis."""
 
     state = load_app_run(run_dir)
+    _authorize_mutation(state, execution_context)
     _ensure_nonterminal(state, "request synthesis")
     if _active_attempt(state) is not None:
         raise ValueError("synthesis cannot be requested while an episode attempt is active")
@@ -4392,9 +4470,34 @@ def request_app_synthesis(
     return state
 
 
-def app_run_status(run_dir: str | Path) -> AppRunState:
+def rotate_app_execution_capability(
+    run_dir: str | Path,
+    execution_context: DriverExecutionContext,
+    next_capability: str,
+) -> AppRunState:
+    """Rotate only the enforcement capability after validating current authority."""
+
+    if len(next_capability) < 32:
+        raise ValueError("next capability must contain at least 32 characters")
+    state = load_app_run(run_dir)
+    _authorize_mutation(state, execution_context)
+    if state.execution_contract.mode != "hook_enforced_v1":
+        raise ValueError("capability rotation applies only to hook-enforced runs")
+    state.execution_contract.capability_hash = _capability_hash(next_capability)
+    object.__setattr__(state, "_driver_capability_proof", next_capability)
+    _save_state(run_dir, state)
+    return state
+
+
+def app_run_status(
+    run_dir: str | Path,
+    *,
+    execution_context: DriverExecutionContext | None = None,
+) -> AppRunState:
     state = load_app_run(run_dir)
     active = _active_attempt(state)
+    if active is not None and _attempt_expired(active[1]):
+        _authorize_mutation(state, execution_context)
     if active is not None and _attempt_expired(active[1]):
         _mark_expired(run_dir, state, active[1])
         _save_state(run_dir, state)
@@ -4410,3 +4513,4 @@ def app_run_status(run_dir: str | Path) -> AppRunState:
         # migrated or reopened.  The status response labels the missing gate.
         state.relation_readiness_status = "legacy_unchecked"
     return state
+

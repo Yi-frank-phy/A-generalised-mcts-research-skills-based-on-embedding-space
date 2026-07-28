@@ -1,0 +1,3 @@
+hooks/dte_enforcement_hook.py text eol=lf
+deploy/managed-template/hooks/dte_enforcement_hook.py text eol=lf
+deploy/managed-template/requirements.toml text eol=lf

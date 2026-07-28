@@ -1253,8 +1253,10 @@ def test_skill_and_agents_require_both_terminal_summaries_without_learning_ledge
     agents = (root / "AGENTS.md").read_text(encoding="utf-8")
     combined = skill + "\n" + agents
 
-    assert "observability-summary --run-dir <run-dir> --format json" in combined
-    assert "epistemic-summary --run-dir <run-dir> --format json" in combined
+    assert "hook-driver handoff" in combined
+    assert "observability" in combined.casefold()
+    assert "epistemic" in combined.casefold()
+    assert "terminal-handoff" in combined.casefold()
     assert "record-learning" not in combined
     assert "record-feedback" in combined
     assert "does not verify scientific truth" in combined.casefold()
@@ -1283,3 +1285,4 @@ def test_spec_freezes_v1_architecture_until_real_run_evidence_justifies_change()
     assert "feature-complete v1" in operator_text
     assert "dormant-node state" in operator_text
     assert "comparative outcome evidence" in operator_text
+

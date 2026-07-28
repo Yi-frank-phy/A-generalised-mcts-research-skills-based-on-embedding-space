@@ -846,4 +846,3 @@ def test_precontract_persisted_run_loads_as_direct_legacy_without_rewrite(tmp_pa
     loaded = load_app_run(run_dir)
     assert loaded.execution_contract.mode == "direct_legacy"
     assert "execution_contract" not in json.loads(state_path.read_text(encoding="utf-8"))
-

@@ -1285,4 +1285,3 @@ def test_spec_freezes_v1_architecture_until_real_run_evidence_justifies_change()
     assert "feature-complete v1" in operator_text
     assert "dormant-node state" in operator_text
     assert "comparative outcome evidence" in operator_text
-

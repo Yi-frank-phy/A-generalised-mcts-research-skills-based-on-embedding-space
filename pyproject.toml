@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "evolving-frontier-research-skill"
-version = "0.1.0"
+version = "0.2.0"
 description = "Local skill backend for structured frontier-search research."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -21,6 +21,8 @@ classifiers = [
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
   "Topic :: Scientific/Engineering",
 ]
 dependencies = [
@@ -37,3 +39,4 @@ dte-backend = "dte_backend.__main__:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+

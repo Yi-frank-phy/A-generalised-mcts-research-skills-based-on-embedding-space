@@ -160,4 +160,3 @@ For `hook_enforced_v1` runs, every mutating backend API and persistence boundary
 must validate the injected driver capability. Standalone `dte_guard.py` commands
 remain for fixtures, smoke tests, and adapter development; they are not manual
 production prerequisites for a Codex App run.
-

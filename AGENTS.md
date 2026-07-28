@@ -15,18 +15,18 @@ This repository implements a fixed DTE research protocol. When acting as an agen
 7. **Schema is source of truth.** Free-form Markdown or natural language cannot override the JSON/Pydantic run spec.
 8. **Use max geometry by default.** For real embedding geometry, prefer `embedding_dimension=3072`; lower dimensions are debug/fallback profiles.
 9. **Observation alone is not authority.** A model-facing agent may read and summarize checkpoints. Authority comes from user delegation plus validated `OperatorPolicy` and is exercised only through backend-validated controller commands, never direct graph/state mutation.
-10. **Codex App drives native episodes in place.** In an App/Work task, use `create-run` / `next-episode` / native App work / `submit-episode-result`. Do not launch another Codex process to simulate the current App runtime. Opaque internal subagent topology is allowed and is not a backend correctness input.
+10. **Codex App drives native episodes in place through the enforcement gate.** In an App/Work task, use `hook-driver activate/init/step/submit/handoff`; direct `create-run`, `next-episode`, and `submit-episode-result` are development/headless compatibility APIs. Do not launch another Codex process to simulate the current App runtime. Opaque internal subagent topology is allowed and is not a backend correctness input.
 
 ## Codex App native driver loop
 
 When the current Codex App main agent runs DTE research:
 
-1. Start or resume the persistent backend run.
-2. Call `next-episode`; do not manually select the global branch, Judge batch, or child grant. The backend consumes deterministic embedding/entropy/UCB/allocation transitions internally.
+1. Start or resume the persistent backend run with `hook-driver activate`, then initialize it with validated spec and nodes through `hook-driver init`.
+2. Call `hook-driver step`; do not manually select the global branch, Judge batch, or child grant. The driver consumes backend-only continuation transitions while the backend computes embedding/entropy/UCB/allocation.
 3. Read the complete versioned `EpisodeRequest` and its `attempt_id`.
 4. Perform only that bounded episode with current App reasoning, tools, and optional native subagents.
 5. Construct one complete strict `EpisodeResult`; progress chat, Markdown, files, and subagent summaries are not committed results.
-6. Call `submit-episode-result` and inspect `CommitOutcome` plus the backend controller action.
+6. Call `hook-driver submit --result <result.json>` and inspect the verified receipt, `CommitOutcome`, and backend controller action.
 7. Repeat only when the backend requests another episode; use explicit fail/cancel/retry transitions when needed.
 
 For a sufficiently complex episode, use native subagents and tools when they
@@ -68,12 +68,14 @@ obligations, and merge provenance from the authoritative Relation ledger.
 
 ## Terminal observability, epistemic handoff, and feedback
 
-When `next-episode` returns `ready_for_synthesis` or `run_complete`, first run:
+When `hook-driver step` returns `ready_for_synthesis` or `run_complete`, call:
 
 ```bash
-python -m dte_backend observability-summary --run-dir <run-dir> --format json
-python -m dte_backend epistemic-summary --run-dir <run-dir> --format json
+python -m dte_backend hook-driver handoff
 ```
+
+This produces `observability-summary.json`, `epistemic-summary.json`, and the
+authoritative `terminal-handoff.json`; read all three before reporting.
 
 Read both formal summaries together with provisional selection and Relation
 disclosures. The epistemic handoff describes provisional-selected node claims;
@@ -152,3 +154,10 @@ handoffs, not a native episode. It must preserve uncertainty and failure modes.
 ## When editing this repo
 
 Before changing architecture-level files, update `SPEC.md` and tests. Do not introduce a new framework dependency unless it replaces a real repeated pain point.
+
+The unified lifecycle hook is a deterministic gate, not a second controller.
+For `hook_enforced_v1` runs, every mutating backend API and persistence boundary
+must validate the injected driver capability. Standalone `dte_guard.py` commands
+remain for fixtures, smoke tests, and adapter development; they are not manual
+production prerequisites for a Codex App run.
+

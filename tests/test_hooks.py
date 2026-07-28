@@ -60,6 +60,7 @@ def test_prompt_guard_injects_readable_chinese_dte_reminder():
         input=json.dumps(payload, ensure_ascii=False),
         capture_output=True,
         text=True,
+        encoding="utf-8",
     )
 
     assert completed.returncode == 0, completed.stderr

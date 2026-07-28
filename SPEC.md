@@ -779,4 +779,3 @@ This contract protects protocol safety and workflow completeness against normal
 Codex agents and ordinary user permissions; it is not a defence against an
 administrator changing managed files, disabling the platform, or replacing the
 installed backend.
-

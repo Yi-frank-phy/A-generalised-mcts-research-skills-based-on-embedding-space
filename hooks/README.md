@@ -116,4 +116,3 @@ python hooks/dte_guard.py executor --parent <parent.json> --output <executor_out
 
 These standalone checks are not manual prerequisites for production App runs
 and do not define a second controller.
-

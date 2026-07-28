@@ -569,4 +569,3 @@ def test_app_driver_cli_round_trip(tmp_path):
     assert submitted["commit_outcome"]["accepted"] is True
     status = command("run-status", "--run-dir", str(run_dir))
     assert status["graph_revision"] == 1
-

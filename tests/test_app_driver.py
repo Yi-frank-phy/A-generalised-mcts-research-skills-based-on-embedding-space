@@ -507,8 +507,16 @@ def test_skill_and_agents_define_current_app_loop_without_sdk_primary_path():
     skill = (root / "SKILL.md").read_text(encoding="utf-8")
     agents = (root / "AGENTS.md").read_text(encoding="utf-8")
     combined = skill + agents
-    for command in ("create-run", "next-episode", "submit-episode-result", "retry-episode"):
+    for command in (
+        "hook-driver activate",
+        "hook-driver init",
+        "hook-driver step",
+        "hook-driver submit",
+        "hook-driver control",
+        "hook-driver handoff",
+    ):
         assert command in combined
+    assert "direct `create-run`, `next-episode`, and `submit-episode-result`" in combined
     assert "current App main agent performs the episode" in combined
     assert "Do not launch another Codex process" in combined
     assert "CodexSdkEpisodeAdapter" not in combined
@@ -561,3 +569,4 @@ def test_app_driver_cli_round_trip(tmp_path):
     assert submitted["commit_outcome"]["accepted"] is True
     status = command("run-status", "--run-dir", str(run_dir))
     assert status["graph_revision"] == 1
+

@@ -90,6 +90,10 @@ class DTERunSpec(DTEBaseModel):
     embedding_provider: Literal["hash", "gemini-embedding-2"] = "hash"
     embedding_dimension: int = Field(default=3072, ge=8, le=3072)
     coverage_obligations: list[CoverageObligation] = Field(default_factory=list)
+    material_provenance_policy: Literal[
+        "terminal_disclosure",
+        "strict_repair",
+    ] = "terminal_disclosure"
     role_isolation_mode: Literal[
         "strict_fresh_context",
         "shared_context_single_agent",

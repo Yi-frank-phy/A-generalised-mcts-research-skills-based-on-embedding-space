@@ -19,6 +19,7 @@ RelationCandidateReason = Literal[
     "exact_duplicate",
     "embedding_close",
     "high_score_near_tie",
+    "shared_coverage_alternative",
     "shared_evidence_divergence",
     "synthesis_set_overlap",
     "potential_material_conflict",
@@ -382,6 +383,17 @@ class UnselectedNodeDisposition(DTEBaseModel):
     omission_changes_evidence: bool
     omission_changes_limitations: bool
     omission_changes_conflicts: bool
+    omission_changes_dependencies: bool = False
+    omission_changes_distinct_claim: bool = False
+    unique_coverage_ids: list[str] = Field(default_factory=list)
+    unique_assumptions: list[str] = Field(default_factory=list)
+    unique_evidence: list[str] = Field(default_factory=list)
+    unique_limitations: list[str] = Field(default_factory=list)
+    unique_dependency_refs: list[str] = Field(default_factory=list)
+    unique_conflict_refs: list[str] = Field(default_factory=list)
+    marginal_audit_method: Literal[
+        "exact_structured_set_difference_v1"
+    ] = "exact_structured_set_difference_v1"
     disclosure_required: bool
     counterfactual_material: bool
 

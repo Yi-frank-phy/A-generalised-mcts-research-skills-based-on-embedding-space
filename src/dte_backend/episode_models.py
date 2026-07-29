@@ -55,20 +55,22 @@ class RoleExecutionContract(DTEBaseModel):
     isolation_attestation_source: IsolationAttestationSource = "legacy_unverified"
     visible_input_refs: list[str] = Field(default_factory=list)
     previous_role_session_ids: list[str] = Field(default_factory=list)
+    fresh_context_required: bool = False
     isolation_verified: bool = False
 
     @model_validator(mode="after")
     def validate_mode(self) -> "RoleExecutionContract":
         if self.isolation_mode == "strict_fresh_context":
-            if not self.isolation_verified:
-                raise ValueError("strict_fresh_context requires isolation_verified=true")
-            if self.isolation_attestation_source not in {
-                "runtime_reported",
-                "backend_verified",
-            }:
-                raise ValueError("strict_fresh_context requires a verifiable attestation source")
-        elif self.isolation_verified:
-            raise ValueError("shared or legacy role contexts cannot claim verified isolation")
+            if not self.fresh_context_required:
+                raise ValueError("strict_fresh_context must require a fresh context")
+            if self.isolation_verified:
+                raise ValueError(
+                    "request contract cannot pre-claim verified isolation"
+                )
+        elif self.fresh_context_required or self.isolation_verified:
+            raise ValueError(
+                "shared or legacy role contexts cannot require or claim fresh isolation"
+            )
         return self
 
 
@@ -184,6 +186,7 @@ class JudgeNodeInput(DTEBaseModel):
 
 
 class JudgeEpisodePayload(DTEBaseModel):
+    purpose: Literal["initial_scoring", "provenance_repair"] = "initial_scoring"
     rubric_version: str = Field(min_length=1)
     problem: str = Field(min_length=1)
     goal: str = Field(min_length=1)
@@ -212,7 +215,7 @@ class JudgeObservation(DTEBaseModel):
 
 
 class JudgeEpisodeOutput(DTEBaseModel):
-    observations: list[JudgeObservation] = Field(min_length=1)
+    observations: list[JudgeObservation] = Field(default_factory=list)
     epistemic_contributions: EpistemicContributionBundle | None = None
 
 
@@ -445,21 +448,16 @@ def bind_role_execution_contract(
 ) -> EpisodeRequest:
     """Attach the final request-side isolation contract and its manifest digest."""
 
-    verified = isolation_mode == "strict_fresh_context"
-    source: IsolationAttestationSource
-    if verified:
-        source = "runtime_reported"
-    elif isolation_mode == "shared_context_single_agent":
-        source = "backend_fallback"
-    else:
-        source = "legacy_unverified"
     request.role_execution_contract = RoleExecutionContract(
         isolation_mode=isolation_mode,
         context_manifest_hash="0" * 64,
-        isolation_attestation_source=source,
+        # This is a requirement, not a runtime fact.  Verification is attached
+        # only after transport/runtime attestation is validated at submission.
+        isolation_attestation_source="legacy_unverified",
         visible_input_refs=sorted(request.selected_node_revisions),
         previous_role_session_ids=sorted(set(previous_role_session_ids or [])),
-        isolation_verified=verified,
+        fresh_context_required=isolation_mode == "strict_fresh_context",
+        isolation_verified=False,
     )
     request.role_execution_contract.context_manifest_hash = (
         compute_role_context_manifest_hash(request)

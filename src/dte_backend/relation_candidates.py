@@ -45,7 +45,12 @@ def select_node_disjoint_relation_batch(
     max_pairs: int,
     maximize_material_priority: bool = False,
 ) -> list[RelationCandidate]:
-    """Select an ordered Relation batch in which every node appears at most once."""
+    """Select a deterministic, node-disjoint Relation batch in polynomial time.
+
+    Material-priority mode uses a weighted greedy maximal matching followed by
+    a bounded one-edge-drop improvement pass.  It preserves the documented
+    lexicographic preferences but does not claim a globally optimal matching.
+    """
 
     if max_pairs < 0:
         raise ValueError("Relation batch max_pairs must be non-negative")
@@ -69,50 +74,101 @@ def select_node_disjoint_relation_batch(
         "potential_material_conflict": 0,
         "exact_duplicate": 1,
         "shared_evidence_divergence": 2,
-        "synthesis_set_overlap": 3,
-        "high_score_near_tie": 4,
-        "embedding_close": 5,
-        "entropy_plateau": 6,
-        "manual_operator_request": 7,
+        "shared_coverage_alternative": 3,
+        "synthesis_set_overlap": 4,
+        "high_score_near_tie": 5,
+        "embedding_close": 6,
+        "entropy_plateau": 7,
+        "manual_operator_request": 8,
     }
     priority_weight = {"critical": 4, "high": 3, "medium": 2, "low": 1}
-    best: tuple[tuple[object, ...], tuple[RelationCandidate, ...]] | None = None
-    upper = min(max_pairs, len(candidates))
-    for size in range(1, upper + 1):
-        for batch in combinations(candidates, size):
-            endpoints = [
-                node_id
-                for candidate in batch
-                for node_id in (candidate.left_node_id, candidate.right_node_id)
-            ]
-            if len(endpoints) != len(set(endpoints)):
-                continue
-            ordered_ids = tuple(sorted(candidate.candidate_id for candidate in batch))
-            score: tuple[object, ...] = (
-                sum(candidate.priority == "critical" for candidate in batch),
-                sum(
-                    candidate.candidate_reason == "potential_material_conflict"
-                    for candidate in batch
-                ),
-                sum(candidate.material_to_synthesis for candidate in batch),
-                sum(priority_weight[candidate.priority] for candidate in batch),
-                len(batch),
-                tuple(-reason_rank[candidate.candidate_reason] for candidate in batch),
-                tuple(reversed(ordered_ids)),
-            )
-            if best is None or score > best[0]:
-                best = (score, batch)
-    if best is None:
-        return []
-    return sorted(
-        best[1],
-        key=lambda candidate: (
+
+    def candidate_key(candidate: RelationCandidate) -> tuple[object, ...]:
+        return (
+            candidate.priority != "critical",
+            candidate.candidate_reason != "potential_material_conflict",
+            not candidate.material_to_synthesis,
             -priority_weight[candidate.priority],
             reason_rank[candidate.candidate_reason],
+            candidate.candidate_id,
             candidate.left_node_id,
             candidate.right_node_id,
-        ),
-    )
+        )
+
+    def batch_score(batch: list[RelationCandidate]) -> tuple[int, ...]:
+        return (
+            sum(item.priority == "critical" for item in batch),
+            sum(
+                item.candidate_reason == "potential_material_conflict"
+                for item in batch
+            ),
+            sum(item.material_to_synthesis for item in batch),
+            sum(priority_weight[item.priority] for item in batch),
+            len(batch),
+        )
+
+    def better(
+        proposed: list[RelationCandidate],
+        current: list[RelationCandidate],
+    ) -> bool:
+        proposed_score = batch_score(proposed)
+        current_score = batch_score(current)
+        if proposed_score != current_score:
+            return proposed_score > current_score
+        return tuple(sorted(item.candidate_id for item in proposed)) < tuple(
+            sorted(item.candidate_id for item in current)
+        )
+
+    ordered = sorted(candidates, key=candidate_key)
+
+    def fill(
+        retained: list[RelationCandidate],
+        *,
+        excluded_ids: set[str] | None = None,
+    ) -> list[RelationCandidate]:
+        result = list(retained)
+        used = {
+            node_id
+            for item in retained
+            for node_id in (item.left_node_id, item.right_node_id)
+        }
+        retained_ids = {item.candidate_id for item in retained}
+        excluded = excluded_ids or set()
+        for candidate in ordered:
+            if (
+                candidate.candidate_id in retained_ids
+                or candidate.candidate_id in excluded
+            ):
+                continue
+            if (
+                candidate.left_node_id in used
+                or candidate.right_node_id in used
+            ):
+                continue
+            result.append(candidate)
+            used.update((candidate.left_node_id, candidate.right_node_id))
+            if len(result) >= max_pairs:
+                break
+        return result
+
+    selected = fill([])
+    # At most ``max_pairs`` rounds.  Each trial drops one selected edge and
+    # greedily refills the freed capacity.  This can recover common 1-for-2
+    # greedy mistakes while remaining O(max_pairs^2 * candidate_count).
+    for _ in range(min(max_pairs, len(selected))):
+        improved = False
+        for dropped in list(sorted(selected, key=candidate_key, reverse=True)):
+            proposal = fill(
+                [item for item in selected if item is not dropped],
+                excluded_ids={dropped.candidate_id},
+            )
+            if better(proposal, selected):
+                selected = proposal
+                improved = True
+                break
+        if not improved:
+            break
+    return sorted(selected, key=candidate_key)
 
 
 def _normalized_claim(text: str) -> str:
@@ -234,9 +290,13 @@ def generate_blocking_relation_obligations(
     graph_revision: int,
     provisional_synthesis_node_ids: list[str],
     include_material_review_pool: bool = False,
-    material_unselected_node_ids: list[str] | None = None,
+    explicit_blocking_pairs: set[tuple[str, str]] | None = None,
 ) -> list[RelationCandidate]:
-    """Completely enumerate blockers over the material review pool."""
+    """Enumerate only explicit blockers over the material review pool.
+
+    Shared coverage denotes a common obligation, not a contradiction.  It is
+    therefore handled by bounded enrichment rather than this fail-closed set.
+    """
 
     eligible = [
         node
@@ -245,26 +305,31 @@ def generate_blocking_relation_obligations(
     ]
     by_id = {node.node_id: node for node in eligible}
     selected = [by_id[node_id] for node_id in provisional_synthesis_node_ids if node_id in by_id]
-    material_unselected = set(material_unselected_node_ids or [])
+    explicit_pairs = {
+        tuple(sorted(pair))
+        for pair in (explicit_blocking_pairs or set())
+    }
     candidates: list[RelationCandidate] = []
     for left, right in combinations(selected, 2):
         reason: RelationCandidateReason | None = None
         if _normalized_claim(left.claim) == _normalized_claim(right.claim):
             reason = "exact_duplicate"
-        elif _normalized_evidence(left).intersection(_normalized_evidence(right)):
-            reason = "potential_material_conflict"
         elif include_material_review_pool and (
-            left.node_type == "counterexample"
-            or right.node_type == "counterexample"
-            or left.node_id in right.parent_ids
-            or right.node_id in left.parent_ids
-            or set(left.coverage_ids).intersection(right.coverage_ids)
+            tuple(sorted((left.node_id, right.node_id))) in explicit_pairs
             or (
-                (left.node_id in material_unselected)
-                != (right.node_id in material_unselected)
+                left.node_type == "counterexample"
+                and right.node_id in left.parent_ids
+            )
+            or (
+                right.node_type == "counterexample"
+                and left.node_id in right.parent_ids
             )
         ):
             reason = "potential_material_conflict"
+        elif _normalized_evidence(left).intersection(_normalized_evidence(right)):
+            # Shared direct evidence plus distinct claims warrants Relation
+            # classification. Coverage ancestry alone never reaches this path.
+            reason = "shared_evidence_divergence"
         if reason is not None:
             candidates.append(
                 _candidate(
@@ -386,6 +451,10 @@ def _directly_related(left: SearchNode, right: SearchNode) -> bool:
     )
 
 
+def _shares_coverage(left: SearchNode, right: SearchNode) -> bool:
+    return bool(set(left.coverage_ids).intersection(right.coverage_ids))
+
+
 def generate_relation_enrichment_candidates(
     nodes: list[SearchNode],
     *,
@@ -440,12 +509,17 @@ def generate_relation_enrichment_candidates(
     )
 
     # Selected-selected is the primary enrichment pool.  A non-selected node
-    # enters only when it has a direct parent/sibling relation to a selected
-    # node.  This keeps the pass bounded without scanning whole-graph pairs.
+    # enters only when it is directly related to, or shares an obligation with,
+    # a selected node.  The ranked node and candidate windows keep this audit
+    # bounded even when one seed lineage shares the same coverage ID.
     selected_related = [
         node
         for node in eligible
-        if node.node_id in selected_ids or any(_directly_related(node, item) for item in selected)
+        if node.node_id in selected_ids
+        or any(
+            _directly_related(node, item) or _shares_coverage(node, item)
+            for item in selected
+        )
     ]
     known_degree: dict[str, int] = defaultdict(int)
     for left_id, right_id, _, _ in known_pair_revisions:
@@ -471,17 +545,28 @@ def generate_relation_enrichment_candidates(
                 right = embedded[j]
                 distances[tuple(sorted((left.node_id, right.node_id)))] = float(matrix[i, j])
 
-    reason_order = {"embedding_close": 0, "high_score_near_tie": 1, "entropy_plateau": 2}
+    reason_order = {
+        "shared_coverage_alternative": 0,
+        "embedding_close": 1,
+        "high_score_near_tie": 2,
+        "entropy_plateau": 3,
+    }
     generated: dict[tuple[str, str], RelationCandidate] = {}
     for left, right in combinations(ranked, 2):
         pair = tuple(sorted((left.node_id, right.node_id)))
         both_selected = pair[0] in selected_ids and pair[1] in selected_ids
-        if not both_selected and not _directly_related(left, right):
+        if (
+            not both_selected
+            and not _directly_related(left, right)
+            and not _shares_coverage(left, right)
+        ):
             continue
         pair_revision = (pair[0], pair[1], node_revisions[pair[0]], node_revisions[pair[1]])
         if pair_revision in known_pair_revisions:
             continue
         reasons: list[RelationCandidateReason] = []
+        if _shares_coverage(left, right):
+            reasons.append("shared_coverage_alternative")
         if distances.get(pair, 1.0) <= 0.15:
             reasons.append("embedding_close")
         if both_selected and abs(_score_for_tie(left) - _score_for_tie(right)) <= 0.05:

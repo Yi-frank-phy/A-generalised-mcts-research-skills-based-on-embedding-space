@@ -373,8 +373,56 @@ def commit_episode_result(
                 return reject(f"stale selected-node revision: {node_id}")
         if not isinstance(result.structured_output, JudgeEpisodeOutput):
             return reject("completed Judge result has the wrong structured output schema")
+        if request.judge_payload is None:
+            return reject("Judge request is missing its payload")
         granted_ids = set(request.selected_node_revisions)
         observations = result.structured_output.observations
+        if request.judge_payload.purpose == "provenance_repair":
+            if observations:
+                return reject(
+                    "provenance repair must not return Judge score observations"
+                )
+            try:
+                next_epistemic_ledger = prepare_epistemic_commit(
+                    graph=graph,
+                    request=request,
+                    result=result,
+                    bundle=result.structured_output.epistemic_contributions,
+                    authorized_node_ids=granted_ids,
+                    committed_at=datetime.now(timezone.utc).isoformat(),
+                    context=epistemic_context,
+                )
+            except ValueError as exc:
+                return reject(f"epistemic contribution rejected: {exc}")
+            revision_before = graph.revision
+            graph.epistemic_ledger = next_epistemic_ledger
+            graph.revision = revision_before + 1
+            if telemetry is not None:
+                _emit_telemetry(
+                    telemetry,
+                    "provenance_repair_committed",
+                    run_id=request.run_id,
+                    episode_id=request.episode_id,
+                    attempt_id=request.attempt_id,
+                    role=request.role,
+                    status="committed",
+                    input_graph_revision=request.input_graph_revision,
+                    selected_node_count=len(granted_ids),
+                    returned_observation_count=0,
+                    accepted_observation_count=0,
+                    schema_valid=True,
+                    usage_source="unavailable",
+                )
+            return CommitOutcome(
+                accepted=True,
+                episode_id=request.episode_id,
+                accepted_node_ids=sorted(granted_ids),
+                accepted_node_count=0,
+                graph_revision_before=revision_before,
+                graph_revision_after=graph.revision,
+            )
+        if not observations:
+            return reject("initial Judge result must score every granted node")
         observation_ids = [observation.node_id for observation in observations]
         if len(observation_ids) != len(set(observation_ids)):
             return reject("duplicate Judge node ID inside result")

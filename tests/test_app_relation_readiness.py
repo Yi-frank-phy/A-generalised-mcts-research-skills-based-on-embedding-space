@@ -298,7 +298,7 @@ def test_candidate_generation_is_canonical_stable_bounded_and_prioritized():
     assert all("far" not in (item.left_node_id, item.right_node_id) for item in first)
 
 
-def test_material_conflict_candidate_uses_selected_shared_evidence_only():
+def test_shared_evidence_requires_explicit_claim_divergence_to_block():
     nodes = [
         SearchNode(node_id="a", claim="condition is sufficient", evidence=["paper-1"], score=0.8),
         SearchNode(node_id="b", claim="condition is not sufficient", evidence=["paper-1"], score=0.79),
@@ -310,7 +310,11 @@ def test_material_conflict_candidate_uses_selected_shared_evidence_only():
         graph_revision=2,
         provisional_synthesis_node_ids=["a", "b"],
     )
-    material = next(item for item in candidates if item.candidate_reason == "potential_material_conflict")
+    material = next(
+        item
+        for item in candidates
+        if item.candidate_reason == "shared_evidence_divergence"
+    )
     assert (material.left_node_id, material.right_node_id) == ("a", "b")
     assert material.material_to_synthesis is True
     assert not any(
@@ -720,10 +724,27 @@ def test_chained_equivalent_merge_rejects_alias_projected_cycle_atomically():
 @pytest.mark.parametrize("relation_type", ["complementary", "independent"])
 def test_nonmerge_relations_preserve_nodes_and_permit_readiness(tmp_path, relation_type):
     nodes = [
-        SearchNode(node_id="a", claim="route A", evidence=["shared"], score=0.8),
-        SearchNode(node_id="b", claim="route B", evidence=["shared"], score=0.79),
+        SearchNode(
+            node_id="a",
+            claim="route A",
+            coverage_ids=["obligation:route"],
+            score=0.8,
+        ),
+        SearchNode(
+            node_id="b",
+            claim="route B",
+            coverage_ids=["obligation:route"],
+            score=0.79,
+        ),
     ]
-    run_dir = make_duplicate_gate_run(tmp_path, nodes=nodes)
+    run_dir = tmp_path / f"nonmerge-{relation_type}"
+    create_controller_checkpoint_run(
+        run_dir,
+        spec(enrichment_cap=1),
+        nodes,
+        run_id=f"nonmerge-{relation_type}",
+    )
+    force_stop_intent(run_dir)
     request = next_app_episode(run_dir).request
     before_state = app_run_status(run_dir)
     before_revisions = dict(before_state.node_revisions)
@@ -1015,7 +1036,7 @@ def test_enrichment_record_does_not_cover_a_new_blocking_obligation(tmp_path):
     assert blocking.request.role == "relation"
     second_pair = blocking.request.relation_payload.candidate_pairs[0]
     assert second_pair.scheduling_class == "blocking"
-    assert second_pair.candidate_reason == "potential_material_conflict"
+    assert second_pair.candidate_reason == "shared_evidence_divergence"
     assert second_pair.candidate_id != first_pair.candidate_id
 
     submit_app_episode_result(run_dir, relation_result(blocking.request, "conflict"))
@@ -1424,50 +1445,29 @@ def conflict_nodes(count=8):
         SearchNode(
             node_id=f"n{i}",
             claim=f"material conclusion {i}",
-            evidence=["shared source"],
+            coverage_ids=["seed:shared"],
             score=0.9 - i * 0.01,
         )
         for i in range(count)
     ]
 
 
-def test_complete_blocking_inventory_covers_all_28_pairs_across_bounded_episodes(tmp_path):
-    run_dir = tmp_path / "blocking-28"
+def test_shared_coverage_alone_does_not_create_all_pairs_blockers(tmp_path):
+    run_dir = tmp_path / "no-blocking-28"
     create_controller_checkpoint_run(
         run_dir,
         spec(pair_cap=3, enrichment_cap=0),
         conflict_nodes(),
-        run_id="blocking-28",
+        run_id="no-blocking-28",
     )
     force_stop_intent(run_dir)
     first = next_app_episode(run_dir)
-    assert first.request.role == "relation"
-    assert len(first.request.relation_payload.candidate_pairs) == 3
+    assert first.controller_action == "ready_for_synthesis"
     state = app_run_status(run_dir)
     blockers = [item for item in state.relation_candidates if item.scheduling_class == "blocking"]
-    assert len(blockers) == 28
+    assert blockers == []
     assert state.synthesis_readiness.blocking_inventory_complete is True
-    assert state.synthesis_readiness.blocking_pair_count == 28
-
-    granted_pairs = []
-    current = first
-    while current.controller_action == "episode_required":
-        granted_pairs.extend(
-            (pair.left.node_id, pair.right.node_id)
-            for pair in current.request.relation_payload.candidate_pairs
-        )
-        submit_app_episode_result(run_dir, relation_result(current.request, "conflict"))
-        current = next_app_episode(run_dir)
-
-    assert current.controller_action == "ready_for_synthesis"
-    assert len(granted_pairs) == 28
-    assert len(set(granted_pairs)) == 28
-    assert len(app_run_status(run_dir).relation_ledger) == 28
-    readiness = app_run_status(run_dir).synthesis_readiness
-    assert readiness.blocking_pair_count == 28
-    assert readiness.resolved_blocking_pair_count == 28
-    assert readiness.unresolved_blocking_pair_count == 0
-    assert readiness.ready is True
+    assert state.synthesis_readiness.blocking_pair_count == 0
 
 
 def test_all_selected_duplicate_pairs_are_inventoried_before_any_merge(tmp_path):

@@ -4,20 +4,6 @@
       "additionalProperties": false,
       "description": "Hard budget limits for one DTE run.",
       "properties": {
-        "max_committed_search_nodes": {
-          "default": 20,
-          "maximum": 100,
-          "minimum": 1,
-          "title": "Max Committed Search Nodes",
-          "type": "integer"
-        },
-        "max_iterations": {
-          "default": 10,
-          "maximum": 20,
-          "minimum": 1,
-          "title": "Max Iterations",
-          "type": "integer"
-        },
         "allocation_mass_per_iteration": {
           "default": 3,
           "maximum": 50,
@@ -25,40 +11,14 @@
           "title": "Allocation Mass Per Iteration",
           "type": "integer"
         },
-        "max_children_per_iteration": {
-          "default": 5,
-          "maximum": 50,
-          "minimum": 1,
-          "title": "Max Children Per Iteration",
-          "type": "integer"
-        },
-        "max_relation_pairs_per_episode": {
-          "default": 3,
-          "maximum": 20,
-          "minimum": 1,
-          "title": "Max Relation Pairs Per Episode",
-          "type": "integer"
-        },
-        "max_relation_enrichment_pairs": {
-          "default": 3,
-          "maximum": 100,
-          "minimum": 0,
-          "title": "Max Relation Enrichment Pairs",
-          "type": "integer"
-        },
-        "max_research_iterations": {
-          "default": 1,
-          "maximum": 5,
-          "minimum": 0,
-          "title": "Max Research Iterations",
-          "type": "integer"
-        },
-        "min_iterations_before_synthesis": {
-          "default": 2,
-          "maximum": 20,
-          "minimum": 1,
-          "title": "Min Iterations Before Synthesis",
-          "type": "integer"
+        "continuation_policy": {
+          "default": "bounded_node_yield_v1",
+          "enum": [
+            "legacy_entropy_v1",
+            "bounded_node_yield_v1"
+          ],
+          "title": "Continuation Policy",
+          "type": "string"
         },
         "entropy_change_threshold": {
           "default": 0.05,
@@ -74,14 +34,54 @@
           "title": "Entropy Plateau Confirmations",
           "type": "integer"
         },
-        "continuation_policy": {
-          "default": "bounded_node_yield_v1",
-          "enum": [
-            "legacy_entropy_v1",
-            "bounded_node_yield_v1"
-          ],
-          "title": "Continuation Policy",
-          "type": "string"
+        "max_children_per_iteration": {
+          "default": 5,
+          "maximum": 50,
+          "minimum": 1,
+          "title": "Max Children Per Iteration",
+          "type": "integer"
+        },
+        "max_committed_search_nodes": {
+          "default": 20,
+          "maximum": 100,
+          "minimum": 1,
+          "title": "Max Committed Search Nodes",
+          "type": "integer"
+        },
+        "max_iterations": {
+          "default": 10,
+          "maximum": 20,
+          "minimum": 1,
+          "title": "Max Iterations",
+          "type": "integer"
+        },
+        "max_relation_enrichment_pairs": {
+          "default": 3,
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Max Relation Enrichment Pairs",
+          "type": "integer"
+        },
+        "max_relation_pairs_per_episode": {
+          "default": 3,
+          "maximum": 20,
+          "minimum": 1,
+          "title": "Max Relation Pairs Per Episode",
+          "type": "integer"
+        },
+        "max_research_iterations": {
+          "default": 1,
+          "maximum": 5,
+          "minimum": 0,
+          "title": "Max Research Iterations",
+          "type": "integer"
+        },
+        "min_iterations_before_synthesis": {
+          "default": 2,
+          "maximum": 20,
+          "minimum": 1,
+          "title": "Min Iterations Before Synthesis",
+          "type": "integer"
         },
         "t_max": {
           "default": 1.0,
@@ -124,15 +124,13 @@
       "additionalProperties": false,
       "description": "Top-level run specification.\n\nThis is the source of truth. Free-form Markdown or prompt text cannot\noverride this object after validation.",
       "properties": {
-        "problem": {
-          "minLength": 1,
-          "title": "Problem",
-          "type": "string"
+        "allow_self_organized_executor": {
+          "default": true,
+          "title": "Allow Self Organized Executor",
+          "type": "boolean"
         },
-        "goal": {
-          "minLength": 1,
-          "title": "Goal",
-          "type": "string"
+        "budget": {
+          "$ref": "#/$defs/BudgetSpec"
         },
         "constraints": {
           "items": {
@@ -141,27 +139,19 @@
           "title": "Constraints",
           "type": "array"
         },
-        "mode": {
-          "const": "mandatory_frontier",
-          "default": "mandatory_frontier",
-          "title": "Mode",
-          "type": "string"
+        "coverage_obligations": {
+          "items": {
+            "$ref": "#/$defs/CoverageObligation"
+          },
+          "title": "Coverage Obligations",
+          "type": "array"
         },
-        "budget": {
-          "$ref": "#/$defs/BudgetSpec"
-        },
-        "operator_policy": {
-          "$ref": "#/$defs/OperatorPolicy"
-        },
-        "allow_self_organized_executor": {
-          "default": true,
-          "title": "Allow Self Organized Executor",
-          "type": "boolean"
-        },
-        "require_final_synthesis": {
-          "default": true,
-          "title": "Require Final Synthesis",
-          "type": "boolean"
+        "embedding_dimension": {
+          "default": 3072,
+          "maximum": 3072,
+          "minimum": 8,
+          "title": "Embedding Dimension",
+          "type": "integer"
         },
         "embedding_provider": {
           "default": "hash",
@@ -172,19 +162,38 @@
           "title": "Embedding Provider",
           "type": "string"
         },
-        "embedding_dimension": {
-          "default": 3072,
-          "maximum": 3072,
-          "minimum": 8,
-          "title": "Embedding Dimension",
-          "type": "integer"
+        "goal": {
+          "minLength": 1,
+          "title": "Goal",
+          "type": "string"
         },
-        "coverage_obligations": {
-          "items": {
-            "$ref": "#/$defs/CoverageObligation"
-          },
-          "title": "Coverage Obligations",
-          "type": "array"
+        "material_provenance_policy": {
+          "default": "terminal_disclosure",
+          "enum": [
+            "terminal_disclosure",
+            "strict_repair"
+          ],
+          "title": "Material Provenance Policy",
+          "type": "string"
+        },
+        "mode": {
+          "const": "mandatory_frontier",
+          "default": "mandatory_frontier",
+          "title": "Mode",
+          "type": "string"
+        },
+        "operator_policy": {
+          "$ref": "#/$defs/OperatorPolicy"
+        },
+        "problem": {
+          "minLength": 1,
+          "title": "Problem",
+          "type": "string"
+        },
+        "require_final_synthesis": {
+          "default": true,
+          "title": "Require Final Synthesis",
+          "type": "boolean"
         },
         "role_isolation_mode": {
           "default": "legacy_unverified",
@@ -221,32 +230,6 @@
       "additionalProperties": false,
       "description": "A node in the DTE search graph/frontier.",
       "properties": {
-        "node_id": {
-          "title": "Node Id",
-          "type": "string"
-        },
-        "node_type": {
-          "default": "candidate",
-          "enum": [
-            "candidate",
-            "evidence",
-            "counterexample",
-            "merge",
-            "synthesis"
-          ],
-          "title": "Node Type",
-          "type": "string"
-        },
-        "claim": {
-          "minLength": 1,
-          "title": "Claim",
-          "type": "string"
-        },
-        "rationale": {
-          "default": "",
-          "title": "Rationale",
-          "type": "string"
-        },
         "assumptions": {
           "items": {
             "type": "string"
@@ -254,33 +237,10 @@
           "title": "Assumptions",
           "type": "array"
         },
-        "evidence": {
-          "items": {
-            "type": "string"
-          },
-          "title": "Evidence",
-          "type": "array"
-        },
-        "risks": {
-          "items": {
-            "type": "string"
-          },
-          "title": "Risks",
-          "type": "array"
-        },
-        "parent_ids": {
-          "items": {
-            "type": "string"
-          },
-          "title": "Parent Ids",
-          "type": "array"
-        },
-        "coverage_ids": {
-          "items": {
-            "type": "string"
-          },
-          "title": "Coverage Ids",
-          "type": "array"
+        "claim": {
+          "minLength": 1,
+          "title": "Claim",
+          "type": "string"
         },
         "confidence": {
           "default": 0.5,
@@ -289,20 +249,37 @@
           "title": "Confidence",
           "type": "number"
         },
-        "local_embedding": {
+        "coverage_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Coverage Ids",
+          "type": "array"
+        },
+        "density": {
           "anyOf": [
             {
-              "items": {
-                "type": "number"
-              },
-              "type": "array"
+              "type": "number"
             },
             {
               "type": "null"
             }
           ],
           "default": null,
-          "title": "Local Embedding"
+          "title": "Density"
+        },
+        "evidence": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Evidence",
+          "type": "array"
+        },
+        "expansion_budget": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Expansion Budget",
+          "type": "integer"
         },
         "judge_reasoning": {
           "anyOf": [
@@ -315,20 +292,6 @@
           ],
           "default": null,
           "title": "Judge Reasoning"
-        },
-        "judge_risks": {
-          "items": {
-            "type": "string"
-          },
-          "title": "Judge Risks",
-          "type": "array"
-        },
-        "judge_uncertainty_evidence": {
-          "items": {
-            "type": "string"
-          },
-          "title": "Judge Uncertainty Evidence",
-          "type": "array"
         },
         "judge_result_provenance": {
           "anyOf": [
@@ -345,6 +308,70 @@
           "default": null,
           "title": "Judge Result Provenance"
         },
+        "judge_risks": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Judge Risks",
+          "type": "array"
+        },
+        "judge_uncertainty_evidence": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Judge Uncertainty Evidence",
+          "type": "array"
+        },
+        "local_embedding": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Local Embedding"
+        },
+        "node_id": {
+          "title": "Node Id",
+          "type": "string"
+        },
+        "node_type": {
+          "default": "candidate",
+          "enum": [
+            "candidate",
+            "evidence",
+            "counterexample",
+            "merge",
+            "synthesis"
+          ],
+          "title": "Node Type",
+          "type": "string"
+        },
+        "parent_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Parent Ids",
+          "type": "array"
+        },
+        "rationale": {
+          "default": "",
+          "title": "Rationale",
+          "type": "string"
+        },
+        "risks": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Risks",
+          "type": "array"
+        },
         "score": {
           "anyOf": [
             {
@@ -359,30 +386,17 @@
           "default": null,
           "title": "Score"
         },
-        "density": {
-          "anyOf": [
-            {
-              "type": "number"
-            },
-            {
-              "type": "null"
-            }
+        "status": {
+          "default": "frontier",
+          "enum": [
+            "frontier",
+            "closed",
+            "archived",
+            "merged",
+            "synthesis"
           ],
-          "default": null,
-          "title": "Density"
-        },
-        "uncertainty": {
-          "anyOf": [
-            {
-              "minimum": 0.0,
-              "type": "number"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Uncertainty"
+          "title": "Status",
+          "type": "string"
         },
         "ucb_score": {
           "anyOf": [
@@ -396,23 +410,18 @@
           "default": null,
           "title": "Ucb Score"
         },
-        "expansion_budget": {
-          "default": 0,
-          "minimum": 0,
-          "title": "Expansion Budget",
-          "type": "integer"
-        },
-        "status": {
-          "default": "frontier",
-          "enum": [
-            "frontier",
-            "closed",
-            "archived",
-            "merged",
-            "synthesis"
+        "uncertainty": {
+          "anyOf": [
+            {
+              "minimum": 0.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
           ],
-          "title": "Status",
-          "type": "string"
+          "default": null,
+          "title": "Uncertainty"
         }
       },
       "required": [
@@ -426,9 +435,6 @@
   "additionalProperties": false,
   "description": "Request passed from DTE Expansion to an external executor adapter.",
   "properties": {
-    "parent": {
-      "$ref": "#/$defs/SearchNode"
-    },
     "child_count": {
       "maximum": 50,
       "minimum": 1,
@@ -439,6 +445,9 @@
       "minimum": 1,
       "title": "Iteration",
       "type": "integer"
+    },
+    "parent": {
+      "$ref": "#/$defs/SearchNode"
     },
     "spec": {
       "anyOf": [

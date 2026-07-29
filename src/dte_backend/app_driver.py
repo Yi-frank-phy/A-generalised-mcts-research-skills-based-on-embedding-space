@@ -251,6 +251,10 @@ class TerminalRecord(DTEBaseModel):
     graph_revision: int = Field(ge=0)
     controller_iteration: int = Field(ge=0)
     committed_at: str
+    completeness: Literal["complete", "degraded"] = "complete"
+    degradation_reason_codes: list[str] = Field(default_factory=list)
+    unresolved_coverage_ids: list[str] = Field(default_factory=list)
+    provenance_incomplete_node_ids: list[str] = Field(default_factory=list)
 
 
 class ControllerIterationRecord(DTEBaseModel):
@@ -275,7 +279,8 @@ class ControllerIterationRecord(DTEBaseModel):
 
 
 class AppRunState(DTEBaseModel):
-    state_schema_version: Literal["app-run-state.v2"] = "app-run-state.v2"
+    state_schema_version: Literal["app-run-state.v3"] = "app-run-state.v3"
+    legacy_provenance_compatibility: bool = False
     run_id: str
     execution_contract: ExecutionContract = Field(default_factory=ExecutionContract)
     spec: DTERunSpec
@@ -316,6 +321,8 @@ class AppRunState(DTEBaseModel):
         default_factory=list
     )
     provenance_incomplete_node_ids: list[str] = Field(default_factory=list)
+    provenance_repair_attempted_node_ids: list[str] = Field(default_factory=list)
+    provenance_repair_exhausted_node_ids: list[str] = Field(default_factory=list)
     synthesis_readiness: SynthesisReadinessRecord | None = None
     relation_readiness_status: Literal["not_evaluated", "evaluated", "legacy_unchecked"] = "not_evaluated"
     pending_terminal_action: Literal["ready_for_synthesis", "run_complete"] | None = None
@@ -1347,9 +1354,19 @@ def _validate_loaded_state(state: AppRunState) -> None:
             if episode.role == "judge" and isinstance(
                 result.structured_output, JudgeEpisodeOutput
             ):
-                accepted_ids = [
-                    observation.node_id for observation in result.structured_output.observations
-                ]
+                judge_payload = attempt.request.judge_payload
+                if (
+                    judge_payload is not None
+                    and judge_payload.purpose == "provenance_repair"
+                ):
+                    accepted_ids = sorted(canonical_selected_node_revisions)
+                    expected_count = 0
+                else:
+                    accepted_ids = [
+                        observation.node_id
+                        for observation in result.structured_output.observations
+                    ]
+                    expected_count = len(accepted_ids)
                 expected_after = attempt.request.input_graph_revision + 1
             elif episode.role == "executor" and isinstance(
                 result.structured_output, ExecutorEpisodeOutput
@@ -1373,7 +1390,12 @@ def _validate_loaded_state(state: AppRunState) -> None:
                 raise ValueError("persisted committed result has the wrong role output schema")
             if (
                 outcome.accepted_node_ids != accepted_ids
-                or outcome.accepted_node_count != len(accepted_ids)
+                or outcome.accepted_node_count
+                != (
+                    expected_count
+                    if episode.role == "judge"
+                    else len(accepted_ids)
+                )
                 or outcome.graph_revision_after != expected_after
             ):
                 raise ValueError("persisted committed result disagrees with its commit outcome")
@@ -1622,6 +1644,12 @@ def _validate_loaded_state(state: AppRunState) -> None:
             raise ValueError("committed Judge attempt lacks its authoritative observations")
         output_ids = [item.node_id for item in result.structured_output.observations]
         payload = attempt.request.judge_payload
+        if payload is not None and payload.purpose == "provenance_repair":
+            if result.structured_output.observations:
+                raise ValueError(
+                    "committed provenance-repair Judge attempt changed scoring observations"
+                )
+            continue
         blinded_payload_ids = (
             [] if payload is None else [item.node_id for item in payload.selected_frontier_nodes]
         )
@@ -2110,10 +2138,21 @@ def _validate_loaded_state(state: AppRunState) -> None:
             result = attempt.committed_result
             assert result is not None
             if transition_kind == "judge":
+                judge_payload = request.judge_payload
                 for node_id in selected_node_revisions:
-                    if replay_statuses.get(node_id) != "frontier":
-                        raise ValueError("Judge transition targeted a non-frontier node")
-                    replay_node_revisions[node_id] += 1
+                    if (
+                        judge_payload is not None
+                        and judge_payload.purpose == "provenance_repair"
+                    ):
+                        if replay_statuses.get(node_id) not in {"frontier", "closed"}:
+                            raise ValueError(
+                                "provenance-repair Judge transition targeted "
+                                "an ineligible node"
+                            )
+                    else:
+                        if replay_statuses.get(node_id) != "frontier":
+                            raise ValueError("Judge transition targeted a non-frontier node")
+                        replay_node_revisions[node_id] += 1
             elif transition_kind == "executor":
                 parent_id = request.parent_node_id
                 if parent_id is None or replay_statuses.get(parent_id) != "frontier":
@@ -2298,12 +2337,27 @@ def _validate_loaded_state(state: AppRunState) -> None:
             ):
                 raise ValueError("active Executor grant disagrees with controller allocation")
         elif request.role == "judge":
-            expected_nodes = _select_unjudged_frontier(state)
             payload = request.judge_payload
+            if payload is None:
+                raise ValueError("active Judge grant lacks its structured payload")
+            if payload.purpose == "provenance_repair":
+                expected_ids = set(state.provenance_repair_attempted_node_ids)
+                purpose_valid = (
+                    bool(canonical_selected)
+                    and set(canonical_selected).issubset(expected_ids)
+                    and all(
+                        nodes_by_id[node_id].status in {"frontier", "closed"}
+                        for node_id in canonical_selected
+                    )
+                )
+            else:
+                expected_nodes = _select_unjudged_frontier(state)
+                purpose_valid = (
+                    set(canonical_selected)
+                    == {node.node_id for node in expected_nodes}
+                )
             if (
-                payload is None
-                or set(canonical_selected)
-                != {node.node_id for node in expected_nodes}
+                not purpose_valid
                 or payload.problem != state.spec.problem
                 or payload.goal != state.spec.goal
                 or payload.constraints != state.spec.constraints
@@ -2443,9 +2497,20 @@ def _validate_loaded_state(state: AppRunState) -> None:
         if (
             state.pending_terminal_gate_evaluated
             and active_record is not None
-            and active_record[1].request.role != "relation"
+            and not (
+                active_record[1].request.role == "relation"
+                or (
+                    active_record[1].request.role == "judge"
+                    and active_record[1].request.judge_payload is not None
+                    and active_record[1].request.judge_payload.purpose
+                    == "provenance_repair"
+                )
+            )
         ):
-            raise ValueError("pending terminal intent may only coexist with a Relation attempt")
+            raise ValueError(
+                "pending terminal intent may only coexist with a Relation "
+                "or provenance-repair Judge attempt"
+            )
         if (
             state.synthesis_request is not None
             and state.pending_terminal_action != "ready_for_synthesis"
@@ -2532,9 +2597,37 @@ def _validate_loaded_state(state: AppRunState) -> None:
             for node in state.nodes
         ):
             raise ValueError("terminal App state retains authorized or unjudged work")
+        degraded_terminal = (
+            state.terminal_record is not None
+            and state.terminal_record.completeness == "degraded"
+        )
+        if not readiness.ready:
+            if (
+                not degraded_terminal
+                or not readiness.blocking_inventory_complete
+                or readiness.unresolved_blocking_pair_count != 0
+                or readiness.undisposed_material_node_ids
+                or not (
+                    readiness.unresolved_coverage_ids
+                    or readiness.provenance_incomplete_node_ids
+                )
+            ):
+                raise ValueError(
+                    "terminal synthesis readiness is blocked by a non-degradable condition"
+                )
+            assert state.terminal_record is not None
+            if (
+                state.terminal_record.unresolved_coverage_ids
+                != readiness.unresolved_coverage_ids
+                or state.terminal_record.provenance_incomplete_node_ids
+                != readiness.provenance_incomplete_node_ids
+                or not state.terminal_record.degradation_reason_codes
+            ):
+                raise ValueError(
+                    "degraded terminal disclosure disagrees with synthesis readiness"
+                )
         if (
-            not readiness.ready
-            or readiness.graph_revision != state.graph_revision
+            readiness.graph_revision != state.graph_revision
             or selection.selection_revision != state.graph_revision
             or readiness.provisional_selected_node_ids
             != selection.material_scope_node_ids
@@ -2562,8 +2655,11 @@ def _validate_loaded_state(state: AppRunState) -> None:
             state, expected_selection
         )
         if (
-            state.spec.role_isolation_mode != "legacy_unverified"
-            or state.unselected_node_dispositions
+            not state.legacy_provenance_compatibility
+            and (
+                state.spec.role_isolation_mode != "legacy_unverified"
+                or state.unselected_node_dispositions
+            )
         ) and (
             state.unselected_node_dispositions
             != expected_dispositions
@@ -2575,8 +2671,11 @@ def _validate_loaded_state(state: AppRunState) -> None:
             state, expected_selection
         )
         if (
-            state.spec.role_isolation_mode != "legacy_unverified"
-            or state.provenance_incomplete_node_ids
+            not state.legacy_provenance_compatibility
+            and (
+                state.spec.role_isolation_mode != "legacy_unverified"
+                or state.provenance_incomplete_node_ids
+            )
         ) and (
             state.provenance_incomplete_node_ids
             != expected_provenance_incomplete
@@ -2584,11 +2683,6 @@ def _validate_loaded_state(state: AppRunState) -> None:
             raise ValueError(
                 "terminal provenance completeness cannot be reproduced"
             )
-        material_unselected_ids = [
-            item.node_id
-            for item in expected_dispositions
-            if item.counterfactual_material
-        ]
         relation_review_pool_ids = _material_relation_review_pool_ids(
             state,
             expected_selection,
@@ -2602,7 +2696,7 @@ def _validate_loaded_state(state: AppRunState) -> None:
             include_material_review_pool=(
                 state.spec.role_isolation_mode != "legacy_unverified"
             ),
-            material_unselected_node_ids=material_unselected_ids,
+            explicit_blocking_pairs=_explicit_blocking_relation_pairs(state),
         )
         enrichment_committed = _relation_enrichment_pairs_committed(state)
         expected_readiness = evaluate_synthesis_readiness(
@@ -2645,12 +2739,120 @@ def _validate_loaded_state(state: AppRunState) -> None:
         )
         if readiness.model_dump(mode="json") != expected_readiness.model_dump(mode="json"):
             raise ValueError("terminal synthesis readiness cannot be reproduced from durable facts")
-        if not expected_readiness.ready:
+        if not expected_readiness.ready and (
+            state.terminal_record is None
+            or state.terminal_record.completeness != "degraded"
+        ):
             raise ValueError("terminal App state has unresolved Relation obligations")
+
+
+def _upgrade_v2_state_payload(raw: dict[str, Any]) -> None:
+    """Upgrade a hash-verified v2 payload without trusting inserted defaults."""
+
+    if raw.get("state_schema_version") != "app-run-state.v2":
+        return
+    raw_spec = raw.get("spec")
+    if not isinstance(raw_spec, dict):
+        raise ValueError("persisted v2 App state lacks its RunSpec")
+    needs_spec_upgrade = (
+        "material_provenance_policy" not in raw_spec
+        or not isinstance(raw_spec.get("budget"), dict)
+        or "max_committed_search_nodes" not in raw_spec["budget"]
+    )
+    if needs_spec_upgrade:
+        old_hash = hashlib.sha256(canonical_json_bytes(raw_spec)).hexdigest()
+        if raw.get("spec_hash") != old_hash:
+            raise ValueError(
+                "persisted v2 RunSpec disagrees with its immutable run hash"
+            )
+
+    raw_spec.setdefault("material_provenance_policy", "terminal_disclosure")
+    raw_budget = raw_spec.get("budget")
+    if isinstance(raw_budget, dict) and "max_committed_search_nodes" not in raw_budget:
+        initial_count = sum(
+            item.get("node_type") != "synthesis"
+            for item in raw.get("initial_nodes", [])
+            if isinstance(item, dict)
+        )
+        current_count = sum(
+            item.get("node_type") != "synthesis"
+            for item in raw.get("nodes", [])
+            if isinstance(item, dict)
+        )
+        legacy_envelope = initial_count + (
+            int(raw_budget.get("max_iterations", 2))
+            * int(raw_budget.get("max_children_per_iteration", 5))
+        )
+        raw_budget["max_committed_search_nodes"] = min(
+            100,
+            max(1, current_count, legacy_envelope),
+        )
+        raw_budget["entropy_plateau_confirmations"] = 1
+        raw_budget["continuation_policy"] = "legacy_entropy_v1"
+    if needs_spec_upgrade:
+        raw["spec_hash"] = _run_spec_hash(DTERunSpec.model_validate(raw_spec))
+
+    migrated_context_hashes: dict[tuple[str, str], str] = {}
+    for episode in raw.get("episodes", []):
+        if not isinstance(episode, dict):
+            continue
+        for attempt in episode.get("attempts", []):
+            if not isinstance(attempt, dict):
+                continue
+            request = attempt.get("request")
+            if not isinstance(request, dict):
+                continue
+            contract = request.get("role_execution_contract")
+            judge_payload = request.get("judge_payload")
+            needs_request_upgrade = (
+                isinstance(contract, dict)
+                and "fresh_context_required" not in contract
+            ) or (
+                isinstance(judge_payload, dict)
+                and "purpose" not in judge_payload
+            )
+            if not needs_request_upgrade:
+                continue
+            old_request_hash = hashlib.sha256(
+                canonical_json_bytes(request)
+            ).hexdigest()
+            if attempt.get("request_hash") != old_request_hash:
+                raise ValueError(
+                    "persisted v2 episode request disagrees with its durable grant hash"
+                )
+            if isinstance(contract, dict):
+                strict = contract.get("isolation_mode") == "strict_fresh_context"
+                contract["fresh_context_required"] = strict
+                contract["isolation_verified"] = False
+                contract["isolation_attestation_source"] = "legacy_unverified"
+            if isinstance(judge_payload, dict):
+                judge_payload.setdefault("purpose", "initial_scoring")
+            parsed_request = EpisodeRequest.model_validate(request)
+            parsed_request.role_execution_contract.context_manifest_hash = (
+                compute_role_context_manifest_hash(parsed_request)
+            )
+            migrated_request = parsed_request.model_dump(mode="json")
+            attempt["request"] = migrated_request
+            attempt["request_hash"] = _episode_request_hash(parsed_request)
+            migrated_context_hashes[
+                (str(episode.get("episode_id")), str(attempt.get("attempt_id")))
+            ] = parsed_request.role_execution_contract.context_manifest_hash
+
+    for record in raw.get("role_session_registry", []):
+        if not isinstance(record, dict):
+            continue
+        identity = (str(record.get("episode_id")), str(record.get("attempt_id")))
+        if identity in migrated_context_hashes:
+            record["context_manifest_hash"] = migrated_context_hashes[identity]
+
+    raw["state_schema_version"] = "app-run-state.v3"
+    raw["legacy_provenance_compatibility"] = True
 
 
 def load_app_run(run_dir: str | Path) -> AppRunState:
     raw = json.loads(_state_path(run_dir).read_text(encoding="utf-8"))
+    if isinstance(raw, dict):
+        _upgrade_v2_state_payload(raw)
     raw_spec = raw.get("spec") if isinstance(raw, dict) else None
     raw_budget = raw_spec.get("budget") if isinstance(raw_spec, dict) else None
     if isinstance(raw_budget, dict) and "max_committed_search_nodes" not in raw_budget:
@@ -2833,6 +3035,10 @@ def create_app_run(
         graph_revision=graph.revision,
         node_revisions=graph.node_revisions,
         controller_action="continue_controller",
+        correlated_error_risk=(
+            validated_spec.role_isolation_mode
+            == "shared_context_single_agent"
+        ),
         created_at=created,
         updated_at=created,
         hook_trigger_source=hook_trigger_source,
@@ -3283,6 +3489,41 @@ def _build_unselected_dispositions(
     selection: ProvisionalSynthesisSelection,
 ) -> list[UnselectedNodeDisposition]:
     material = set(selection.material_scope_node_ids)
+    material_nodes = [
+        node for node in state.nodes if node.node_id in material
+    ]
+
+    def normalized(values: list[str]) -> set[str]:
+        return {
+            " ".join(value.casefold().strip().split())
+            for value in values
+            if value.strip()
+        }
+
+    retained_claims = normalized([node.claim for node in material_nodes])
+    retained_coverage = {
+        value for node in material_nodes for value in node.coverage_ids
+    }
+    retained_assumptions = normalized(
+        [value for node in material_nodes for value in node.assumptions]
+    )
+    retained_evidence = normalized(
+        [value for node in material_nodes for value in node.evidence]
+    )
+    retained_limitations = normalized(
+        [value for node in material_nodes for value in node.risks]
+    )
+    retained_statement_text = {
+        statement.statement_type: normalized(
+            [
+                item.text
+                for item in state.epistemic_ledger.statements
+                if item.target_node_id in material
+                and item.statement_type == statement.statement_type
+            ]
+        )
+        for statement in state.epistemic_ledger.statements
+    }
     dispositions: list[UnselectedNodeDisposition] = []
     for node in sorted(state.nodes, key=lambda item: item.node_id):
         if (
@@ -3292,8 +3533,57 @@ def _build_unselected_dispositions(
         ):
             continue
         score = node.score if node.score is not None else node.confidence
+        unique_coverage = sorted(set(node.coverage_ids) - retained_coverage)
+        unique_assumptions = sorted(normalized(node.assumptions) - retained_assumptions)
+        unique_evidence = sorted(normalized(node.evidence) - retained_evidence)
+        unique_limitations = sorted(normalized(node.risks) - retained_limitations)
+        for statement in state.epistemic_ledger.statements:
+            if statement.target_node_id != node.node_id:
+                continue
+            retained = retained_statement_text.get(statement.statement_type, set())
+            text = " ".join(statement.text.casefold().strip().split())
+            if text in retained:
+                continue
+            if statement.statement_type == "assumption":
+                unique_assumptions.append(text)
+            elif statement.statement_type == "evidence":
+                unique_evidence.append(text)
+            elif statement.statement_type == "failure_mode":
+                unique_limitations.append(text)
+        unique_dependency_refs: set[str] = set()
+        unique_conflict_refs: set[str] = set()
+        node_ref = f"node-claim:{node.node_id}"
+        for edge in state.epistemic_ledger.edges:
+            if node_ref not in {edge.source_ref, edge.target_ref}:
+                continue
+            ref = f"epistemic:{edge.edge_id}"
+            if edge.relation_type in {"requires", "derived_from"}:
+                unique_dependency_refs.add(ref)
+            if edge.relation_type in {"challenges", "contradicts"}:
+                unique_conflict_refs.add(ref)
+        for item in state.epistemic_ledger.path_dispositions:
+            if item.target_node_id == node.node_id:
+                unique_conflict_refs.add(f"epistemic:{item.disposition_id}")
+        if node.node_type == "counterexample":
+            unique_conflict_refs.add(f"node-claim:{node.node_id}")
+        distinct_claim = (
+            " ".join(node.claim.casefold().strip().split())
+            not in retained_claims
+        )
+        unique_assumptions = sorted(set(unique_assumptions))
+        unique_evidence = sorted(set(unique_evidence))
+        unique_limitations = sorted(set(unique_limitations))
+        marginally_distinct = bool(
+            unique_coverage
+            or unique_assumptions
+            or unique_evidence
+            or unique_limitations
+            or unique_dependency_refs
+            or unique_conflict_refs
+            or distinct_claim
+        )
         high_value = score >= 0.9
-        if high_value:
+        if high_value or marginally_distinct:
             disposition = "unresolved_high_value"
         elif score < 0.5:
             disposition = "future_work_unverified"
@@ -3308,15 +3598,23 @@ def _build_unselected_dispositions(
                 backend_facts=[
                     "eligible committed node",
                     f"judge_or_confidence={score:.6f}",
-                    "not required by structured coverage or dependency closure",
+                    "marginal contribution compared by exact structured set difference",
                 ],
-                omission_changes_coverage=False,
-                omission_changes_assumptions=bool(node.assumptions),
-                omission_changes_evidence=bool(node.evidence),
-                omission_changes_limitations=bool(node.risks),
-                omission_changes_conflicts=node.node_type == "counterexample",
-                disclosure_required=high_value or bool(node.risks),
-                counterfactual_material=high_value or node.node_type == "counterexample",
+                omission_changes_coverage=bool(unique_coverage),
+                omission_changes_assumptions=bool(unique_assumptions),
+                omission_changes_evidence=bool(unique_evidence),
+                omission_changes_limitations=bool(unique_limitations),
+                omission_changes_conflicts=bool(unique_conflict_refs),
+                omission_changes_dependencies=bool(unique_dependency_refs),
+                omission_changes_distinct_claim=distinct_claim,
+                unique_coverage_ids=unique_coverage,
+                unique_assumptions=unique_assumptions,
+                unique_evidence=unique_evidence,
+                unique_limitations=unique_limitations,
+                unique_dependency_refs=sorted(unique_dependency_refs),
+                unique_conflict_refs=sorted(unique_conflict_refs),
+                disclosure_required=high_value or marginally_distinct,
+                counterfactual_material=high_value or bool(unique_conflict_refs),
             )
         )
     return dispositions
@@ -3335,6 +3633,26 @@ def _material_relation_review_pool_ids(
     return sorted(material)
 
 
+def _explicit_blocking_relation_pairs(state: AppRunState) -> set[tuple[str, str]]:
+    """Project only durable node-to-node challenge/dependency declarations."""
+
+    blocking_relations = {"challenges", "contradicts"}
+    pairs: set[tuple[str, str]] = set()
+    for edge in state.epistemic_ledger.edges:
+        if edge.relation_type not in blocking_relations:
+            continue
+        if not (
+            edge.source_ref.startswith("node-claim:")
+            and edge.target_ref.startswith("node-claim:")
+        ):
+            continue
+        left = edge.source_ref.removeprefix("node-claim:")
+        right = edge.target_ref.removeprefix("node-claim:")
+        if left != right:
+            pairs.add(tuple(sorted((left, right))))
+    return pairs
+
+
 def _provenance_incomplete_material_nodes(
     state: AppRunState,
     selection: ProvisionalSynthesisSelection,
@@ -3346,10 +3664,24 @@ def _provenance_incomplete_material_nodes(
         return []
     covered: set[str] = set()
     for statement in state.epistemic_ledger.statements:
-        covered.add(statement.target_node_id)
+        if statement.statement_type in {
+            "assumption",
+            "evidence",
+            "failure_mode",
+        }:
+            covered.add(statement.target_node_id)
     for disposition in state.epistemic_ledger.path_dispositions:
         covered.add(disposition.target_node_id)
     for edge in state.epistemic_ledger.edges:
+        if edge.relation_type not in {
+            "supports",
+            "challenges",
+            "requires",
+            "qualifies",
+            "contradicts",
+            "derived_from",
+        }:
+            continue
         for ref in (edge.source_ref, edge.target_ref):
             if ref.startswith("node-claim:"):
                 covered.add(ref.removeprefix("node-claim:"))
@@ -3379,11 +3711,6 @@ def _evaluate_relation_gate(
     state.provenance_incomplete_node_ids = _provenance_incomplete_material_nodes(
         state, selection
     )
-    material_unselected_ids = [
-        item.node_id
-        for item in state.unselected_node_dispositions
-        if item.counterfactual_material
-    ]
     relation_review_pool_ids = _material_relation_review_pool_ids(
         state,
         selection,
@@ -3397,7 +3724,7 @@ def _evaluate_relation_gate(
         include_material_review_pool=(
             state.spec.role_isolation_mode != "legacy_unverified"
         ),
-        material_unselected_node_ids=material_unselected_ids,
+        explicit_blocking_pairs=_explicit_blocking_relation_pairs(state),
     )
     previous_ids = {candidate.candidate_id for candidate in state.relation_candidates}
     state.relation_candidates = refresh_relation_candidates(
@@ -3601,14 +3928,98 @@ def _prepare_terminal_or_relation(
             candidate.granted_attempt_id = request.attempt_id
         return _grant_new_episode(run_dir, state, request, profile=profile)
 
+    degradation_codes: list[str] = []
     if not readiness.ready:
-        state.controller_action = "await_operator_decision"
-        _save_state(run_dir, state)
-        return NextEpisodeOutcome(
-            run_id=state.run_id,
-            controller_action="await_operator_decision",
-            reason=readiness.reason,
+        relation_clear = (
+            readiness.blocking_inventory_complete
+            and readiness.unresolved_blocking_pair_count == 0
+            and not readiness.undisposed_material_node_ids
         )
+        missing_provenance = set(readiness.provenance_incomplete_node_ids)
+        if (
+            relation_clear
+            and missing_provenance
+            and state.spec.material_provenance_policy == "strict_repair"
+        ):
+            attempted = set(state.provenance_repair_attempted_node_ids)
+            repair_ids = sorted(missing_provenance - attempted)
+            if repair_ids:
+                repair_nodes = [
+                    node for node in state.nodes if node.node_id in repair_ids
+                ]
+                request = build_judge_episode_request(
+                    state.graph(),
+                    repair_nodes,
+                    run_id=state.run_id,
+                    problem=state.spec.problem,
+                    goal=state.spec.goal,
+                    constraints=list(state.spec.constraints),
+                    native_orchestration_allowed=True,
+                    runtime_limits=runtime_limits,
+                    transport_hints={
+                        "profile": profile,
+                        "runtime": "current-codex-app",
+                        "purpose": "provenance_repair",
+                    },
+                    isolation_mode=state.spec.role_isolation_mode,
+                    previous_role_session_ids=[
+                        item.role_session_id
+                        for item in state.role_session_registry
+                        if item.role_session_id is not None
+                    ],
+                    purpose="provenance_repair",
+                )
+                state.provenance_repair_attempted_node_ids = sorted(
+                    attempted.union(repair_ids)
+                )
+                return _grant_new_episode(
+                    run_dir,
+                    state,
+                    request,
+                    profile=profile,
+                )
+            state.provenance_repair_exhausted_node_ids = sorted(
+                missing_provenance
+            )
+            degradation_codes.append("material_provenance_repair_exhausted")
+        elif (
+            relation_clear
+            and missing_provenance
+            and state.spec.material_provenance_policy == "terminal_disclosure"
+        ):
+            degradation_codes.append("material_provenance_disclosed")
+
+        if (
+            relation_clear
+            and readiness.unresolved_coverage_ids
+            and terminal_source == "authorized_synthesis"
+        ):
+            degradation_codes.append("authorized_incomplete_coverage")
+
+        allowed_deficits = bool(degradation_codes) and relation_clear
+        coverage_allowed = (
+            not readiness.unresolved_coverage_ids
+            or "authorized_incomplete_coverage" in degradation_codes
+        )
+        provenance_allowed = (
+            not readiness.provenance_incomplete_node_ids
+            or any(
+                code
+                in {
+                    "material_provenance_disclosed",
+                    "material_provenance_repair_exhausted",
+                }
+                for code in degradation_codes
+            )
+        )
+        if not (allowed_deficits and coverage_allowed and provenance_allowed):
+            state.controller_action = "await_operator_decision"
+            _save_state(run_dir, state)
+            return NextEpisodeOutcome(
+                run_id=state.run_id,
+                controller_action="await_operator_decision",
+                reason=readiness.reason,
+            )
 
     enrichment_ids = set(readiness.eligible_enrichment_candidate_ids)
     enrichment_pending = [
@@ -3695,6 +4106,12 @@ def _prepare_terminal_or_relation(
             graph_revision=state.graph_revision,
             controller_iteration=state.controller_iteration,
             committed_at=_iso(),
+            completeness=("degraded" if degradation_codes else "complete"),
+            degradation_reason_codes=sorted(set(degradation_codes)),
+            unresolved_coverage_ids=list(readiness.unresolved_coverage_ids),
+            provenance_incomplete_node_ids=list(
+                readiness.provenance_incomplete_node_ids
+            ),
         )
         if terminal_action == "run_complete":
             _queue_event(
@@ -4247,8 +4664,7 @@ def _validate_role_isolation(
             or attestation.context_manifest_hash != contract.context_manifest_hash
             or attestation.context_manifest_version != contract.context_manifest_version
             or not attestation.role_session_id
-            or attestation.isolation_attestation_source
-            not in {"runtime_reported", "backend_verified"}
+            or attestation.isolation_attestation_source != "runtime_reported"
         ):
             return attestation, "strict role isolation attestation is missing or mismatched"
         used = {
@@ -4259,6 +4675,11 @@ def _validate_role_isolation(
         if attestation.role_session_id in used:
             return attestation, "strict role isolation reused role_session_id"
     else:
+        if attestation.isolation_attestation_source == "backend_verified":
+            return (
+                attestation,
+                "model/runtime result payload cannot self-assert backend_verified",
+            )
         if (
             contract.isolation_mode == "shared_context_single_agent"
             and attestation == RoleIsolationAttestation()

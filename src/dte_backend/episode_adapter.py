@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import time
 from collections.abc import Callable, Sequence
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 import uuid
 
 from .adapter import ExecutorAdapter, build_subprocess_adapter, validate_search_node_output
@@ -140,6 +140,7 @@ def build_judge_episode_request(
     transport_hints: dict[str, Any] | None = None,
     isolation_mode: RoleIsolationMode = "legacy_unverified",
     previous_role_session_ids: list[str] | None = None,
+    purpose: Literal["initial_scoring", "provenance_repair"] = "initial_scoring",
 ) -> EpisodeRequest:
     """Create one bounded observable Judge grant from committed frontier nodes."""
 
@@ -164,8 +165,13 @@ def build_judge_episode_request(
     selected_inputs: list[JudgeNodeInput] = []
     canonical_map: dict[str, str] = {}
     for index, node in enumerate(ordered_nodes, 1):
-        if node.status != "frontier" or node.node_id not in graph.node_revisions:
-            raise ValueError("Judge grants require committed frontier nodes")
+        allowed_statuses = (
+            {"frontier"}
+            if purpose == "initial_scoring"
+            else {"frontier", "closed"}
+        )
+        if node.status not in allowed_statuses or node.node_id not in graph.node_revisions:
+            raise ValueError("Judge grants require eligible committed nodes")
         alias = (
             node.node_id
             if isolation_mode == "legacy_unverified"
@@ -197,10 +203,28 @@ def build_judge_episode_request(
         role="judge",
         input_graph_revision=graph.revision,
         selected_node_revisions=selected_revisions,
-        objective=f"Judge research potential for: {goal}",
+        objective=(
+            f"Judge research potential for: {goal}"
+            if purpose == "initial_scoring"
+            else (
+                "Record structured provenance, evidence references, assumptions, "
+                "limitations, dependencies, and path dispositions for already "
+                "committed material claims; do not rescore or verify them"
+            )
+        ),
         coverage_requirements=[
-            "score every granted node exactly once",
-            "state observable reasoning and material risks",
+            *(
+                [
+                    "score every granted node exactly once",
+                    "state observable reasoning and material risks",
+                ]
+                if purpose == "initial_scoring"
+                else [
+                    "return no Judge score observations",
+                    "use epistemic_contributions only for the granted committed nodes",
+                    "record inability to supply provenance by leaving a node incomplete; do not manufacture filler",
+                ]
+            ),
             "submit optional epistemic_contributions only for material assumptions, support gaps, challenges, conditionality, or unresolved dependencies",
             "use machine references and explicit source_type; do not turn a low score into contradiction or claim backend verification",
             "do not return controller-owned geometry, allocation, revision, stopping, or synthesis fields",
@@ -213,12 +237,17 @@ def build_judge_episode_request(
         transport_hints=transport_hints,
         required_parent_id_on_children=False,
         judge_payload=JudgeEpisodePayload(
+            purpose=purpose,
             rubric_version=rubric_version,
             problem=problem,
             goal=goal,
             constraints=constraints or [],
             selected_frontier_nodes=selected_inputs,
-            required_output_fields=["node_id", "score", "reasoning", "risks"],
+            required_output_fields=(
+                ["node_id", "score", "reasoning", "risks"]
+                if purpose == "initial_scoring"
+                else []
+            ),
         ),
     )
     request._canonical_node_id_map = canonical_map

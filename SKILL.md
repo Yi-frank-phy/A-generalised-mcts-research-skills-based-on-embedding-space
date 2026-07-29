@@ -60,13 +60,47 @@ entrypoints are subject to the same production-path restrictions.
 
 Use `hook-driver control` for explicit retry, cancellation, and synthesis requests. A retry must use the newly granted `attempt_id`; late output from cancelled, expired, failed, superseded, rejected, or committed attempts cannot be resubmitted as success. Direct App mutator CLIs are legacy/development interfaces and fail closed for `hook_enforced_v1` runs.
 
+Every request carries a versioned role execution contract. Payload filtering is
+not context isolation. In `strict_fresh_context`, execute Judge, Executor,
+Relation, and any natural-language Synthesis in a genuinely fresh role session
+and return the runtime-reported session ID plus the exact request manifest hash.
+The request states a requirement and never pre-claims verification.
+Model-authored output may use host `runtime_reported` attestation, but must
+never self-assert `backend_verified`; DTE cannot prove hidden provider-internal
+isolation when the host exposes no stronger primitive.
+Missing, mismatched, or reused proof must be submitted as failure; do not retry
+it as shared isolation. The current App main conversation is
+`shared_context_single_agent`: it may be used only when that fallback is
+explicit in the RunSpec, must return `isolation_verified=false`, and must be
+reported as correlated-error risk rather than independent review.
+
 The main agent may reason, use tools, and delegate native subagents inside the request. For a sufficiently complex episode, it should decompose work according to the problem, parallelize independent routes, avoid redundant internal branches, reconcile disagreements, and return one integrated role-valid result. No fixed subagent count or topology is required. It must not choose global allocation, hand-fill controller fields, directly edit graph state, skip submit validation, or substitute a chat/Markdown answer for committed output. Keep progress concise. Do not expose or reconstruct internal subagent names, routing, transcripts, hidden reasoning, tokens, quota, or a complete hidden topology. Aggregate runtime diagnostics may be used only when the provider/runtime or main agent explicitly reports them; otherwise they remain `null` with source `unavailable`.
 
 Keep episode purposes isolated:
 
-- Judge independently evaluates research potential, risks, and uncertainty and does not expand new research nodes.
+- Judge evaluates only its blinded granted material, risks, and uncertainty and does not expand new research nodes. The word “independent” is reserved for an attested fresh context.
 - Executor develops the backend-granted branch and may explore independent routes internally, but does not score or allocate.
 - Relation compares only granted pairs, does not verify correctness, and does not select a scientific winner.
+
+Judge aliases must be echoed exactly. Relation v2 receives only blinded node
+material and direct evidence; never reconstruct or request backend selection,
+materiality, priority, candidate-reason, or Judge fields. The backend reattaches
+those scheduling facts after classification.
+
+Material Synthesis scope is not the same as the maximum-eight presentation
+headline scope. Omitted-node dispositions use marginal coverage, assumptions,
+evidence, limitations, counterexamples, dependencies, conflicts, and distinct
+claims rather than Judge score alone. Empty `epistemic_contributions` may be
+valid: default policy discloses missing material provenance at degraded
+terminal; strict policy grants one provenance-only repair and then discloses
+exhaustion. Natural synthesis remains coverage-blocked, while an authorized
+forced synthesis at a safe boundary records unresolved coverage and stops.
+
+`hook-driver init` is idempotent for a stable invocation key. Use
+`--replay-of-run-id <run-id>` for an explicit rerun; add
+`--invocation-nonce <nonce>` only when the caller intentionally needs a
+distinct invocation. A replay must retain its source lineage and is not a new
+independent verification.
 
 Judge and Executor may return optional `epistemic_contributions` only when they
 carry high-signal information. Do not fill the schema with generic assumptions.
@@ -99,11 +133,13 @@ The command atomically materializes `observability-summary.json`,
 `epistemic-summary.json`, and `terminal-handoff.json`. Read all three before the
 main-agent report.
 
-Read the operational summary, provisional selection, Relation disclosures, and
-epistemic handoff before reporting. The handoff covers provisional-selected node
-claims, not an audited final natural-language answer, and this App path does not
-require a final Synthesis episode. Give the user a compact epistemic section in
-this order:
+Read the operational summary, material/headline selection, every unselected-node
+disposition, isolation facts, replay lineage, Relation disclosures, and
+epistemic handoff before reporting. The handoff covers material claims,
+dependencies, and explicit disclosures; it excludes undisclosed nonmaterial
+node content. It is not an audited final natural-language answer, and this App
+path does not require a final Synthesis episode. Give the user a compact
+epistemic section in this order:
 
 - current most credible conclusion;
 - key dependency assumptions;

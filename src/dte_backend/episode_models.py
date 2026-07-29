@@ -6,11 +6,15 @@ import hashlib
 import json
 from typing import Any, Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, PrivateAttr, model_validator
 
 from .epistemic_models import EpistemicContributionBundle
 from .models import DTEBaseModel
-from .relation_models import RelationEpisodeOutput, RelationEpisodePayload
+from .relation_models import (
+    BlindRelationEpisodePayload,
+    RelationEpisodeOutput,
+    RelationEpisodePayload,
+)
 
 
 EpisodeRole = Literal["executor", "seed", "judge", "relation", "synthesis"]
@@ -24,6 +28,83 @@ DiagnosticsSource = Literal[
     "unavailable",
 ]
 PolicySelector = Literal["user", "main_agent", "run_default"]
+RoleIsolationMode = Literal[
+    "strict_fresh_context",
+    "shared_context_single_agent",
+    "legacy_unverified",
+]
+IsolationAttestationSource = Literal[
+    "runtime_reported",
+    "backend_verified",
+    "backend_fallback",
+    "legacy_unverified",
+]
+
+
+class RoleExecutionContract(DTEBaseModel):
+    """Request-side, versioned role-context isolation requirements."""
+
+    schema_version: Literal["dte-role-execution-contract.v1"] = (
+        "dte-role-execution-contract.v1"
+    )
+    isolation_mode: RoleIsolationMode = "legacy_unverified"
+    context_manifest_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    context_manifest_version: Literal["dte-role-context-manifest.v1"] = (
+        "dte-role-context-manifest.v1"
+    )
+    isolation_attestation_source: IsolationAttestationSource = "legacy_unverified"
+    visible_input_refs: list[str] = Field(default_factory=list)
+    previous_role_session_ids: list[str] = Field(default_factory=list)
+    fresh_context_required: bool = False
+    isolation_verified: bool = False
+
+    @model_validator(mode="after")
+    def validate_mode(self) -> "RoleExecutionContract":
+        if self.isolation_mode == "strict_fresh_context":
+            if not self.fresh_context_required:
+                raise ValueError("strict_fresh_context must require a fresh context")
+            if self.isolation_verified:
+                raise ValueError(
+                    "request contract cannot pre-claim verified isolation"
+                )
+        elif self.fresh_context_required or self.isolation_verified:
+            raise ValueError(
+                "shared or legacy role contexts cannot require or claim fresh isolation"
+            )
+        return self
+
+
+class RoleIsolationAttestation(DTEBaseModel):
+    """Runtime-returned facts; never presented as provider-internal proof."""
+
+    schema_version: Literal["dte-role-isolation-attestation.v1"] = (
+        "dte-role-isolation-attestation.v1"
+    )
+    isolation_mode: RoleIsolationMode = "legacy_unverified"
+    role_session_id: str | None = None
+    context_manifest_hash: str | None = Field(
+        default=None, pattern=r"^[0-9a-f]{64}$"
+    )
+    context_manifest_version: Literal["dte-role-context-manifest.v1"] = (
+        "dte-role-context-manifest.v1"
+    )
+    isolation_attestation_source: IsolationAttestationSource = "legacy_unverified"
+    isolation_verified: bool = False
+
+    @model_validator(mode="after")
+    def validate_mode(self) -> "RoleIsolationAttestation":
+        if self.isolation_mode == "strict_fresh_context":
+            if (
+                not self.isolation_verified
+                or not self.role_session_id
+                or not self.context_manifest_hash
+                or self.isolation_attestation_source
+                not in {"runtime_reported", "backend_verified"}
+            ):
+                raise ValueError("strict isolation requires complete fresh-context attestation")
+        elif self.isolation_verified:
+            raise ValueError("shared or legacy attestation cannot claim verified isolation")
+        return self
 
 
 class RuntimeLimits(DTEBaseModel):
@@ -58,6 +139,7 @@ class ExecutorParentContext(DTEBaseModel):
     evidence: list[str] = Field(default_factory=list)
     risks: list[str] = Field(default_factory=list)
     parent_ids: list[str] = Field(default_factory=list)
+    coverage_ids: list[str] = Field(default_factory=list)
     confidence: float = Field(default=0.5, ge=0.0, le=1.0)
 
 
@@ -78,6 +160,7 @@ class ExecutorNodeCandidate(DTEBaseModel):
     evidence: list[str] = Field(default_factory=list)
     risks: list[str] = Field(default_factory=list)
     parent_ids: list[str] = Field(default_factory=list)
+    coverage_ids: list[str] = Field(default_factory=list)
     confidence: float = Field(default=0.5, ge=0.0, le=1.0)
     status: Literal["frontier"] = "frontier"
 
@@ -103,6 +186,7 @@ class JudgeNodeInput(DTEBaseModel):
 
 
 class JudgeEpisodePayload(DTEBaseModel):
+    purpose: Literal["initial_scoring", "provenance_repair"] = "initial_scoring"
     rubric_version: str = Field(min_length=1)
     problem: str = Field(min_length=1)
     goal: str = Field(min_length=1)
@@ -131,7 +215,7 @@ class JudgeObservation(DTEBaseModel):
 
 
 class JudgeEpisodeOutput(DTEBaseModel):
-    observations: list[JudgeObservation] = Field(min_length=1)
+    observations: list[JudgeObservation] = Field(default_factory=list)
     epistemic_contributions: EpistemicContributionBundle | None = None
 
 
@@ -183,6 +267,8 @@ class RuntimeDiagnostics(DTEBaseModel):
 
 
 class EpisodeRequest(DTEBaseModel):
+    _canonical_node_id_map: dict[str, str] = PrivateAttr(default_factory=dict)
+
     episode_id: str = Field(min_length=1)
     attempt_id: str = Field(min_length=1)
     run_id: str = Field(min_length=1)
@@ -203,7 +289,12 @@ class EpisodeRequest(DTEBaseModel):
     required_parent_id_on_children: bool = True
     executor_payload: ExecutorEpisodePayload | None = None
     judge_payload: JudgeEpisodePayload | None = None
-    relation_payload: RelationEpisodePayload | None = None
+    relation_payload: RelationEpisodePayload | BlindRelationEpisodePayload | None = None
+    role_execution_contract: RoleExecutionContract = Field(
+        default_factory=lambda: RoleExecutionContract(
+            context_manifest_hash="0" * 64
+        )
+    )
 
     @model_validator(mode="after")
     def validate_role_payload(self) -> "EpisodeRequest":
@@ -304,6 +395,9 @@ class EpisodeResult(DTEBaseModel):
     runtime_diagnostics: RuntimeDiagnostics
     output_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     schema_version: str = Field(min_length=1)
+    role_isolation_attestation: RoleIsolationAttestation = Field(
+        default_factory=RoleIsolationAttestation
+    )
 
     @model_validator(mode="after")
     def validate_completion_shape(self) -> "EpisodeResult":
@@ -334,6 +428,41 @@ def canonical_json_bytes(value: Any) -> bytes:
         separators=(",", ":"),
         allow_nan=False,
     ).encode("utf-8")
+
+
+def compute_role_context_manifest_hash(request: EpisodeRequest) -> str:
+    """Hash the exact serialized role-visible request, excluding its own digest."""
+
+    payload = request.model_dump(mode="json")
+    contract = dict(payload["role_execution_contract"])
+    contract.pop("context_manifest_hash", None)
+    payload["role_execution_contract"] = contract
+    return hashlib.sha256(canonical_json_bytes(payload)).hexdigest()
+
+
+def bind_role_execution_contract(
+    request: EpisodeRequest,
+    *,
+    isolation_mode: RoleIsolationMode,
+    previous_role_session_ids: list[str] | None = None,
+) -> EpisodeRequest:
+    """Attach the final request-side isolation contract and its manifest digest."""
+
+    request.role_execution_contract = RoleExecutionContract(
+        isolation_mode=isolation_mode,
+        context_manifest_hash="0" * 64,
+        # This is a requirement, not a runtime fact.  Verification is attached
+        # only after transport/runtime attestation is validated at submission.
+        isolation_attestation_source="legacy_unverified",
+        visible_input_refs=sorted(request.selected_node_revisions),
+        previous_role_session_ids=sorted(set(previous_role_session_ids or [])),
+        fresh_context_required=isolation_mode == "strict_fresh_context",
+        isolation_verified=False,
+    )
+    request.role_execution_contract.context_manifest_hash = (
+        compute_role_context_manifest_hash(request)
+    )
+    return request
 
 
 def compute_output_hash(

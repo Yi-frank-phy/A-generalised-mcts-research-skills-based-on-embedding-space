@@ -34,6 +34,9 @@ class ContinuationGateRecord(DTEBaseModel):
     consecutive_plateau_count: int = Field(ge=0)
     plateau_confirmed: bool
     trigger_signals: list[str] = Field(default_factory=list)
+    process_yield_signals: list[str] = Field(default_factory=list)
+    epistemic_yield_signals: list[str] = Field(default_factory=list)
+    coverage_yield_signals: list[str] = Field(default_factory=list)
     material_yield_signals: list[str] = Field(default_factory=list)
     considered_epistemic_record_ids: list[str] = Field(default_factory=list)
     material_epistemic_record_ids: list[str] = Field(default_factory=list)
@@ -177,6 +180,7 @@ def evaluate_continuation_gate(
     provisional_synthesis_node_ids: list[str],
     ledger: EpistemicLedgerV1,
     previously_considered_epistemic_ids: set[str],
+    legacy_process_yield_allowed: bool = True,
 ) -> ContinuationGateRecord:
     """Evaluate one bounded continuation decision from committed facts."""
 
@@ -194,18 +198,33 @@ def evaluate_continuation_gate(
     if len(frontier_ids) == 1:
         trigger_signals.append("single_canonical_frontier")
 
-    material_signals: list[str] = []
+    process_signals: list[str] = []
+    coverage_signals: list[str] = []
     targets: set[str] = set()
     new_allocated = sorted((positive_set - previous_frontier_node_ids) & frontier_set)
     if new_allocated:
-        material_signals.append("new_judge_surviving_allocated_node")
-        targets.update(new_allocated)
+        process_signals.append("new_judge_surviving_allocated_node")
     if positive_set != previous_positive_allocation_node_ids:
-        material_signals.append("positive_allocation_support_changed")
-        targets.update(positive_set)
+        process_signals.append("positive_allocation_support_changed")
     if provisional_set != previous_provisional_synthesis_node_ids:
-        material_signals.append("provisional_synthesis_membership_changed")
-        targets.update(provisional_set & positive_set)
+        process_signals.append("provisional_synthesis_membership_changed")
+        by_id = {node.node_id: node for node in nodes}
+        previous_coverage = {
+            coverage_id
+            for node_id in previous_provisional_synthesis_node_ids
+            if node_id in by_id
+            for coverage_id in by_id[node_id].coverage_ids
+        }
+        current_coverage = {
+            coverage_id
+            for node_id in provisional_set
+            if node_id in by_id
+            for coverage_id in by_id[node_id].coverage_ids
+        }
+        for coverage_id in sorted(current_coverage - previous_coverage):
+            coverage_signals.append(f"required_coverage_gain:{coverage_id}")
+        if coverage_signals:
+            targets.update(provisional_set & positive_set)
 
     considered_ids, material_ids, epistemic_signals, epistemic_targets = (
         _new_material_epistemic_signals(
@@ -213,7 +232,11 @@ def evaluate_continuation_gate(
             previously_considered_ids=previously_considered_epistemic_ids,
         )
     )
-    material_signals.extend(epistemic_signals)
+    material_signals = [*epistemic_signals, *coverage_signals]
+    if legacy_process_yield_allowed:
+        material_signals = [*process_signals, *material_signals]
+        if process_signals:
+            targets.update(positive_set)
     targets.update(epistemic_targets & positive_set)
     targets &= frontier_set
 
@@ -238,6 +261,9 @@ def evaluate_continuation_gate(
         consecutive_plateau_count=consecutive_plateau_count,
         plateau_confirmed=plateau_confirmed,
         trigger_signals=trigger_signals,
+        process_yield_signals=process_signals,
+        epistemic_yield_signals=epistemic_signals,
+        coverage_yield_signals=coverage_signals,
         material_yield_signals=material_signals,
         considered_epistemic_record_ids=considered_ids,
         material_epistemic_record_ids=material_ids,

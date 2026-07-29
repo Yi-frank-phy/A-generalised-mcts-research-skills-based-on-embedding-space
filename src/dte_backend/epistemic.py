@@ -81,17 +81,83 @@ def _merge_projections(state: AppRunState) -> list[MergeEpistemicProjectionV1]:
     ]
 
 
-def _dependency_graph(state: AppRunState) -> EpistemicDependencyGraphV1:
+def _handoff_visible_node_ids(state: AppRunState) -> set[str]:
+    if state.spec.role_isolation_mode == "legacy_unverified":
+        return {node.node_id for node in state.nodes}
+    visible = set(_selected_ids(state))
+    visible.update(
+        item.node_id
+        for item in state.unselected_node_dispositions
+        if item.disclosure_required
+    )
+    visible.update(
+        node_id
+        for record in state.relation_ledger
+        if record.disclosure_required
+        for node_id in (record.left_node_id, record.right_node_id)
+    )
+    changed = True
+    while changed:
+        changed = False
+        for application in state.merge_applications:
+            if application.canonical_node_id not in visible:
+                continue
+            before = len(visible)
+            visible.update(application.source_node_ids)
+            changed = changed or len(visible) != before
+    return visible
+
+
+def _dependency_graph(
+    state: AppRunState,
+    visible_node_ids: set[str],
+) -> EpistemicDependencyGraphV1:
+    statements = [
+        item
+        for item in state.epistemic_ledger.statements
+        if item.target_node_id in visible_node_ids
+    ]
+    statement_ids = {item.statement_id for item in statements}
+
+    def visible_ref(ref: str) -> bool:
+        if ref.startswith("node-claim:"):
+            return ref.removeprefix("node-claim:") in visible_node_ids
+        if ref.startswith("epistemic:"):
+            return ref.removeprefix("epistemic:") in statement_ids
+        return True
+
     return EpistemicDependencyGraphV1(
         run_id=state.run_id,
-        node_claim_refs=[f"node-claim:{node.node_id}" for node in state.nodes],
-        statements=[item.model_copy(deep=True) for item in state.epistemic_ledger.statements],
-        edges=[item.model_copy(deep=True) for item in state.epistemic_ledger.edges],
-        path_dispositions=[
-            item.model_copy(deep=True) for item in state.epistemic_ledger.path_dispositions
+        node_claim_refs=[
+            f"node-claim:{node.node_id}"
+            for node in state.nodes
+            if node.node_id in visible_node_ids
         ],
-        relation_projections=_relation_projections(state),
-        merge_projections=_merge_projections(state),
+        statements=[item.model_copy(deep=True) for item in statements],
+        edges=[
+            item.model_copy(deep=True)
+            for item in state.epistemic_ledger.edges
+            if visible_ref(item.source_ref)
+            and visible_ref(item.target_ref)
+            and all(visible_ref(ref) for ref in item.basis_refs)
+        ],
+        path_dispositions=[
+            item.model_copy(deep=True)
+            for item in state.epistemic_ledger.path_dispositions
+            if item.target_node_id in visible_node_ids
+        ],
+        relation_projections=[
+            item
+            for item in _relation_projections(state)
+            if item.left_node_id in visible_node_ids
+            and item.right_node_id in visible_node_ids
+        ],
+        merge_projections=[
+            item
+            for item in _merge_projections(state)
+            if item.canonical_node_id in visible_node_ids
+            and set(item.source_node_ids).issubset(visible_node_ids)
+        ],
     )
 
 
@@ -99,7 +165,7 @@ def _selected_ids(state: AppRunState) -> list[str]:
     return (
         []
         if state.provisional_synthesis_selection is None
-        else list(state.provisional_synthesis_selection.selected_node_ids)
+        else list(state.provisional_synthesis_selection.material_scope_node_ids)
     )
 
 
@@ -336,6 +402,7 @@ def _selected_claim(
 def _node_summaries(
     state: AppRunState,
     selected_claims: dict[str, SelectedClaimHandoffV1],
+    visible_node_ids: set[str],
 ) -> list[NodeEpistemicSummaryV1]:
     statements_by_node: dict[str, list[EpistemicStatementRecordV1]] = defaultdict(list)
     dispositions_by_node = defaultdict(list)
@@ -346,6 +413,8 @@ def _node_summaries(
     summaries = []
     selected = set(selected_claims)
     for node in state.nodes:
+        if node.node_id not in visible_node_ids:
+            continue
         claim = selected_claims.get(node.node_id)
         relations = [
             item.relation_record_id
@@ -623,13 +692,14 @@ def _statement_lists(
 def _important_paths(
     state: AppRunState,
     selected_ids: set[str],
+    visible_node_ids: set[str],
 ) -> list[ImportantPathHandoffV1]:
     result = []
     dispositions = defaultdict(list)
     for item in state.epistemic_ledger.path_dispositions:
         dispositions[item.target_node_id].append(item)
     for node in state.nodes:
-        if node.node_id in selected_ids:
+        if node.node_id in selected_ids or node.node_id not in visible_node_ids:
             continue
         records = dispositions[node.node_id]
         search = _search_dispositions(state, node.node_id)
@@ -672,7 +742,8 @@ def build_terminal_epistemic_handoff(
     # Reuse the existing deterministic operational read model as required by
     # the handoff contract.  Its value is not copied into a second fact source.
     operational_summary = build_run_observability_summary(directory)
-    dependency_graph = _dependency_graph(state)
+    visible_node_ids = _handoff_visible_node_ids(state)
+    dependency_graph = _dependency_graph(state, visible_node_ids)
     selected = [_selected_claim(state, node_id) for node_id in _selected_ids(state)]
     selected_by_id = {item.node_id: item for item in selected}
     (
@@ -814,7 +885,7 @@ def build_terminal_epistemic_handoff(
             {ref for item in selected for ref in item.counterexample_refs}
         ),
         important_abandoned_or_inconclusive_paths=_important_paths(
-            state, set(selected_by_id)
+            state, set(selected_by_id), visible_node_ids
         ),
         possible_transferable_heuristics=heuristics,
         transferable_failure_modes=failure_modes,
@@ -826,7 +897,9 @@ def build_terminal_epistemic_handoff(
             backend_derived_record_count=source_counts["backend_derived"],
         ),
         independence_summary=independence,
-        node_summaries=_node_summaries(state, selected_by_id),
+        node_summaries=_node_summaries(
+            state, selected_by_id, visible_node_ids
+        ),
         dependency_graph=dependency_graph,
         data_quality=EpistemicDataQualityV1(
             epistemic_data_status=data_status,
@@ -844,6 +917,43 @@ def build_terminal_epistemic_handoff(
                 operational_summary.data_quality.limitations
             ),
             limitations=limitations,
+        ),
+        isolation_mode_by_role=operational_summary.run.isolation_mode_by_role,
+        role_session_hashes=operational_summary.run.role_session_hashes,
+        context_manifest_hashes_by_role=(
+            operational_summary.run.context_manifest_hashes_by_role
+        ),
+        cross_role_session_reuse_count=(
+            operational_summary.run.cross_role_session_reuse_count
+        ),
+        isolation_verified=operational_summary.run.isolation_verified,
+        correlated_error_risk=operational_summary.run.correlated_error_risk,
+        material_synthesis_scope=operational_summary.run.material_synthesis_scope,
+        presentation_headline_scope=(
+            operational_summary.run.presentation_headline_scope
+        ),
+        unselected_node_dispositions=(
+            operational_summary.run.unselected_node_dispositions
+        ),
+        provenance_incomplete_node_ids=(
+            operational_summary.run.provenance_incomplete_node_ids
+        ),
+        terminal_completeness=operational_summary.run.terminal_completeness,
+        terminal_degradation_reason_codes=(
+            operational_summary.run.terminal_degradation_reason_codes
+        ),
+        unresolved_coverage_ids=operational_summary.run.unresolved_coverage_ids,
+        material_relation_pairs_omitted_for_budget=(
+            operational_summary.run.material_relation_pairs_omitted_for_budget
+        ),
+        hook_trigger_source=operational_summary.run.hook_trigger_source,
+        hook_invocation_key=operational_summary.run.hook_invocation_key,
+        replay_of_run_id=operational_summary.run.replay_of_run_id,
+        source_episode_result_hashes=(
+            operational_summary.run.source_episode_result_hashes
+        ),
+        model_execution_disposition=(
+            operational_summary.run.model_execution_disposition
         ),
     )
 

@@ -54,6 +54,12 @@ def evaluate_synthesis_readiness(
     enrichment_budget_limit: int = 0,
     enrichment_pairs_committed: int = 0,
     eligible_enrichment_candidate_ids: list[str] | None = None,
+    material_scope_node_ids: list[str] | None = None,
+    presentation_headline_node_ids: list[str] | None = None,
+    unresolved_coverage_ids: list[str] | None = None,
+    undisposed_material_node_ids: list[str] | None = None,
+    provenance_incomplete_node_ids: list[str] | None = None,
+    budget_skipped_enrichment_pair_ids: list[str] | None = None,
 ) -> SynthesisReadinessRecord:
     """Evaluate a complete current blocker inventory and separate enrichment."""
 
@@ -174,9 +180,24 @@ def evaluate_synthesis_readiness(
     unresolved_conflict_ids = sorted({record.relation_record_id for record in unresolved_conflicts})
     remaining = max(0, enrichment_budget_limit - enrichment_pairs_committed)
     eligible_enrichment_ids = sorted(set(eligible_enrichment_candidate_ids or []))
-    ready = inventory_complete and unresolved_blocking_pair_count == 0
+    missing_coverage = sorted(set(unresolved_coverage_ids or []))
+    undisposed_material = sorted(set(undisposed_material_node_ids or []))
+    incomplete_provenance = sorted(set(provenance_incomplete_node_ids or []))
+    ready = (
+        inventory_complete
+        and unresolved_blocking_pair_count == 0
+        and not missing_coverage
+        and not undisposed_material
+        and not incomplete_provenance
+    )
     enrichment_pending = ready and remaining > 0 and bool(eligible_enrichment_ids)
-    if not inventory_complete:
+    if missing_coverage:
+        reason = "required synthesis coverage remains unresolved"
+    elif undisposed_material:
+        reason = "material unselected nodes lack durable dispositions"
+    elif incomplete_provenance:
+        reason = "material synthesis nodes have incomplete epistemic provenance"
+    elif not inventory_complete:
         reason = "blocking Relation inventory is incomplete"
     elif blockers:
         reason = "blocking Relation candidates or confirmed-but-unapplied equivalent merges remain"
@@ -189,6 +210,20 @@ def evaluate_synthesis_readiness(
     return SynthesisReadinessRecord(
         graph_revision=graph_revision,
         provisional_selected_node_ids=list(provisional_selected_node_ids),
+        material_scope_node_ids=sorted(set(material_scope_node_ids or provisional_selected_node_ids)),
+        presentation_headline_node_ids=sorted(
+            set(presentation_headline_node_ids or provisional_selected_node_ids)
+        ),
+        unresolved_coverage_ids=missing_coverage,
+        undisposed_material_node_ids=undisposed_material,
+        provenance_incomplete_node_ids=incomplete_provenance,
+        resolved_material_pair_ids=sorted(
+            blocking_obligation_ids - unresolved_candidate_ids
+        ),
+        unresolved_material_pair_ids=blockers,
+        budget_skipped_enrichment_pair_ids=sorted(
+            set(budget_skipped_enrichment_pair_ids or [])
+        ),
         blocking_inventory_complete=inventory_complete,
         blocking_pair_count=blocking_pair_count,
         resolved_blocking_pair_count=resolved_blocking_pair_count,

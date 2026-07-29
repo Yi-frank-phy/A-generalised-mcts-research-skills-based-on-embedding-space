@@ -7,17 +7,24 @@
       "title": "Action",
       "type": "string"
     },
+    "node_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Node Ids",
+      "type": "array"
+    },
+    "reason": {
+      "minLength": 1,
+      "title": "Reason",
+      "type": "string"
+    },
     "requested_by": {
       "enum": [
         "user",
         "main_agent"
       ],
       "title": "Requested By",
-      "type": "string"
-    },
-    "reason": {
-      "minLength": 1,
-      "title": "Reason",
       "type": "string"
     },
     "scope": {
@@ -28,13 +35,6 @@
       ],
       "title": "Scope",
       "type": "string"
-    },
-    "node_ids": {
-      "items": {
-        "type": "string"
-      },
-      "title": "Node Ids",
-      "type": "array"
     }
   },
   "required": [

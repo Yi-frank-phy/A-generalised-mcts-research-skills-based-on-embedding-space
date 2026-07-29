@@ -169,7 +169,19 @@ Seed or Executor episodes must not pre-fill these fields.
 
 ## 6. Logical phases
 
-Logical role separation does not imply one physical model call per role.
+Logical role separation does not imply one physical model call per role, and a
+role-specific payload does not by itself isolate execution context. A run must
+record `strict_fresh_context`, `shared_context_single_agent`, or
+`legacy_unverified` for every role episode. Role labels must never be described
+as independent review unless the runtime supplies a fresh role-session
+attestation that the backend accepts.
+
+The request contract records `fresh_context_required=true` but never
+pre-claims verification. Verification is a committed transport/runtime fact.
+Model-authored results may report only `runtime_reported`; they cannot grant
+themselves `backend_verified`, which is reserved for a trusted adapter path
+outside structured model output. DTE validates only host-exposed attestations,
+not hidden provider-internal context state.
 
 ### Phase A: Seed
 
@@ -189,7 +201,12 @@ Seed output must:
 
 Score SearchNodes. The Judge may be implemented by a strong model episode. It returns observable scores, reasons, evidence gaps, and risk notes. It does not expose hidden vectors, allocate budget, create children, or synthesize the final answer.
 
-Judge context must be logically isolated from the Executor episode being judged. Physical implementation may reuse the same base model, but it must use a separate role contract and bounded input context.
+Judge receives only its blinded grant, rubric, run problem/goal, constraints,
+and allowed evidence. In `strict_fresh_context`, it must execute in a fresh
+role session whose returned session ID has not appeared in the run and whose
+manifest hash matches the exact serialized request. A shared main conversation
+is `shared_context_single_agent`, not isolation; its results carry a
+correlated-error-risk disclosure.
 
 ### Phase C: EvolutionController
 
@@ -221,12 +238,40 @@ Relation is not a mandatory blocking step for every candidate pair. Recommended 
 - exact deterministic duplicates may be handled immediately;
 - embedding-close or near-tied branches create optional/high-priority Relation tasks;
 - entropy plateau increases Relation priority;
-- unresolved material conflicts among branches selected for synthesis must either be resolved or explicitly disclosed;
+- unresolved material conflicts in the material review pool must either be resolved or explicitly disclosed;
 - the mere existence of a Relation candidate must not automatically forbid synthesis.
 
-The App-native implementation first selects a deterministic provisional synthesis branch set (at most eight nodes), completely enumerates every selected-selected exact-duplicate and potential-material-conflict obligation, and persists that blocking inventory before evaluating readiness. This is a bounded selected-set pass of at most $\binom{8}{2}=28$ pairs, not a whole-graph Cartesian scan. Blocking obligations are never mixed into or truncated by the enrichment candidate window.
+The App-native implementation separates the material synthesis scope from the
+presentation headline scope. Structured required coverage is satisfied first;
+support/challenge dependency closure, material counterexamples, and disclosures
+remain material even when the headline projection is capped at eight nodes.
+Every eligible node outside material scope receives a versioned counterfactual
+disposition. Its materiality audit compares exact structured marginal coverage,
+assumptions, evidence, limitations, counterexamples, dependencies, conflicts,
+and normalized claims; Judge score is not the primary proxy. Required coverage,
+undisposed material nodes, incomplete material provenance, and unresolved
+blocking Relation pairs fail natural readiness closed.
 
-After blockers are cleared, the controller may schedule high-priority semantic enrichment for selected or directly selected-related pairs. Enrichment is ledger-aware before truncation and is capped by the run-level `max_relation_enrichment_pairs` budget (default `3`, `0` disables enrichment). Only a successfully committed nonblocking Relation observation consumes one pair; retry, failure, cancellation, and expiry do not. Blocking work never consumes this budget. Each Relation episode remains independently capped by `max_relation_pairs_per_episode` (default `3`), and every blocking or enrichment grant is node-disjoint: one node may occur in at most one pair in the episode. Candidate identity uses the canonical unordered pair, current node revisions, and scheduling class/reason; a graph revision change alone does not reschedule an already covered pair.
+The material Relation review pool includes material scope, counterfactual-
+material unselected disclosures, dependencies, and counterexamples. Shared
+coverage alone is never a blocking conflict: coverage-overlapping alternatives
+are bounded enrichment unless exact duplication, shared-evidence claim
+divergence, or an explicit challenge/contradiction/counterexample supplies a
+blocking reason. Deterministic node-disjoint batching uses polynomial weighted
+greedy matching plus a bounded one-edge replacement pass. It preserves the
+critical/material/priority/stable-ID preference but does not claim global
+optimality. Enrichment
+is ledger-aware and capped by the run-level
+`max_relation_enrichment_pairs` budget (default `3`, `0` disables enrichment).
+Only a successfully committed nonblocking observation consumes one pair;
+retry, failure, cancellation, and expiry do not. Blocking work never consumes
+this budget.
+
+Oracle-visible Relation v2 input contains only blinded node material, direct
+evidence references, minimal blinded ancestry, the relation labels, and the
+output contract. Selection membership, materiality, priority, candidate reason,
+Judge conclusions, and Judge provenance remain backend-only and are reattached
+after classification.
 
 Readiness is true only when the complete current blocking inventory is registered, its unresolved count is zero, confirmed equivalent merges have been applied, and every material conflict is resolved or represented by an explicit disclosure obligation. Readiness may be true while bounded enrichment remains pending; the sticky terminal action is written only after eligible enrichment is exhausted, absent, or disabled.
 
@@ -234,7 +279,12 @@ Relation observations are committed through `commit_episode_result(...)` into a 
 
 ### Phase F: Synthesis
 
-Compress a DTE-selected graph checkpoint into a report or synthesis node. Synthesis reads validated graph state and recorded evidence. It must not continue open-ended research or silently fill unresolved verification gaps.
+Compress the serialized terminal handoff into a report or synthesis node. In
+strict mode, natural-language Synthesis requires a fresh context whose complete
+input is that handoff. If no isolated Synthesis runtime is available, the
+backend emits only its deterministic report; main-conversation prose is
+unisolated commentary and is not committed Synthesis. Hidden, undisclosed
+unselected node content is absent from the handoff.
 
 ## 7. AgentEpisode boundary
 
@@ -340,7 +390,12 @@ DiscriminatorOracle: conflicting nodes -> discriminator question
 
 These tasks may be implemented by native model episodes and may internally use subagents. They do not provide latent token vectors and do not replace embedding geometry.
 
-Judge, Relation, Executor, and Synthesis must remain logically isolated even when one native runtime executes all of them at different times.
+Judge, Relation, Executor, and Synthesis remain distinct authority contracts.
+Prompt-level role switching inside one conversation is not fresh-context
+isolation. Strict mode fails before scientific commit when the manifest,
+attestation, or fresh role-session identity is missing, mismatched, or reused.
+Shared mode is an explicit unverified fallback and cannot claim independent
+review.
 
 ## 10. Optional evaluator and evidence services
 
@@ -606,8 +661,21 @@ claim. Human-readable output labels this provenance as `artifact_referenced`;
 the persisted `external_artifact_backed` token remains for output-hash and state
 compatibility.
 
-Executor and Judge output may contain one optional bounded
-`epistemic_contributions` object. It supports:
+Executor and Judge output may contain one bounded `epistemic_contributions`
+object. Nonmaterial nodes are not forced to emit filler. A material node with
+no qualifying contribution may still commit useful node content.
+`material_provenance_policy=terminal_disclosure` (the App-native default)
+records missing provenance in an explicit degraded terminal result.
+`strict_repair` grants at most one backend-controlled provenance-only Judge
+repair per missing material node; it cannot rescore nodes or verify truth. If
+repair remains incomplete, the run records exhaustion and terminates degraded
+rather than looping in `await_operator_decision`. It
+supports:
+
+Natural synthesis remains blocked by unresolved required coverage. An
+authorized forced or scoped synthesis request is honored at a synthesis-safe
+checkpoint; omitted coverage is then preserved in the degraded terminal record
+instead of negating the stop command.
 
 ```text
 statement types: claim | assumption | evidence | open_question | failure_mode | heuristic
@@ -668,12 +736,14 @@ The deterministic read-only epistemic model projects committed run state,
 episode results, the epistemic ledger, the existing Relation ledger, merge
 applications, provisional selection, and observability into a terminal
 handoff. It never repairs or rewrites the run. The formal JSON
-handoff traces each provisional-selected node claim through required
+handoff traces each material-scope node claim through required
 assumptions, supporting and challenging records, producer episode/attempt,
 artifacts, Relation conflicts, and merge provenance. Relation classifications
 are referenced from the existing Relation ledger; no second Relation truth is
-created. The handoff describes provisional-selected claims, not an audited
-final natural-language Synthesis answer.
+created. The presentation headline scope is a compact projection only.
+Undisclosed nonmaterial node content is excluded. The handoff describes
+committed material claims and explicit disclosures, not an audited final
+natural-language Synthesis answer.
 
 The handoff also reports correlated-error risk indicators. Model/runtime
 metadata is used only when explicitly persisted; missing metadata remains
@@ -749,6 +819,21 @@ Driver receipts use `dte-hook-receipt.v1`, include
 before/after state hashes and the preceding receipt hash, and are atomically
 written as an append-only reconstructable chain. Timestamps may be recorded for
 operations but never participate in receipt or manifest state identity.
+
+Hook initialization also uses an atomic create-if-absent invocation registry
+keyed by repository and worktree identity, hook type, RunSpec hash,
+initial-node hash, explicit nonce, and replay source where applicable.
+Git identity includes HEAD, the complete index, binary staged/unstaged state,
+untracked nonignored content, and linked-worktree/common-directory identity;
+ignored DTE outputs are excluded. Non-Git activation uses an explicit
+filesystem snapshot fallback. Registry v2 records generation, owner PID/token,
+timestamps, and recovery lineage. A live initializer is never overwritten;
+failed or ownerless generations may be retried deterministically.
+Repeating the same invocation returns the existing run instead of creating a
+nominally independent result. An explicit replay creates a distinct key and
+persists `replay_of_run_id`, source committed-result hashes, trigger source,
+and whether model work was reused, rerun, or unavailable. Replay lineage is
+audit metadata, not evidence of independence.
 
 Before any App call which may persist state, the driver writes a run-external
 internal operation intent. Recovery distinguishes an unchanged authoritative

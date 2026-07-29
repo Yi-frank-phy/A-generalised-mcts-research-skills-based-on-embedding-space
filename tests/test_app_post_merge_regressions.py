@@ -743,7 +743,10 @@ def test_load_recomputes_terminal_relation_inventory_instead_of_trusting_ready_f
     }
     write_raw_state(run_dir, payload)
 
-    with pytest.raises(ValueError, match="cannot be reproduced"):
+    with pytest.raises(
+        ValueError,
+        match="selection disagrees with committed graph ranking|cannot be reproduced",
+    ):
         app_driver.load_app_run(run_dir)
 
 

@@ -9,6 +9,8 @@ Rules:
 - Evaluate evidence and risks.
 - Do not decide deletion/expansion.
 - Do not directly synthesize final answer.
+- For `provenance_repair`, return no scores and only the requested structured
+  provenance; never treat the repair as correctness verification.
 
 Output per node:
 

@@ -49,7 +49,16 @@ Controller-owned fields include score, uncertainty, UCB, expansion budget, and f
 
 ## Role separation
 
-DTE uses logical roles. A single physical model may implement more than one role over time, but each call must obey one role contract at a time.
+DTE uses logical roles. A single physical model may implement more than one role
+over time, but each call must obey one role contract at a time. Role-labelled
+payloads do not erase shared conversation memory and therefore do not by
+themselves provide independent review. Treat a shared main-agent context as
+correlated fallback execution. Only a fresh runtime context with an accepted
+manifest/session attestation may be described as isolated.
+Request-side `fresh_context_required` is a requirement, not a verified fact.
+Model-authored output must never claim `backend_verified`; a
+`runtime_reported` attestation is only a host/runtime claim and does not prove
+hidden provider-internal context isolation.
 
 ### Strategy generation
 
@@ -69,7 +78,11 @@ The Executor expands one assigned parent node. It may research, calculate, write
 
 ### Relation Oracle
 
-The Relation Oracle classifies selected node pairs or node sets. It may return equivalent, complementary, conflict, or independent. It may propose a discriminator question for conflicts. It must not mutate the graph directly.
+The Relation Oracle classifies only backend-granted blinded node pairs. It may
+return equivalent, complementary, conflict, or independent. It must not receive
+or infer synthesis membership, materiality, scheduling priority, candidate
+reason, or previous Judge conclusions. It may propose a discriminator question
+for conflicts. It must not mutate the graph directly.
 
 ### Human intervention
 
@@ -77,7 +90,11 @@ Human questions are short, branch-oriented, and triggered by the main agent when
 
 ### Synthesis
 
-Synthesis compresses validated graph state into a final report. It must preserve assumptions, rejected alternatives, uncertainties, risks, and confidence levels.
+Synthesis compresses the serialized terminal handoff into a final report. Its
+material scope is not limited by the compact headline cap. It must preserve
+assumptions, rejected alternatives, explicit unselected-node disclosures,
+uncertainties, risks, and confidence levels, and it must not recover hidden
+undisclosed nodes from conversation memory.
 
 ## Cache-friendly prompt policy
 
@@ -170,7 +187,11 @@ UCB is not cost-aware by default. Cost is controlled by hard budgets and invocat
 
 ## Relation discipline
 
-Do not call Relation Oracle on every pair by default. Candidate pairs should first be selected by deterministic signals such as exact duplicate claims, close embeddings, near-tied UCB branches, or entropy plateau.
+Do not call Relation Oracle on every pair by default. Shared coverage alone is
+not a conflict. Blocking candidates require exact duplication, shared-evidence
+claim divergence, or explicit challenge/contradiction/counterexample facts;
+coverage alternatives, close embeddings, near-tied UCB branches, and entropy
+plateau are bounded enrichment signals.
 
 ## Required mental model
 

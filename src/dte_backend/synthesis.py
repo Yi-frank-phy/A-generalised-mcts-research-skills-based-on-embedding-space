@@ -12,12 +12,9 @@ def select_provisional_synthesis_nodes(
     graph_revision: int,
     synthesis_request: SynthesisControlRequest | None = None,
     max_nodes: int = 8,
+    required_coverage_ids: list[str] | None = None,
 ) -> ProvisionalSynthesisSelection:
-    """Select a deterministic committed branch set before final Synthesis.
-
-    This extracts the existing report ranking into a reusable backend decision.
-    Merged aliases are excluded so equivalent branches cannot be double-counted.
-    """
+    """Select material science scope first and compact presentation headlines second."""
 
     eligible = [
         node
@@ -29,7 +26,7 @@ def select_provisional_synthesis_nodes(
         eligible = [node for node in eligible if node.node_id in requested]
         reason = "operator-requested committed node scope"
     else:
-        reason = "deterministic report ranking over committed non-merged branches"
+        reason = "coverage-aware material scope with a compact headline projection"
 
     ranked = sorted(
         eligible,
@@ -38,8 +35,67 @@ def select_provisional_synthesis_nodes(
             node.node_id,
         ),
     )
+    by_id = {node.node_id: node for node in eligible}
+    required = sorted(set(required_coverage_ids or []))
+    representatives: list[SearchNode] = []
+    unresolved: list[str] = []
+    for coverage_id in required:
+        candidates = [node for node in ranked if coverage_id in node.coverage_ids]
+        if not candidates:
+            unresolved.append(coverage_id)
+            continue
+        representatives.append(candidates[0])
+
+    material_ids = {node.node_id for node in representatives}
+    support_ids: set[str] = set()
+    stack = list(material_ids)
+    while stack:
+        node_id = stack.pop()
+        node = by_id.get(node_id)
+        if node is None:
+            continue
+        for parent_id in node.parent_ids:
+            if parent_id in by_id and parent_id not in material_ids:
+                material_ids.add(parent_id)
+                support_ids.add(parent_id)
+                stack.append(parent_id)
+
+    required_set = set(required)
+    for node in ranked:
+        if node.node_type != "counterexample":
+            continue
+        if (
+            set(node.parent_ids).intersection(material_ids)
+            or set(node.coverage_ids).intersection(required_set)
+        ):
+            material_ids.add(node.node_id)
+
+    # An empty required-coverage contract is the legacy path.  Preserve its
+    # historical top-N material selection exactly; App-native shared/strict
+    # runs always provide stable seed coverage obligations.
+    if not required:
+        material_ids.update(node.node_id for node in ranked[:max_nodes])
+
+    headline_ids: list[str] = []
+    for node in representatives:
+        if node.node_id in material_ids and node.node_id not in headline_ids:
+            headline_ids.append(node.node_id)
+    for node in ranked:
+        if (
+            node.node_type == "counterexample"
+            and node.node_id in material_ids
+            and node.node_id not in headline_ids
+        ):
+            headline_ids.append(node.node_id)
+    for node in ranked:
+        if node.node_id in material_ids and node.node_id not in headline_ids:
+            headline_ids.append(node.node_id)
+
     return ProvisionalSynthesisSelection(
-        selected_node_ids=[node.node_id for node in ranked[:max_nodes]],
+        selected_node_ids=headline_ids[:max_nodes],
+        material_scope_node_ids=sorted(material_ids),
+        support_dependency_node_ids=sorted(support_ids),
+        unresolved_coverage_ids=unresolved,
         selection_reason=reason,
         selection_revision=graph_revision,
     )

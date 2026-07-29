@@ -374,6 +374,8 @@ def cmd_hook_driver(args: argparse.Namespace) -> None:
                 capability,
                 args.spec,
                 args.nodes,
+                invocation_nonce=args.invocation_nonce,
+                replay_of_run_id=args.replay_of_run_id,
             )
         elif operation == "step":
             receipt = step_session(session_id, turn_id, capability)
@@ -626,6 +628,8 @@ def build_parser() -> argparse.ArgumentParser:
     driver_init = driver_sub.add_parser("init")
     driver_init.add_argument("--spec", required=True)
     driver_init.add_argument("--nodes", required=True)
+    driver_init.add_argument("--invocation-nonce")
+    driver_init.add_argument("--replay-of-run-id")
 
     driver_sub.add_parser("step")
 

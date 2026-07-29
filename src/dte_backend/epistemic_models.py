@@ -519,3 +519,28 @@ class TerminalEpistemicHandoffV1(DTEBaseModel):
     node_summaries: list[NodeEpistemicSummaryV1]
     dependency_graph: EpistemicDependencyGraphV1
     data_quality: EpistemicDataQualityV1
+    isolation_mode_by_role: dict[str, list[str]] = Field(default_factory=dict)
+    role_session_hashes: list[str] = Field(default_factory=list)
+    context_manifest_hashes_by_role: dict[str, list[str]] = Field(
+        default_factory=dict
+    )
+    cross_role_session_reuse_count: int = Field(default=0, ge=0)
+    isolation_verified: bool = False
+    correlated_error_risk: bool = False
+    material_synthesis_scope: list[str] = Field(default_factory=list)
+    presentation_headline_scope: list[str] = Field(default_factory=list)
+    unselected_node_dispositions: list[dict[str, object]] = Field(
+        default_factory=list
+    )
+    provenance_incomplete_node_ids: list[str] = Field(default_factory=list)
+    terminal_completeness: Literal["complete", "degraded"] | None = None
+    terminal_degradation_reason_codes: list[str] = Field(default_factory=list)
+    unresolved_coverage_ids: list[str] = Field(default_factory=list)
+    material_relation_pairs_omitted_for_budget: list[str] = Field(
+        default_factory=list
+    )
+    hook_trigger_source: str | None = None
+    hook_invocation_key: str | None = None
+    replay_of_run_id: str | None = None
+    source_episode_result_hashes: list[str] = Field(default_factory=list)
+    model_execution_disposition: str | None = None

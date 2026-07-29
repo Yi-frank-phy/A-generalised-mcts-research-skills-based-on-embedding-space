@@ -1,0 +1,99 @@
+{
+  "required_coverage_ids": [
+    "coverage:construction",
+    "coverage:algebra",
+    "coverage:small-case",
+    "coverage:resource-minimality",
+    "coverage:novelty"
+  ],
+  "nodes": [
+    {
+      "node_id": "root-construction",
+      "claim": "construction root",
+      "coverage_ids": ["coverage:construction"],
+      "score": 0.81
+    },
+    {
+      "node_id": "root-algebra",
+      "claim": "algebra root",
+      "coverage_ids": ["coverage:algebra"],
+      "score": 0.84
+    },
+    {
+      "node_id": "root-small-case",
+      "claim": "small-case root",
+      "coverage_ids": ["coverage:small-case"],
+      "score": 0.82
+    },
+    {
+      "node_id": "root-resource",
+      "claim": "resource root",
+      "coverage_ids": ["coverage:resource-minimality"],
+      "score": 0.83
+    },
+    {
+      "node_id": "root-novelty",
+      "claim": "novelty root superseded by a recorded child",
+      "coverage_ids": ["coverage:novelty"],
+      "score": 0.8,
+      "status": "closed"
+    },
+    {
+      "node_id": "peripheral-099",
+      "claim": "peripheral classification",
+      "coverage_ids": ["coverage:construction"],
+      "parent_ids": ["root-construction"],
+      "score": 0.99
+    },
+    {
+      "node_id": "peripheral-098",
+      "claim": "second peripheral classification",
+      "coverage_ids": ["coverage:construction"],
+      "parent_ids": ["root-construction"],
+      "score": 0.98
+    },
+    {
+      "node_id": "peripheral-097",
+      "claim": "third peripheral classification",
+      "coverage_ids": ["coverage:construction"],
+      "parent_ids": ["root-construction"],
+      "score": 0.97
+    },
+    {
+      "node_id": "peripheral-096",
+      "claim": "fourth peripheral classification",
+      "coverage_ids": ["coverage:construction"],
+      "parent_ids": ["root-construction"],
+      "score": 0.96
+    },
+    {
+      "node_id": "small-case-required",
+      "claim": "required small-case algebra classification",
+      "coverage_ids": ["coverage:small-case"],
+      "parent_ids": ["root-small-case"],
+      "score": 0.95
+    },
+    {
+      "node_id": "resource-minimality-central",
+      "claim": "central resource minimality result",
+      "coverage_ids": ["coverage:resource-minimality"],
+      "parent_ids": ["root-resource"],
+      "score": 0.94,
+      "assumptions": ["resource model fixed"]
+    },
+    {
+      "node_id": "novelty-replacement",
+      "claim": "recorded replacement for the novelty parent",
+      "coverage_ids": ["coverage:novelty"],
+      "parent_ids": ["root-novelty"],
+      "score": 0.96
+    },
+    {
+      "node_id": "controller-low-confidence",
+      "claim": "unverified controller candidate",
+      "coverage_ids": ["coverage:algebra"],
+      "parent_ids": ["root-algebra"],
+      "score": 0.31
+    }
+  ]
+}

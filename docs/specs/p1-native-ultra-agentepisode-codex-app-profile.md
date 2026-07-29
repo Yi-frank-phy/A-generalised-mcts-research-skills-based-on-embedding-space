@@ -497,7 +497,11 @@ Codex App main agent runs the native opaque orchestration.
 DTE backend supplies and validates the bounded epistemic protocol.
 ```
 
-This is the required meaning of seamless Ultra-mode adaptation for the first implementation.
+This is the required meaning of seamless Ultra-mode adaptation for the first
+implementation, but it is shared-context execution unless the runtime creates
+and attests a fresh role session. A role-specific request does not erase the
+main conversation's memory. Shared Judge/Relation labels are therefore
+correlated research operations, not independent review.
 
 ## 17. Implemented vertical-slice status
 
@@ -505,6 +509,9 @@ The App-native Judge → controller → Executor → Relation/readiness slice no
 
 - persistent `create-run`, `next-episode`, `submit-episode-result`, `fail-episode`, `cancel-episode`, `retry-episode`, `request-synthesis`, and `run-status` operations;
 - strict request/result envelopes with distinct `episode_id` and `attempt_id`;
+- versioned `strict_fresh_context`, `shared_context_single_agent`, and
+  `legacy_unverified` role contracts with deterministic visible-request
+  manifests, fresh-session reuse rejection, and correlated-risk disclosure;
 - persistent request, result, status, graph, node-revision, deadline, retry, and commit-outcome records;
 - App-main-agent grants that never launch a Codex subprocess;
 - rejection of stale, failed, cancelled, expired, superseded, rejected, or already committed attempts;
@@ -516,9 +523,16 @@ The App-native Judge → controller → Executor → Relation/readiness slice no
 - run-scoped App embedding persistence at `<run-dir>/dte_cache.json` using the existing provider/model/dimension/contract-version namespace;
 - coarse append-only telemetry with App usage marked `unavailable`;
 - Skill and `AGENTS.md` instructions for the current-App loop.
-- deterministic provisional synthesis branch selection from committed non-merged nodes;
-- complete selected-set blocking Relation inventory (at most 28 pairs), never truncated by enrichment windows;
-- bounded `role=relation` requests with canonical candidate pairs and independent `max_relation_pairs_per_episode`;
+- coverage-aware material Synthesis scope separated from a maximum-eight
+  presentation headline scope, with dependency closure and durable
+  unselected-node dispositions;
+- readiness blockers for unresolved required coverage, undisposed material,
+  incomplete material provenance, and unresolved material Relation pairs;
+- material review-pool Relation inventory spanning selected material,
+  counterfactual-material disclosures, dependencies, counterexamples, and
+  shared-coverage alternatives;
+- bounded blinded `role=relation` v2 requests without selection, priority,
+  candidate-reason, materiality, or Judge evaluation fields;
 - ledger-aware high-priority Relation enrichment with run-level `max_relation_enrichment_pairs=3` successful-pair budget;
 - node-disjoint blocking and enrichment grants within every Relation episode, defended again at request and commit boundaries;
 - strict equivalent/complementary/conflict/independent observations committed through `commit_episode_result(...)`;
@@ -528,7 +542,18 @@ The App-native Judge → controller → Executor → Relation/readiness slice no
 - explicit material-conflict disclosure obligations because full discriminator Executor scheduling remains deferred;
 - Relation gating before a new sticky terminal action, without reopening legacy persisted terminal runs or incrementing controller search iteration;
 - semantic-only Relation outputs; discriminator proposals remain persisted and unexecuted, with no verifier/correctness/pass-fail loop.
+- deterministic hook invocation keys, atomic duplicate suppression, and explicit
+  replay lineage with source result hashes and reuse/rerun disposition.
 
 Node-disjoint Relation batching and single-canonical absorbed-node provenance are transactional merge-safety invariants, not verification rules.
 
-The command/subprocess adapter remains only a legacy/headless fallback and regression baseline. SDK/App Server transport, hidden App-subagent inspection, native Seed and final Synthesis episodes, any future discriminator research-task scheduling, full production role closure, and precise App token/quota telemetry remain deferred. A future discriminator would remain evidence-producing research work, not a correctness-certifying verifier.
+The command/subprocess adapter remains only a legacy/headless fallback and
+regression baseline. The current Codex App main conversation cannot itself
+attest genuine fresh-context isolation, and the current slice has no isolated
+final Synthesis episode. In that environment the backend emits its
+deterministic handoff/report and labels main-agent prose as unisolated
+commentary. SDK/App Server fresh-context transport, hidden App-subagent
+inspection, native Seed and final Synthesis episodes, any future discriminator
+research-task scheduling, full production role closure, and precise App
+token/quota telemetry remain deferred. A future discriminator would remain
+evidence-producing research work, not a correctness-certifying verifier.

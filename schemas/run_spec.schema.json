@@ -4,6 +4,43 @@
       "additionalProperties": false,
       "description": "Hard budget limits for one DTE run.",
       "properties": {
+        "allocation_mass_per_iteration": {
+          "default": 3,
+          "maximum": 50,
+          "minimum": 1,
+          "title": "Allocation Mass Per Iteration",
+          "type": "integer"
+        },
+        "continuation_policy": {
+          "default": "bounded_node_yield_v1",
+          "enum": [
+            "legacy_entropy_v1",
+            "bounded_node_yield_v1"
+          ],
+          "title": "Continuation Policy",
+          "type": "string"
+        },
+        "entropy_change_threshold": {
+          "default": 0.05,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Entropy Change Threshold",
+          "type": "number"
+        },
+        "entropy_plateau_confirmations": {
+          "default": 2,
+          "maximum": 10,
+          "minimum": 1,
+          "title": "Entropy Plateau Confirmations",
+          "type": "integer"
+        },
+        "max_children_per_iteration": {
+          "default": 5,
+          "maximum": 50,
+          "minimum": 1,
+          "title": "Max Children Per Iteration",
+          "type": "integer"
+        },
         "max_committed_search_nodes": {
           "default": 20,
           "maximum": 100,
@@ -18,18 +55,11 @@
           "title": "Max Iterations",
           "type": "integer"
         },
-        "allocation_mass_per_iteration": {
+        "max_relation_enrichment_pairs": {
           "default": 3,
-          "maximum": 50,
-          "minimum": 1,
-          "title": "Allocation Mass Per Iteration",
-          "type": "integer"
-        },
-        "max_children_per_iteration": {
-          "default": 5,
-          "maximum": 50,
-          "minimum": 1,
-          "title": "Max Children Per Iteration",
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Max Relation Enrichment Pairs",
           "type": "integer"
         },
         "max_relation_pairs_per_episode": {
@@ -37,13 +67,6 @@
           "maximum": 20,
           "minimum": 1,
           "title": "Max Relation Pairs Per Episode",
-          "type": "integer"
-        },
-        "max_relation_enrichment_pairs": {
-          "default": 3,
-          "maximum": 100,
-          "minimum": 0,
-          "title": "Max Relation Enrichment Pairs",
           "type": "integer"
         },
         "max_research_iterations": {
@@ -60,29 +83,6 @@
           "title": "Min Iterations Before Synthesis",
           "type": "integer"
         },
-        "entropy_change_threshold": {
-          "default": 0.05,
-          "maximum": 1.0,
-          "minimum": 0.0,
-          "title": "Entropy Change Threshold",
-          "type": "number"
-        },
-        "entropy_plateau_confirmations": {
-          "default": 2,
-          "maximum": 10,
-          "minimum": 1,
-          "title": "Entropy Plateau Confirmations",
-          "type": "integer"
-        },
-        "continuation_policy": {
-          "default": "bounded_node_yield_v1",
-          "enum": [
-            "legacy_entropy_v1",
-            "bounded_node_yield_v1"
-          ],
-          "title": "Continuation Policy",
-          "type": "string"
-        },
         "t_max": {
           "default": 1.0,
           "exclusiveMinimum": 0.0,
@@ -92,6 +92,32 @@
         }
       },
       "title": "BudgetSpec",
+      "type": "object"
+    },
+    "CoverageObligation": {
+      "additionalProperties": false,
+      "description": "Structured, domain-neutral synthesis coverage required by a run.",
+      "properties": {
+        "coverage_id": {
+          "minLength": 1,
+          "title": "Coverage Id",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "title": "Description",
+          "type": "string"
+        },
+        "required": {
+          "default": true,
+          "title": "Required",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "coverage_id"
+      ],
+      "title": "CoverageObligation",
       "type": "object"
     },
     "OperatorPolicy": {
@@ -111,15 +137,13 @@
   "additionalProperties": false,
   "description": "Top-level run specification.\n\nThis is the source of truth. Free-form Markdown or prompt text cannot\noverride this object after validation.",
   "properties": {
-    "problem": {
-      "minLength": 1,
-      "title": "Problem",
-      "type": "string"
+    "allow_self_organized_executor": {
+      "default": true,
+      "title": "Allow Self Organized Executor",
+      "type": "boolean"
     },
-    "goal": {
-      "minLength": 1,
-      "title": "Goal",
-      "type": "string"
+    "budget": {
+      "$ref": "#/$defs/BudgetSpec"
     },
     "constraints": {
       "items": {
@@ -128,27 +152,19 @@
       "title": "Constraints",
       "type": "array"
     },
-    "mode": {
-      "const": "mandatory_frontier",
-      "default": "mandatory_frontier",
-      "title": "Mode",
-      "type": "string"
+    "coverage_obligations": {
+      "items": {
+        "$ref": "#/$defs/CoverageObligation"
+      },
+      "title": "Coverage Obligations",
+      "type": "array"
     },
-    "budget": {
-      "$ref": "#/$defs/BudgetSpec"
-    },
-    "operator_policy": {
-      "$ref": "#/$defs/OperatorPolicy"
-    },
-    "allow_self_organized_executor": {
-      "default": true,
-      "title": "Allow Self Organized Executor",
-      "type": "boolean"
-    },
-    "require_final_synthesis": {
-      "default": true,
-      "title": "Require Final Synthesis",
-      "type": "boolean"
+    "embedding_dimension": {
+      "default": 3072,
+      "maximum": 3072,
+      "minimum": 8,
+      "title": "Embedding Dimension",
+      "type": "integer"
     },
     "embedding_provider": {
       "default": "hash",
@@ -159,12 +175,48 @@
       "title": "Embedding Provider",
       "type": "string"
     },
-    "embedding_dimension": {
-      "default": 3072,
-      "maximum": 3072,
-      "minimum": 8,
-      "title": "Embedding Dimension",
-      "type": "integer"
+    "goal": {
+      "minLength": 1,
+      "title": "Goal",
+      "type": "string"
+    },
+    "material_provenance_policy": {
+      "default": "terminal_disclosure",
+      "enum": [
+        "terminal_disclosure",
+        "strict_repair"
+      ],
+      "title": "Material Provenance Policy",
+      "type": "string"
+    },
+    "mode": {
+      "const": "mandatory_frontier",
+      "default": "mandatory_frontier",
+      "title": "Mode",
+      "type": "string"
+    },
+    "operator_policy": {
+      "$ref": "#/$defs/OperatorPolicy"
+    },
+    "problem": {
+      "minLength": 1,
+      "title": "Problem",
+      "type": "string"
+    },
+    "require_final_synthesis": {
+      "default": true,
+      "title": "Require Final Synthesis",
+      "type": "boolean"
+    },
+    "role_isolation_mode": {
+      "default": "legacy_unverified",
+      "enum": [
+        "strict_fresh_context",
+        "shared_context_single_agent",
+        "legacy_unverified"
+      ],
+      "title": "Role Isolation Mode",
+      "type": "string"
     }
   },
   "required": [

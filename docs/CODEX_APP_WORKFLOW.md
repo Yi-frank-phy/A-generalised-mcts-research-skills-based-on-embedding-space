@@ -15,11 +15,48 @@ python -m dte_backend strict-run \
   --judge-command "python scripts/codex_judge_adapter.py"
 ```
 
-In Codex App / Work, the normal native production path is the persistent `create-run` / `next-episode` / current-App work / `submit-episode-result` loop. Repository code does not launch a second Codex process.
+In Codex App / Work, the only native production path is the Hook-enforced
+`activate` / `init` / (`step` / current-App work / `submit`)* / `handoff`
+loop. Repository code does not launch a second Codex process.
+
+```bash
+python -m dte_backend hook-driver activate
+python -m dte_backend hook-driver init --spec <spec.json> --nodes <nodes.json>
+python -m dte_backend hook-driver step
+# Perform exactly the returned bounded EpisodeRequest in the current App.
+python -m dte_backend hook-driver submit --result <result.json>
+python -m dte_backend hook-driver handoff
+```
 
 The model-facing main agent must not manually replay Judge → controller → Executor → Relation, hand-compute controller fields, claim algorithmic convergence, mutate the graph, or commit synthesis. It may supervise the production backend and issue a synthesis request through its validated command interface when `OperatorPolicy` authorizes it. Standalone role commands and guards are development interfaces, not a second production mode.
 
-The transport-neutral `EpisodeRequest -> EpisodeResult` boundary is backend-enforced for App-native Judge, Executor, and Relation roles. A free-form model-orchestrated harness remains non-production because it bypasses the persistent lifecycle and commit boundary.
+The transport-neutral `EpisodeRequest -> EpisodeResult` boundary is enforced by
+the Hook execution contract plus the backend commit boundary for App-native
+Judge, Executor, and Relation roles. A free-form model-orchestrated harness
+remains non-production because it bypasses the persistent lifecycle and commit
+boundary.
+
+Role-specific JSON is payload isolation, not context isolation. Every grant
+declares `strict_fresh_context`, `shared_context_single_agent`, or
+`legacy_unverified`. Strict results require a new role-session ID and an exact
+request-manifest attestation; missing, mismatched, or reused facts fail before
+scientific commit. The current App main conversation is the explicit shared
+fallback, always has `isolation_verified=false`, carries correlated-error risk,
+and must not be described as independent review. The backend does not claim
+cryptographic knowledge of provider internals.
+The request records only `fresh_context_required`; verification is a committed
+runtime fact. Model output cannot self-assert `backend_verified`.
+
+Judge requests use opaque aliases and omit controller/synthesis state.
+Relation v2 requests contain blinded node material only; selection membership,
+materiality, priority, candidate reason, and Judge evaluations remain
+backend-only. Executor sees only its granted parent, run goal/constraints,
+source allowlist, and role contract.
+
+`hook-driver init` uses an atomic deterministic invocation key. A duplicate
+returns the existing run. Use `--replay-of-run-id <run-id>` for an explicit
+replay; replay state records the source run, source result hashes, trigger, and
+whether model work was reused or rerun.
 
 ## Control ownership
 
@@ -161,18 +198,27 @@ python -m dte_backend observability-summary --run-dir <run-dir> --format json
 python -m dte_backend epistemic-summary --run-dir <run-dir> --format json
 ```
 
-Read provisional selection and Relation disclosures through those handoffs. Add
-a compact execution summary covering role episode counts, the initial →
-committed → selected node funnel, major allocations and their child outcomes,
+Read material scope, headline scope, unselected-node dispositions, provenance
+completeness, role-isolation facts, replay lineage, and Relation disclosures
+through those handoffs. Add a compact execution summary covering role episode
+counts, the initial → committed → material → headline node funnel, major
+allocations and their child outcomes,
 merges/conflicts, retries/rejections, terminal reason, and missing data. Then
 report the selected claims, their key assumptions, supporting/challenging and
 conditional evidence, the most dangerous unresolved dependencies, and whether
 an abandoned route was merely not searched or has an explicit counterexample.
-Include a short correlated-error risk note and any heuristic or failure mode
+Include a prominent correlated-error risk note and any heuristic or failure mode
 reported by an episode for possible researcher use, without claiming user
-learning or capability transfer. The App
-handoff maps provisional-selected node claims; it does not require a final
-Synthesis episode or assert that backend code audited the main agent's prose.
+learning or capability transfer. The App handoff contains material claims,
+dependencies, and explicit disclosures while excluding undisclosed nonmaterial
+node content. The maximum-eight headline cap does not truncate material scope.
+Report degraded-terminal reason codes, unresolved forced-synthesis coverage,
+and provenance repair exhaustion explicitly. Natural missing coverage remains
+blocking; an authorized stop at a safe checkpoint is honored with limitations.
+The handoff does not require a final Synthesis episode or assert that backend
+code audited the main agent's prose. Without an attested fresh Synthesis
+context, any main-conversation prose is unisolated commentary rather than
+committed Synthesis.
 
 If the user explicitly evaluates a run or concrete decision, the main agent may
 append source-labelled `record-feedback`. It must not infer `source=user` from

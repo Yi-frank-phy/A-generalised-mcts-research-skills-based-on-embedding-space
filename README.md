@@ -30,11 +30,13 @@ The internal Python package still uses `dte_backend` for backward compatibility.
 
 ## Status
 
-This is a **feature-complete v1 protocol in public alpha**. The engineering
-architecture is ready for real use; the alpha label remains because comparative
-research effectiveness has not yet been established by real-run outcome data.
-The smoke path is fully local and should pass without external API keys. Real
-research mode requires a real Judge command, such as:
+This is a **feature-complete v1 protocol in public alpha**. The protocol and
+backend state machine are ready for controlled evaluation, while the App-native
+path additionally requires a verified Hook installation and a successful live
+event-delivery probe after trust and restart. Comparative research effectiveness
+has not yet been established by real-run outcome data. The smoke path is fully
+local and should pass without external API keys. Headless real research requires
+a real Judge command, such as:
 
 ```bash
 python -m dte_backend strict-run \
@@ -81,6 +83,12 @@ pytest
 python scripts/smoke_workflow.py
 ```
 
+The Python wheel is the backend artifact. The complete Codex Skill distribution
+is the repository/archive, which additionally contains `SKILL.md`, the lifecycle
+dispatcher, installer, and managed-deployment template. CI verifies these as two
+explicit artifacts rather than implying that the backend wheel contains the
+top-level Skill files.
+
 Smoke checks may use mock adapters. Real research can use the Codex Judge adapter:
 
 ```bash
@@ -96,7 +104,7 @@ python -m dte_backend strict-run \
 
 `strict-run --mode real` remains the compatible headless/legacy entrypoint. In Codex App / Work, the normal native path is the persistent driver protocol below: the current App main agent requests and performs each bounded episode itself; the repository does not launch a second Codex process. In both paths the main agent is an authorized operator proxy under `OperatorPolicy`, not a second controller.
 
-`requested_by` identifies the actor for audit; `operator_policy` determines whether that actor is authorized. The JSON field does not authenticate the writer. The current protocol trusts the root/operator execution context that invokes the backend; stronger actor/capability isolation belongs to a future external DTE Driver.
+`requested_by` identifies the actor for audit; `operator_policy` determines whether that actor is authorized. The JSON field does not authenticate the writer. The headless compatibility path trusts the root/operator execution context. The App-native path instead uses the versioned Hook execution contract and single-use driver capability.
 
 The real-mode controller and provider wiring are tested with a deterministic embedding-provider stub. Live Gemini API connectivity is intentionally not exercised because no production credential is available. This is not a merge blocker. CI still verifies the Gemini provider wiring, 3072-dimensional policy, cache namespace, and fail-closed behavior when neither supported API-key environment variable is present.
 
@@ -114,17 +122,27 @@ unscored frontier -> Judge EpisodeRequest -> current App native work
 
 `commit_episode_result(...)` dispatches by the committed request role and validates the complete result before replacing graph state. Judge commits require exactly one observable score/reasoning observation per granted node and reject stale revisions, missing/extra/duplicate node IDs, invalid scores, or controller-owned pollution. Executor validation retains the existing over-grant, collision, ancestry, type/status, lifecycle, hash, and revision firewall. Every rejection leaves graph and node revisions unchanged.
 
-The App-native backend command loop is:
+The production App-native command loop is:
 
 ```bash
-python -m dte_backend create-run --run-dir <run-dir> --spec <spec.json> --nodes <committed-nodes.json>
-python -m dte_backend next-episode --run-dir <run-dir>
+python -m dte_backend hook-driver activate
+python -m dte_backend hook-driver init --spec <spec.json> --nodes <committed-nodes.json>
+python -m dte_backend hook-driver step
 # Current App main agent performs the returned request with native tools/subagents.
-python -m dte_backend submit-episode-result --run-dir <run-dir> --result <result.json>
-python -m dte_backend run-status --run-dir <run-dir>
+python -m dte_backend hook-driver submit --result <result.json>
+# Repeat step / bounded App episode / submit until the backend becomes terminal.
+python -m dte_backend hook-driver handoff
 ```
 
-`fail-episode`, `cancel-episode`, and `retry-episode` provide explicit attempt transitions; retries receive a new `attempt_id`, and cancelled, expired, failed, superseded, rejected, or already committed attempts cannot commit. Requests, results, and status records live under `<run-dir>/episodes/<episode-id>/<attempt-id>/`; writing a result file alone never mutates the graph.
+Use `hook-driver control --action retry|cancel|request-synthesis` for explicit
+operator transitions. The direct `create-run`, `next-episode`,
+`submit-episode-result`, `fail-episode`, `cancel-episode`, and `retry-episode`
+commands are development/direct-legacy interfaces and fail closed against a
+`hook_enforced_v1` run. Retries receive a new `attempt_id`, and cancelled,
+expired, failed, superseded, rejected, or already committed attempts cannot
+commit. Requests, results, and status records live under
+`<run-dir>/episodes/<episode-id>/<attempt-id>/`; writing a result file alone
+never mutates the graph.
 
 The existing subprocess Executor is preserved only as a legacy/headless fallback and regression baseline through `CommandAgentEpisodeAdapter`. `NativeStubEpisodeAdapter` is a deterministic test fixture. Neither is the normal Codex App path, and neither is described as Ultra integration. SDK/App Server transports are deferred by the normative App profile.
 

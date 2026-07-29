@@ -64,6 +64,14 @@ class OperatorPolicy(DTEBaseModel):
     main_agent_may_request_synthesis: bool = True
 
 
+class CoverageObligation(DTEBaseModel):
+    """Structured, domain-neutral synthesis coverage required by a run."""
+
+    coverage_id: str = Field(min_length=1)
+    description: str = ""
+    required: bool = True
+
+
 class DTERunSpec(DTEBaseModel):
     """Top-level run specification.
 
@@ -81,6 +89,23 @@ class DTERunSpec(DTEBaseModel):
     require_final_synthesis: bool = True
     embedding_provider: Literal["hash", "gemini-embedding-2"] = "hash"
     embedding_dimension: int = Field(default=3072, ge=8, le=3072)
+    coverage_obligations: list[CoverageObligation] = Field(default_factory=list)
+    material_provenance_policy: Literal[
+        "terminal_disclosure",
+        "strict_repair",
+    ] = "terminal_disclosure"
+    role_isolation_mode: Literal[
+        "strict_fresh_context",
+        "shared_context_single_agent",
+        "legacy_unverified",
+    ] = "legacy_unverified"
+
+    @model_validator(mode="after")
+    def validate_coverage_obligations(self) -> "DTERunSpec":
+        coverage_ids = [item.coverage_id for item in self.coverage_obligations]
+        if len(coverage_ids) != len(set(coverage_ids)):
+            raise ValueError("coverage obligation IDs must be unique")
+        return self
 
 
 class SearchNode(DTEBaseModel):
@@ -100,6 +125,7 @@ class SearchNode(DTEBaseModel):
     evidence: list[str] = Field(default_factory=list)
     risks: list[str] = Field(default_factory=list)
     parent_ids: list[str] = Field(default_factory=list)
+    coverage_ids: list[str] = Field(default_factory=list)
     confidence: float = Field(default=0.5, ge=0.0, le=1.0)
 
     local_embedding: list[float] | None = None

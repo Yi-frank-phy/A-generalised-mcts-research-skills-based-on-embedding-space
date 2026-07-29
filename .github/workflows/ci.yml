@@ -2,17 +2,43 @@ name: CI
 
 on:
   push:
+    branches:
+      - main
   pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    name: ${{ matrix.os }} / Python ${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     strategy:
+      fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12"]
+        include:
+          - os: ubuntu-latest
+            python-version: "3.10"
+          - os: ubuntu-latest
+            python-version: "3.11"
+          - os: ubuntu-latest
+            python-version: "3.12"
+          - os: ubuntu-latest
+            python-version: "3.13"
+          - os: ubuntu-latest
+            python-version: "3.14"
+          - os: windows-latest
+            python-version: "3.12"
+          - os: windows-latest
+            python-version: "3.14"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install
@@ -20,4 +46,51 @@ jobs:
       - name: Unit tests
         run: python -m pytest -q
       - name: Smoke workflow
+        if: runner.os == 'Linux' && matrix.python-version == '3.12'
         run: python scripts/smoke_workflow.py
+
+  package:
+    name: Backend wheel and repository Skill bundle
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+      - name: Build backend wheel
+        run: |
+          python -m pip install build
+          python -m build
+      - name: Verify backend wheel outside checkout
+        run: |
+          python -m venv "$RUNNER_TEMP/dte-wheel-venv"
+          "$RUNNER_TEMP/dte-wheel-venv/bin/python" -m pip install --force-reinstall dist/*.whl
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/dte-wheel-venv/bin/python" -m dte_backend hook-driver --help
+          "$RUNNER_TEMP/dte-wheel-venv/bin/dte-backend" hook-driver --help
+      - name: Verify repository Skill bundle
+        run: |
+          python scripts/install_dte_hooks.py --help
+          python - <<'PY'
+          import hashlib
+          from pathlib import Path
+
+          root = Path.cwd()
+          required = [
+              root / "SKILL.md",
+              root / "hooks" / "dte_enforcement_hook.py",
+              root / "scripts" / "install_dte_hooks.py",
+              root / "deploy" / "managed-template" / "requirements.toml",
+              root / "deploy" / "managed-template" / "hooks" / "dte_enforcement_hook.py",
+          ]
+          missing = [str(path.relative_to(root)) for path in required if not path.is_file()]
+          assert not missing, f"missing repository Skill files: {missing}"
+          source = required[1].read_bytes()
+          assert required[4].read_bytes() == source
+          digest = hashlib.sha256(source).hexdigest()
+          requirements = required[3].read_text(encoding="utf-8")
+          assert requirements.count(f"--dte-hook-content-sha256={digest}") == 10
+          assert requirements.count("--dte-skill-root=") == 10
+          PY
+

@@ -23,37 +23,84 @@ On invocation in Codex App / Work, use the App-native driver loop below. The cur
 
 ## Codex App native driver loop
 
-The normal App path is:
+The normal enforced App path is:
 
 ```text
-start/resume DTE run
--> next-episode
+hook-driver activate/init
+-> hook-driver step
 -> perform the bounded request in the current App runtime
--> submit one strict EpisodeResult
--> inspect CommitOutcome/controller action
--> repeat
+-> hook-driver submit one strict EpisodeResult
+-> inspect verified receipt/CommitOutcome/controller action
+-> repeat -> hook-driver handoff
 ```
 
-Backend commands:
+Production App commands:
 
 ```bash
-python -m dte_backend create-run --run-dir <run-dir> --spec <spec.json> --nodes <committed-nodes.json>
-python -m dte_backend next-episode --run-dir <run-dir>
-python -m dte_backend submit-episode-result --run-dir <run-dir> --result <result.json>
-python -m dte_backend run-status --run-dir <run-dir>
-python -m dte_backend observability-summary --run-dir <run-dir> --format json
-python -m dte_backend epistemic-summary --run-dir <run-dir> --format json
+python -m dte_backend hook-driver activate
+python -m dte_backend hook-driver init --spec <spec.json> --nodes <committed-nodes.json>
+python -m dte_backend hook-driver step
+python -m dte_backend hook-driver submit --result <result.json>
+python -m dte_backend hook-driver control --action retry|cancel|request-synthesis
+python -m dte_backend hook-driver status
+python -m dte_backend hook-driver handoff
 ```
 
-Use `fail-episode`, `cancel-episode`, and `retry-episode` for explicit attempt transitions. A retry must use the newly granted `attempt_id`; late output from cancelled, expired, failed, superseded, rejected, or committed attempts cannot be resubmitted as success.
+Before a production App run, the installed lifecycle definition must pass the
+static installer check, be trusted in `/hooks`, survive a full App restart, and
+pass the two live event-delivery probes documented in `hooks/README.md`.
+`install_dte_hooks.py --verify` alone is not proof that the running App delivered
+`UserPromptSubmit` or `PreToolUse`. A probe never creates a DTE manifest. If the
+probe is absent, stop as an App-integration failure; do not fall back to direct
+mutators or present an uncommitted research run as DTE output.
+The trusted handler must pin both the dispatcher content hash and the exact
+supplying Skill root. During an active run, do not modify any file under that
+Skill's `src/dte_backend`; both `python -m dte_backend` and `dte-backend`
+entrypoints are subject to the same production-path restrictions.
+
+Use `hook-driver control` for explicit retry, cancellation, and synthesis requests. A retry must use the newly granted `attempt_id`; late output from cancelled, expired, failed, superseded, rejected, or committed attempts cannot be resubmitted as success. Direct App mutator CLIs are legacy/development interfaces and fail closed for `hook_enforced_v1` runs.
+
+Every request carries a versioned role execution contract. Payload filtering is
+not context isolation. In `strict_fresh_context`, execute Judge, Executor,
+Relation, and any natural-language Synthesis in a genuinely fresh role session
+and return the runtime-reported session ID plus the exact request manifest hash.
+The request states a requirement and never pre-claims verification.
+Model-authored output may use host `runtime_reported` attestation, but must
+never self-assert `backend_verified`; DTE cannot prove hidden provider-internal
+isolation when the host exposes no stronger primitive.
+Missing, mismatched, or reused proof must be submitted as failure; do not retry
+it as shared isolation. The current App main conversation is
+`shared_context_single_agent`: it may be used only when that fallback is
+explicit in the RunSpec, must return `isolation_verified=false`, and must be
+reported as correlated-error risk rather than independent review.
 
 The main agent may reason, use tools, and delegate native subagents inside the request. For a sufficiently complex episode, it should decompose work according to the problem, parallelize independent routes, avoid redundant internal branches, reconcile disagreements, and return one integrated role-valid result. No fixed subagent count or topology is required. It must not choose global allocation, hand-fill controller fields, directly edit graph state, skip submit validation, or substitute a chat/Markdown answer for committed output. Keep progress concise. Do not expose or reconstruct internal subagent names, routing, transcripts, hidden reasoning, tokens, quota, or a complete hidden topology. Aggregate runtime diagnostics may be used only when the provider/runtime or main agent explicitly reports them; otherwise they remain `null` with source `unavailable`.
 
 Keep episode purposes isolated:
 
-- Judge independently evaluates research potential, risks, and uncertainty and does not expand new research nodes.
+- Judge evaluates only its blinded granted material, risks, and uncertainty and does not expand new research nodes. The word “independent” is reserved for an attested fresh context.
 - Executor develops the backend-granted branch and may explore independent routes internally, but does not score or allocate.
 - Relation compares only granted pairs, does not verify correctness, and does not select a scientific winner.
+
+Judge aliases must be echoed exactly. Relation v2 receives only blinded node
+material and direct evidence; never reconstruct or request backend selection,
+materiality, priority, candidate-reason, or Judge fields. The backend reattaches
+those scheduling facts after classification.
+
+Material Synthesis scope is not the same as the maximum-eight presentation
+headline scope. Omitted-node dispositions use marginal coverage, assumptions,
+evidence, limitations, counterexamples, dependencies, conflicts, and distinct
+claims rather than Judge score alone. Empty `epistemic_contributions` may be
+valid: default policy discloses missing material provenance at degraded
+terminal; strict policy grants one provenance-only repair and then discloses
+exhaustion. Natural synthesis remains coverage-blocked, while an authorized
+forced synthesis at a safe boundary records unresolved coverage and stops.
+
+`hook-driver init` is idempotent for a stable invocation key. Use
+`--replay-of-run-id <run-id>` for an explicit rerun; add
+`--invocation-nonce <nonce>` only when the caller intentionally needs a
+distinct invocation. A replay must retain its source lineage and is not a new
+independent verification.
 
 Judge and Executor may return optional `epistemic_contributions` only when they
 carry high-signal information. Do not fill the schema with generic assumptions.
@@ -76,18 +123,23 @@ Before a new Synthesis terminal action, `next-episode` may return `role=relation
 
 ## Terminal observability, epistemic handoff, and explicit feedback
 
-When the backend returns `ready_for_synthesis` or `run_complete`, call both:
+When the backend returns `ready_for_synthesis` or `run_complete`, call the deterministic handoff:
 
 ```bash
-python -m dte_backend observability-summary --run-dir <run-dir> --format json
-python -m dte_backend epistemic-summary --run-dir <run-dir> --format json
+python -m dte_backend hook-driver handoff
 ```
 
-Read the operational summary, provisional selection, Relation disclosures, and
-epistemic handoff before reporting. The handoff covers provisional-selected node
-claims, not an audited final natural-language answer, and this App path does not
-require a final Synthesis episode. Give the user a compact epistemic section in
-this order:
+The command atomically materializes `observability-summary.json`,
+`epistemic-summary.json`, and `terminal-handoff.json`. Read all three before the
+main-agent report.
+
+Read the operational summary, material/headline selection, every unselected-node
+disposition, isolation facts, replay lineage, Relation disclosures, and
+epistemic handoff before reporting. The handoff covers material claims,
+dependencies, and explicit disclosures; it excludes undisclosed nonmaterial
+node content. It is not an audited final natural-language answer, and this App
+path does not require a final Synthesis episode. Give the user a compact
+epistemic section in this order:
 
 - current most credible conclusion;
 - key dependency assumptions;
@@ -387,7 +439,7 @@ Do not include volatile material in semantic identity:
 
 ## Required research flow
 
-This flow is owned by `strict-run --mode real` in production.
+For Codex App production this flow is owned by `hook-driver`; `strict-run --mode real` owns only the explicitly headless legacy path.
 
 1. Generate or ingest initial SearchNodes.
 2. Validate all SearchNodes against schema.
@@ -443,7 +495,7 @@ python hooks/dte_guard.py relation --nodes examples/frontier_nodes.json --output
 python hooks/dte_guard.py executor --parent <parent.json> --output <executor_output.json> --child-count <n>
 ```
 
-`strict-run` performs the core pre-run policy checks and owns the production call sequence. The standalone guard commands are for adapter development, fixtures, and smoke validation; they do not define a second real-run mode.
+`hook-driver` and the backend commit boundary perform the production App checks. The standalone guard commands are for adapter development, fixtures, and smoke validation; they are not manual production prerequisites and do not define a second real-run mode.
 
 ## Compile behavior
 
@@ -466,7 +518,7 @@ The final answer/report must include:
 
 ## Prohibited behavior
 
-- Do not use the flexible `run` helper or a model-orchestrated manual harness as the slash-command entrypoint; use `strict-run`.
+- Do not use the flexible `run` helper or a model-orchestrated manual harness as the App slash-command entrypoint; use `hook-driver`. Use `strict-run` only for explicitly headless compatibility runs.
 - Do not use mock adapters for real research judgment.
 - Do not return a final answer directly from an executor episode.
 - Do not silently skip Judge or controller stages.

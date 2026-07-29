@@ -7,7 +7,7 @@ This repository implements a fixed DTE research protocol. When acting as an agen
 ## Non-negotiable protocol invariants
 
 1. **DTE is the only outer controller.** A model-facing root agent may start and supervise the backend and may issue privileged controller commands when `OperatorPolicy` authorizes them. It must not directly advance the state machine, allocate, mutate controller-owned state, claim convergence, or commit synthesis. A final user report must follow the backend-controlled node generation → Judge/scoring → allocation/expansion → Relation/readiness protocol and be grounded in the terminal provisional selection and handoff.
-2. **Preserve role separation.** Strategy generation, judging, execution, relation classification, and synthesis are logically separate roles, even if implemented in fewer physical model calls or subagents.
+2. **Preserve role authority and report context honestly.** Strategy generation, judging, execution, relation classification, and synthesis are separate contracts. Payload separation is not context isolation. A shared main conversation is correlated, unverified fallback execution and must not be called independent review.
 3. **Executor is not the final authority.** Codex/Kimi/OpenClaw may perform local research episodes, write code, run tests, or draft candidate reasoning, but must return structured SearchNode objects.
 4. **No direct final answer from subagents.** A self-organized executor episode may produce evidence, counterexamples, candidate nodes, Judge outputs, or merge relation outputs, but only the main agent may report after the backend terminal handoff. The current App slice does not manufacture a final Synthesis episode.
 5. **UCB is not cost-aware by default.** Exploration is stabilized by UCB/uncertainty and hard budget caps. Do not silently change the objective to penalize cost unless the user explicitly chooses an experimental profile.
@@ -15,19 +15,29 @@ This repository implements a fixed DTE research protocol. When acting as an agen
 7. **Schema is source of truth.** Free-form Markdown or natural language cannot override the JSON/Pydantic run spec.
 8. **Use max geometry by default.** For real embedding geometry, prefer `embedding_dimension=3072`; lower dimensions are debug/fallback profiles.
 9. **Observation alone is not authority.** A model-facing agent may read and summarize checkpoints. Authority comes from user delegation plus validated `OperatorPolicy` and is exercised only through backend-validated controller commands, never direct graph/state mutation.
-10. **Codex App drives native episodes in place.** In an App/Work task, use `create-run` / `next-episode` / native App work / `submit-episode-result`. Do not launch another Codex process to simulate the current App runtime. Opaque internal subagent topology is allowed and is not a backend correctness input.
+10. **Codex App drives native episodes in place through the enforcement gate.** In an App/Work task, use `hook-driver activate/init/step/submit/handoff`; direct `create-run`, `next-episode`, and `submit-episode-result` are development/headless compatibility APIs. Do not launch another Codex process to simulate the current App runtime. Opaque internal subagent topology is allowed and is not a backend correctness input.
 
 ## Codex App native driver loop
 
 When the current Codex App main agent runs DTE research:
 
-1. Start or resume the persistent backend run.
-2. Call `next-episode`; do not manually select the global branch, Judge batch, or child grant. The backend consumes deterministic embedding/entropy/UCB/allocation transitions internally.
+1. Start or resume the persistent backend run with `hook-driver activate`, then initialize it with validated spec and nodes through `hook-driver init`.
+2. Call `hook-driver step`; do not manually select the global branch, Judge batch, or child grant. The driver consumes backend-only continuation transitions while the backend computes embedding/entropy/UCB/allocation.
 3. Read the complete versioned `EpisodeRequest` and its `attempt_id`.
 4. Perform only that bounded episode with current App reasoning, tools, and optional native subagents.
 5. Construct one complete strict `EpisodeResult`; progress chat, Markdown, files, and subagent summaries are not committed results.
-6. Call `submit-episode-result` and inspect `CommitOutcome` plus the backend controller action.
+6. Call `hook-driver submit --result <result.json>` and inspect the verified receipt, `CommitOutcome`, and backend controller action.
 7. Repeat only when the backend requests another episode; use explicit fail/cancel/retry transitions when needed.
+
+Inspect `role_execution_contract` before doing role work. Strict mode requires a
+fresh role-session ID and exact context-manifest attestation; missing,
+mismatched, or reused isolation facts fail closed before commit. The current App
+conversation satisfies only `shared_context_single_agent`, with
+`isolation_verified=false`. `hook-driver init` is idempotent; an intentional
+rerun uses `--replay-of-run-id` and retains source lineage.
+Request-side `fresh_context_required` is not proof. Model-authored results must
+never claim `backend_verified`; `runtime_reported` is only the host/runtime
+attestation, and no hidden provider-internal isolation is implied.
 
 For a sufficiently complex episode, use native subagents and tools when they
 materially improve coverage. Decompose according to the problem rather than a
@@ -39,7 +49,7 @@ synthesis authority.
 
 Keep the logical goals distinct even when the same App runtime performs them:
 
-- Judge independently evaluates research potential, risks, and uncertainty; it
+- Judge evaluates only its blinded granted material, risks, and uncertainty; it
   does not expand a new research node.
 - Executor develops only the backend-granted branch; it may explore independent
   approaches internally, but it does not score or allocate them.
@@ -48,9 +58,12 @@ Keep the logical goals distinct even when the same App runtime performs them:
 
 For a Judge request, return only the granted nodes' observable scores, reasoning, risks, and optional uncertainty evidence. Never hand-fill score into graph state, embedding, density, entropy, uncertainty, UCB, allocation, graph/node revision, stopping, or synthesis fields. Never bypass submission validation or treat hidden agent count, names, routing, traces, tokens, or quota as required graph facts.
 
-Executor and Judge outputs may include the optional bounded
-`epistemic_contributions` object, but only when there is material information to
-preserve. Do not manufacture generic assumptions to fill the schema. Prefer
+Executor and Judge outputs may include the bounded `epistemic_contributions`
+object when there is material information to preserve. Do not manufacture
+generic assumptions to fill the schema. A nonmaterial node needs no filler; a
+material node without qualifying provenance follows the RunSpec policy:
+terminal disclosure by default, or one provenance-only strict repair followed
+by explicit degraded exhaustion. Prefer
 critical dependencies, substantive support or challenge evidence, explicit
 counterexamples, transferable failure modes, and unresolved questions. Use
 machine identities for internal facts; give external evidence an `external:` or
@@ -60,7 +73,21 @@ granted nodes. Neither role may submit `backend_derived`
 facts, infer formal edges from free text, equate a low score or non-selection
 with contradiction, or claim that the backend verified scientific truth.
 
-For a Relation request, inspect only `relation_payload.candidate_pairs`. One Relation episode contains only node-disjoint candidate pairs: each node ID may appear in at most one granted pair. Classify every granted pair exactly once as `equivalent`, `complementary`, `conflict`, or `independent`; use only granted evidence references; construct one strict `RelationEpisodeResult`; submit it; then inspect `CommitOutcome`. Do not scan the graph for extra pairs, select a canonical node, merge or close nodes, edit the candidate/Relation ledger, set synthesis readiness, write `ready_for_synthesis`, or return correctness/pass/fail/reward state. Node-disjointness is a transactional merge-safety invariant, not a verification rule. Relation is not a second Judge, verifier, or final Synthesis agent. Discriminator proposals are persisted metadata and are not executed in the current workflow.
+For a Relation request, inspect only `relation_payload.candidate_pairs`. V2
+pairs use opaque aliases and deliberately omit selection, materiality,
+priority, candidate reason, and Judge evaluation fields; do not reconstruct or
+request them. One Relation episode contains only node-disjoint candidate pairs:
+each node ID may appear in at most one granted pair. Classify every granted pair
+exactly once as `equivalent`, `complementary`, `conflict`, or `independent`; use
+only granted evidence references; construct one strict
+`RelationEpisodeResult`; submit it; then inspect `CommitOutcome`. Do not scan
+the graph for extra pairs, select a canonical node, merge or close nodes, edit
+the candidate/Relation ledger, set synthesis readiness, write
+`ready_for_synthesis`, or return correctness/pass/fail/reward state.
+Node-disjointness is a transactional merge-safety invariant, not a verification
+rule. Relation is not a second Judge, verifier, or final Synthesis agent.
+Discriminator proposals are persisted metadata and are not executed in the
+current workflow.
 
 Relation does not receive a second epistemic output schema. Epistemic summaries
 project equivalent/complementary/conflict/independent records, disclosure
@@ -68,15 +95,20 @@ obligations, and merge provenance from the authoritative Relation ledger.
 
 ## Terminal observability, epistemic handoff, and feedback
 
-When `next-episode` returns `ready_for_synthesis` or `run_complete`, first run:
+When `hook-driver step` returns `ready_for_synthesis` or `run_complete`, call:
 
 ```bash
-python -m dte_backend observability-summary --run-dir <run-dir> --format json
-python -m dte_backend epistemic-summary --run-dir <run-dir> --format json
+python -m dte_backend hook-driver handoff
 ```
 
-Read both formal summaries together with provisional selection and Relation
-disclosures. The epistemic handoff describes provisional-selected node claims;
+This produces `observability-summary.json`, `epistemic-summary.json`, and the
+authoritative `terminal-handoff.json`; read all three before reporting.
+
+Read both formal summaries together with material scope, headline scope,
+unselected-node dispositions, provenance completeness, role-isolation facts,
+replay lineage, and Relation disclosures. The epistemic handoff contains
+material claims, dependencies, and explicit disclosures while excluding
+undisclosed nonmaterial node content;
 it does not claim that the backend audited the main agent's final prose, and the
 current App slice does not require a final Synthesis episode. Report the result
 with: the current most credible conclusion; its key assumptions; supporting,
@@ -90,7 +122,7 @@ artifact, its assumptions, applicability, or scientific claim. Human-readable
 output uses `artifact_referenced` for this provenance.
 
 Also give a compact operational summary covering Judge/Executor/Relation counts,
-initial → committed → selected nodes, major allocations and committed children,
+initial → committed → material → headline nodes, major allocations and committed children,
 merge/conflict outcomes, rejections/retries, terminal reason, and data-quality
 limitations. Do not hand-calculate formal metrics from raw JSONL. Internal
 allocation, survival, merge, conflict, latency, and retry measures are process
@@ -145,10 +177,17 @@ Classifies pairs or sets of nodes as equivalent, complementary, conflicting, or 
 Compile is not a mandatory backend role. Codex/subagents may compile local context when useful, but compilation is a prompt-level compression operation, not a separate required DTE phase.
 
 ### Synthesis
-In the current App slice, this is the main agent's terminal reporting step over
-backend-controlled provisional selection plus operational and epistemic
-handoffs, not a native episode. It must preserve uncertainty and failure modes.
+The current App slice has no isolated native Synthesis episode. The backend
+materializes a deterministic report/handoff over material scope and explicit
+disclosures. Main-conversation prose is unisolated commentary, not committed
+Synthesis, and must preserve uncertainty and failure modes.
 
 ## When editing this repo
 
 Before changing architecture-level files, update `SPEC.md` and tests. Do not introduce a new framework dependency unless it replaces a real repeated pain point.
+
+The unified lifecycle hook is a deterministic gate, not a second controller.
+For `hook_enforced_v1` runs, every mutating backend API and persistence boundary
+must validate the injected driver capability. Standalone `dte_guard.py` commands
+remain for fixtures, smoke tests, and adapter development; they are not manual
+production prerequisites for a Codex App run.

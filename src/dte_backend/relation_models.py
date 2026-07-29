@@ -19,6 +19,7 @@ RelationCandidateReason = Literal[
     "exact_duplicate",
     "embedding_close",
     "high_score_near_tie",
+    "shared_coverage_alternative",
     "shared_evidence_divergence",
     "synthesis_set_overlap",
     "potential_material_conflict",
@@ -91,6 +92,19 @@ class RelationNodeInput(DTEBaseModel):
     parent_ids: list[str] = Field(default_factory=list)
 
 
+class BlindRelationNodeInput(DTEBaseModel):
+    """Oracle-visible node material with no Judge or selection metadata."""
+
+    node_id: str = Field(min_length=1)
+    node_type: Literal["candidate", "evidence", "counterexample", "merge"]
+    claim: str = Field(min_length=1)
+    rationale: str = ""
+    assumptions: list[str] = Field(default_factory=list)
+    evidence: list[RelationEvidenceInput] = Field(default_factory=list)
+    risks: list[str] = Field(default_factory=list)
+    parent_ids: list[str] = Field(default_factory=list)
+
+
 class RelationPairInput(DTEBaseModel):
     candidate_id: str = Field(min_length=1)
     left: RelationNodeInput
@@ -114,6 +128,20 @@ class RelationPairInput(DTEBaseModel):
         return self
 
 
+class BlindRelationPairInput(DTEBaseModel):
+    candidate_id: str = Field(min_length=1)
+    left: BlindRelationNodeInput
+    right: BlindRelationNodeInput
+    left_node_revision: int = Field(ge=0)
+    right_node_revision: int = Field(ge=0)
+
+    @model_validator(mode="after")
+    def validate_pair(self) -> "BlindRelationPairInput":
+        if self.left.node_id == self.right.node_id:
+            raise ValueError("blind Relation pair requires distinct node aliases")
+        return self
+
+
 class RelationEpisodePayload(DTEBaseModel):
     relation_schema_version: Literal["relation-payload.v1"] = "relation-payload.v1"
     rubric_version: str = Field(default="semantic-relation.v1", min_length=1)
@@ -121,7 +149,7 @@ class RelationEpisodePayload(DTEBaseModel):
     goal: str = Field(min_length=1)
     constraints: list[str] = Field(default_factory=list)
     candidate_pairs: list[RelationPairInput] = Field(min_length=1)
-    provisional_synthesis_node_ids: list[str]
+    provisional_synthesis_node_ids: list[str] = Field(default_factory=list)
     required_output_fields: list[str] = Field(
         default_factory=lambda: [
             "candidate_id",
@@ -139,6 +167,44 @@ class RelationEpisodePayload(DTEBaseModel):
     def validate_candidates(self) -> "RelationEpisodePayload":
         candidate_ids = [pair.candidate_id for pair in self.candidate_pairs]
         unordered_pairs = [(pair.left.node_id, pair.right.node_id) for pair in self.candidate_pairs]
+        if len(candidate_ids) != len(set(candidate_ids)):
+            raise ValueError("Relation payload candidate IDs must be unique")
+        if len(unordered_pairs) != len(set(unordered_pairs)):
+            raise ValueError("Relation payload unordered pairs must be unique")
+        if len(self.required_output_fields) != len(set(self.required_output_fields)):
+            raise ValueError("Relation required_output_fields must be unique")
+        return self
+
+
+class BlindRelationEpisodePayload(DTEBaseModel):
+    """Oracle-visible Relation v2 payload without backend scheduling metadata."""
+
+    relation_schema_version: Literal["relation-payload.v2"] = "relation-payload.v2"
+    rubric_version: str = Field(default="semantic-relation.v1", min_length=1)
+    problem: str = Field(min_length=1)
+    goal: str = Field(min_length=1)
+    constraints: list[str] = Field(default_factory=list)
+    candidate_pairs: list[BlindRelationPairInput] = Field(min_length=1)
+    required_output_fields: list[str] = Field(
+        default_factory=lambda: [
+            "candidate_id",
+            "left_node_id",
+            "right_node_id",
+            "relation_type",
+            "confidence",
+            "rationale",
+            "evidence_refs",
+            "materiality_assessment",
+        ]
+    )
+
+    @model_validator(mode="after")
+    def validate_candidates(self) -> "BlindRelationEpisodePayload":
+        candidate_ids = [pair.candidate_id for pair in self.candidate_pairs]
+        unordered_pairs = [
+            (pair.left.node_id, pair.right.node_id)
+            for pair in self.candidate_pairs
+        ]
         if len(candidate_ids) != len(set(candidate_ids)):
             raise ValueError("Relation payload candidate IDs must be unique")
         if len(unordered_pairs) != len(set(unordered_pairs)):
@@ -271,15 +337,79 @@ class MergeApplicationRecord(DTEBaseModel):
 
 
 class ProvisionalSynthesisSelection(DTEBaseModel):
+    schema_version: Literal["dte-synthesis-selection.v2"] = (
+        "dte-synthesis-selection.v2"
+    )
     selected_node_ids: list[str]
+    material_scope_node_ids: list[str] = Field(default_factory=list)
+    support_dependency_node_ids: list[str] = Field(default_factory=list)
+    unresolved_coverage_ids: list[str] = Field(default_factory=list)
     selection_reason: str
     selection_revision: int = Field(ge=0)
+
+    @model_validator(mode="after")
+    def fill_legacy_material_scope(self) -> "ProvisionalSynthesisSelection":
+        if not self.material_scope_node_ids:
+            self.material_scope_node_ids = list(self.selected_node_ids)
+        return self
+
+
+UnselectedDispositionKind = Literal[
+    "superseded_by",
+    "supporting_dependency",
+    "redundant_equivalent",
+    "out_of_scope",
+    "low_confidence",
+    "contradicted",
+    "future_work_unverified",
+    "unresolved_high_value",
+    "budget_excluded",
+    "not_evaluated",
+]
+
+
+class UnselectedNodeDisposition(DTEBaseModel):
+    schema_version: Literal["dte-unselected-node-disposition.v1"] = (
+        "dte-unselected-node-disposition.v1"
+    )
+    node_id: str
+    node_revision: int = Field(ge=0)
+    disposition: UnselectedDispositionKind
+    basis_refs: list[str] = Field(default_factory=list)
+    backend_facts: list[str] = Field(default_factory=list)
+    replacement_node_ids: list[str] = Field(default_factory=list)
+    omission_changes_coverage: bool
+    omission_changes_assumptions: bool
+    omission_changes_evidence: bool
+    omission_changes_limitations: bool
+    omission_changes_conflicts: bool
+    omission_changes_dependencies: bool = False
+    omission_changes_distinct_claim: bool = False
+    unique_coverage_ids: list[str] = Field(default_factory=list)
+    unique_assumptions: list[str] = Field(default_factory=list)
+    unique_evidence: list[str] = Field(default_factory=list)
+    unique_limitations: list[str] = Field(default_factory=list)
+    unique_dependency_refs: list[str] = Field(default_factory=list)
+    unique_conflict_refs: list[str] = Field(default_factory=list)
+    marginal_audit_method: Literal[
+        "exact_structured_set_difference_v1"
+    ] = "exact_structured_set_difference_v1"
+    disclosure_required: bool
+    counterfactual_material: bool
 
 
 class SynthesisReadinessRecord(DTEBaseModel):
     schema_version: Literal["synthesis-readiness.v2"] = "synthesis-readiness.v2"
     graph_revision: int = Field(ge=0)
     provisional_selected_node_ids: list[str]
+    material_scope_node_ids: list[str] = Field(default_factory=list)
+    presentation_headline_node_ids: list[str] = Field(default_factory=list)
+    unresolved_coverage_ids: list[str] = Field(default_factory=list)
+    undisposed_material_node_ids: list[str] = Field(default_factory=list)
+    provenance_incomplete_node_ids: list[str] = Field(default_factory=list)
+    resolved_material_pair_ids: list[str] = Field(default_factory=list)
+    unresolved_material_pair_ids: list[str] = Field(default_factory=list)
+    budget_skipped_enrichment_pair_ids: list[str] = Field(default_factory=list)
     blocking_inventory_complete: bool
     blocking_pair_count: int = Field(ge=0)
     resolved_blocking_pair_count: int = Field(ge=0)
@@ -307,7 +437,11 @@ class SynthesisReadinessRecord(DTEBaseModel):
         ):
             raise ValueError("enrichment remaining budget is inconsistent")
         if self.ready and (
-            not self.blocking_inventory_complete or self.unresolved_blocking_pair_count != 0
+            not self.blocking_inventory_complete
+            or self.unresolved_blocking_pair_count != 0
+            or self.unresolved_coverage_ids
+            or self.undisposed_material_node_ids
+            or self.provenance_incomplete_node_ids
         ):
             raise ValueError("ready synthesis requires a complete blocker inventory with zero unresolved pairs")
         return self

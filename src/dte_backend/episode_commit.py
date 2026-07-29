@@ -373,8 +373,56 @@ def commit_episode_result(
                 return reject(f"stale selected-node revision: {node_id}")
         if not isinstance(result.structured_output, JudgeEpisodeOutput):
             return reject("completed Judge result has the wrong structured output schema")
+        if request.judge_payload is None:
+            return reject("Judge request is missing its payload")
         granted_ids = set(request.selected_node_revisions)
         observations = result.structured_output.observations
+        if request.judge_payload.purpose == "provenance_repair":
+            if observations:
+                return reject(
+                    "provenance repair must not return Judge score observations"
+                )
+            try:
+                next_epistemic_ledger = prepare_epistemic_commit(
+                    graph=graph,
+                    request=request,
+                    result=result,
+                    bundle=result.structured_output.epistemic_contributions,
+                    authorized_node_ids=granted_ids,
+                    committed_at=datetime.now(timezone.utc).isoformat(),
+                    context=epistemic_context,
+                )
+            except ValueError as exc:
+                return reject(f"epistemic contribution rejected: {exc}")
+            revision_before = graph.revision
+            graph.epistemic_ledger = next_epistemic_ledger
+            graph.revision = revision_before + 1
+            if telemetry is not None:
+                _emit_telemetry(
+                    telemetry,
+                    "provenance_repair_committed",
+                    run_id=request.run_id,
+                    episode_id=request.episode_id,
+                    attempt_id=request.attempt_id,
+                    role=request.role,
+                    status="committed",
+                    input_graph_revision=request.input_graph_revision,
+                    selected_node_count=len(granted_ids),
+                    returned_observation_count=0,
+                    accepted_observation_count=0,
+                    schema_valid=True,
+                    usage_source="unavailable",
+                )
+            return CommitOutcome(
+                accepted=True,
+                episode_id=request.episode_id,
+                accepted_node_ids=sorted(granted_ids),
+                accepted_node_count=0,
+                graph_revision_before=revision_before,
+                graph_revision_after=graph.revision,
+            )
+        if not observations:
+            return reject("initial Judge result must score every granted node")
         observation_ids = [observation.node_id for observation in observations]
         if len(observation_ids) != len(set(observation_ids)):
             return reject("duplicate Judge node ID inside result")
@@ -514,10 +562,6 @@ def commit_episode_result(
                 or candidate.right_node_id != pair.right.node_id
                 or candidate.left_node_revision != pair.left_node_revision
                 or candidate.right_node_revision != pair.right_node_revision
-                or candidate.candidate_reason != pair.candidate_reason
-                or candidate.scheduling_class != pair.scheduling_class
-                or candidate.priority != pair.priority
-                or candidate.material_to_synthesis != pair.material_to_synthesis
             ):
                 return reject(
                     f"Relation candidate identity is stale or disagrees with its grant: "
@@ -631,7 +675,8 @@ def commit_episode_result(
                 independent_count=counts["independent"],
                 material_conflict_count=material_conflict_count,
                 enrichment_candidate_count=sum(
-                    pair.scheduling_class == "enrichment" for pair in granted_pairs.values()
+                    candidate_by_id[candidate_id].scheduling_class == "enrichment"
+                    for candidate_id in granted_pairs
                 ),
                 merge_count=len(equivalent_records),
                 schema_valid=True,
@@ -754,6 +799,12 @@ def commit_episode_result(
         next_revisions[next_parent.node_id] += 1
         for candidate in candidates:
             candidate_payload = _canonical_contract_payload(candidate)
+            candidate_payload["coverage_ids"] = sorted(
+                {
+                    *candidate_payload.get("coverage_ids", []),
+                    *next_parent.coverage_ids,
+                }
+            )
             next_nodes.append(SearchNode.model_validate(candidate_payload))
             next_revisions[candidate.node_id] = 0
     except Exception as exc:

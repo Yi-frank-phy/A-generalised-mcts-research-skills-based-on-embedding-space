@@ -133,6 +133,82 @@ def test_legacy_app_state_keeps_legacy_entropy_policy(tmp_path):
     assert restored.continuation_gate_records == []
 
 
+def test_v2_state_hashes_are_verified_before_new_defaults_are_migrated(tmp_path):
+    run_dir = create_run(tmp_path)
+    state_path = run_dir / "app_run_state.json"
+    payload = json.loads(state_path.read_text(encoding="utf-8"))
+    payload["state_schema_version"] = "app-run-state.v2"
+    payload.pop("legacy_provenance_compatibility", None)
+    payload["spec"].pop("material_provenance_policy")
+    payload["spec_hash"] = hashlib.sha256(
+        canonical_json_bytes(payload["spec"])
+    ).hexdigest()
+
+    migrated_attempt = None
+    for episode in payload["episodes"]:
+        for attempt in episode["attempts"]:
+            request = attempt["request"]
+            contract = request["role_execution_contract"]
+            contract.pop("fresh_context_required")
+            if request.get("judge_payload") is not None:
+                request["judge_payload"].pop("purpose")
+            manifest_payload = json.loads(json.dumps(request))
+            manifest_payload["role_execution_contract"].pop(
+                "context_manifest_hash"
+            )
+            contract["context_manifest_hash"] = hashlib.sha256(
+                canonical_json_bytes(manifest_payload)
+            ).hexdigest()
+            attempt["request_hash"] = hashlib.sha256(
+                canonical_json_bytes(request)
+            ).hexdigest()
+            migrated_attempt = (episode["episode_id"], attempt["attempt_id"], contract)
+            break
+        if migrated_attempt is not None:
+            break
+    assert migrated_attempt is not None
+    episode_id, attempt_id, old_contract = migrated_attempt
+    for record in payload["role_session_registry"]:
+        if (
+            record["episode_id"] == episode_id
+            and record["attempt_id"] == attempt_id
+        ):
+            record["context_manifest_hash"] = old_contract[
+                "context_manifest_hash"
+            ]
+
+    state_path.write_text(json.dumps(payload), encoding="utf-8")
+    restored = app_driver.load_app_run(run_dir)
+
+    assert restored.state_schema_version == "app-run-state.v3"
+    assert restored.legacy_provenance_compatibility is True
+    assert restored.spec.material_provenance_policy == "terminal_disclosure"
+    restored_attempt = next(
+        attempt
+        for episode in restored.episodes
+        if episode.episode_id == episode_id
+        for attempt in episode.attempts
+        if attempt.attempt_id == attempt_id
+    )
+    assert restored_attempt.request.role_execution_contract.fresh_context_required is False
+    if restored_attempt.request.judge_payload is not None:
+        assert restored_attempt.request.judge_payload.purpose == "initial_scoring"
+
+
+def test_v2_state_migration_rejects_tampered_pre_upgrade_request_hash(tmp_path):
+    run_dir = create_run(tmp_path)
+    state_path = run_dir / "app_run_state.json"
+    payload = json.loads(state_path.read_text(encoding="utf-8"))
+    payload["state_schema_version"] = "app-run-state.v2"
+    attempt = payload["episodes"][0]["attempts"][0]
+    attempt["request"]["role_execution_contract"].pop("fresh_context_required")
+    attempt["request"]["objective"] = "tampered before migration"
+    state_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="v2 episode request"):
+        app_driver.load_app_run(run_dir)
+
+
 def test_app_create_rejects_initial_nodes_above_search_node_cap(tmp_path):
     bounded = spec().model_copy(
         update={
@@ -507,8 +583,16 @@ def test_skill_and_agents_define_current_app_loop_without_sdk_primary_path():
     skill = (root / "SKILL.md").read_text(encoding="utf-8")
     agents = (root / "AGENTS.md").read_text(encoding="utf-8")
     combined = skill + agents
-    for command in ("create-run", "next-episode", "submit-episode-result", "retry-episode"):
+    for command in (
+        "hook-driver activate",
+        "hook-driver init",
+        "hook-driver step",
+        "hook-driver submit",
+        "hook-driver control",
+        "hook-driver handoff",
+    ):
         assert command in combined
+    assert "direct `create-run`, `next-episode`, and `submit-episode-result`" in combined
     assert "current App main agent performs the episode" in combined
     assert "Do not launch another Codex process" in combined
     assert "CodexSdkEpisodeAdapter" not in combined

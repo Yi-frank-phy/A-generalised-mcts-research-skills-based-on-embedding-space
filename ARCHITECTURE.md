@@ -44,7 +44,20 @@ AlphaEvolve-style evaluators may provide local evidence for verifiable subclaims
 logical role separation != one model call per role
 ```
 
-Judge, Executor, Relation, Seed, and Synthesis remain separate contracts to reduce self-justification and preserve graph semantics. One native runtime may execute different role episodes at different times, and one Executor episode may internally use multiple subagents.
+Judge, Executor, Relation, Seed, and Synthesis remain separate authority
+contracts. This payload separation is not execution-context isolation. One
+native runtime may execute different role episodes, but results from a shared
+main conversation are explicitly `shared_context_single_agent`, carry
+correlated-error risk, and are not independent review. Only a fresh role
+session with a matching request-manifest attestation satisfies
+`strict_fresh_context`; strict submission fails closed on missing, mismatched,
+or reused isolation facts.
+
+The request side expresses only `fresh_context_required` and begins unverified.
+Runtime attestation is committed separately. Structured model output cannot
+self-assert `backend_verified`; `runtime_reported` is a host claim, and DTE
+cannot prove hidden provider-internal isolation without a stronger host
+primitive.
 
 ### DTE children are not subagent threads
 
@@ -193,9 +206,51 @@ timeout or failed episode     -> graph unchanged
 valid structured output       -> eligible for backend commit
 ```
 
-The current adapter validation is the basis of this firewall and should be extended with graph-revision checks, ID collision checks, and one atomic commit function.
+Adapter validation, graph and node revisions, ID-collision checks, and the single
+atomic episode commit function form the producer firewall.
 
-A prompt or Skill instruction alone is not a hard boundary. In the final architecture, DTE Driver calls the native runtime; the native runtime does not decide whether to call DTE.
+A prompt or Skill instruction alone is not a hard boundary. The implemented
+Codex App architecture therefore places a deterministic hook driver in front of
+the existing backend and gives `hook_enforced_v1` runs a versioned execution
+contract. The hook activates and restores the run, rewrites only legal driver
+calls with a single-use capability, blocks direct control/state access, and
+prevents an early Stop. The backend validates the session, manifest identity,
+and current capability at every public mutation and persistence boundary.
+The trusted handler definition binds both the dispatcher bytes and the exact
+supplying Skill root before backend import. During an active run the hook treats
+the complete `src/dte_backend` package as protected workflow source and resolves
+relative tool paths against the declared workdir before comparison. It
+recognizes both module and published console entrypoints. Windows user-hook
+commands use explicit PowerShell invocation and literal argument quoting.
+
+```text
+Codex lifecycle hook
+  -> hook-driver receipt/capability gate
+    -> existing AppRunState + next_app_episode
+      -> sole commit_episode_result boundary
+```
+
+The hook does not calculate Judge output, geometry, allocation, Relation, or
+termination. It is also not the final security boundary: supported tool hooks
+have platform coverage limits and PostToolUse cannot roll back side effects.
+Backend capability validation is what makes direct App mutators fail closed.
+The dispatcher hash is not presented as a hash of every backend module; the
+protected source tree and a read-only managed deployment are the corresponding
+ordinary-agent and administrator-controlled integrity layers.
+Old states default in memory to `direct_legacy`; no historical output or hash is
+rewritten. The enforcement lifetime ends after deterministic observability,
+epistemic, and terminal-handoff artifacts exist, after which the main agent owns
+only the natural-language report.
+
+The run-external Hook state uses a recoverable intent/receipt protocol around
+that backend boundary. Operation intent is durable before an App mutation;
+receipt data is durable before the manifest publishes a new chain head; and
+current/pending capability state allows restart to reconcile either the old or
+new complete App contract. A recovered operation emits an explicit recovery
+receipt and does not reconstruct an unavailable original response. Static Hook
+configuration is therefore necessary but insufficient: a trusted, restarted
+App must also acknowledge no-state prompt and denied-tool delivery probes before
+a production run begins.
 
 ### Observability is not authority
 
@@ -242,8 +297,13 @@ benchmark, or later-outcome evidence.
 
 ### Epistemic provenance is committed fact, not verification
 
-Executor and Judge may add optional, bounded structured contributions to their
-role-valid output. The backend validates role authority, node and fact identity,
+Executor and Judge may add bounded structured contributions to their role-valid
+output. Nonmaterial nodes need no filler. Material node content may commit
+provisionally without them. Default policy records missing provenance as a
+degraded terminal limitation. Strict policy grants one provenance-only repair
+per missing material node without changing Judge score, then records bounded
+exhaustion instead of deadlocking. The backend validates role
+authority, node and fact identity,
 safe artifact paths, lifecycle, provenance source, and references. It does not
 validate scientific truth. The records are installed in the same commit
 transaction as the episode result:
@@ -270,8 +330,10 @@ Relation projection prevents a competing Relation truth. Search lifecycle
 dispositions and epistemic dispositions are distinct, so non-selection, low
 Judge score, merge, and budget exhaustion cannot silently become contradiction.
 
-The terminal handoff describes provisional-selected node claims because the
-current App-native slice has no final Synthesis episode. Its model-profile and
+The terminal handoff contains material-scope claims, dependency closure, and
+explicit disclosures; it omits undisclosed nonmaterial node content. The
+headline scope is only a compact presentation projection. The current
+App-native slice has no final Synthesis episode, so its model-profile and
 support-source comparisons are correlated-error risk indicators, not correctness
 or scientific reliability scores. Artifact references are provenance only and
 do not verify an artifact or claim. Researcher learning, external-tool checks,
@@ -317,6 +379,17 @@ Candidate selection may use:
 - explicit contradictory claims;
 - entropy plateau.
 
+The backend first constructs a material review pool from coverage
+representatives, dependencies, counterexamples, and counterfactual-material
+unselected disclosures. Coverage overlap alone is enrichment, not conflict.
+Only duplicates, shared-evidence divergent claims, and explicit
+challenge/contradiction/counterexample facts create blockers. Critical conflicts
+and selected-versus-material challenges are scheduled before complementary or
+embedding-close enrichment. Oracle-visible Relation v2 payloads use blinded
+node aliases and omit selection membership, priority, candidate reason,
+materiality flags, and all Judge conclusions. Those facts remain backend-only
+and are reattached after classification.
+
 ## Bounded node budget and continuation
 
 The primary cost boundary is an irreversible count of committed search nodes:
@@ -329,7 +402,8 @@ at request validation and commit.
 Entropy remains an allocation-temperature input and produces a consecutive
 plateau signal. A confirmed plateau or a single canonical frontier invokes the
 versioned continuation gate; neither condition is an unconditional stop. The
-gate continues only with narrow, replayable material yield, a positively
+gate continues only with narrow, replayable epistemic or required-coverage
+yield, a positively
 allocated frontier target, and remaining node budget. Each qualifying
 epistemic record may support one continuation decision at most. This is a
 bounded search heuristic, not correctness evidence or a cost term in UCB.
@@ -345,13 +419,29 @@ independent
 
 The backend converts validated output into a merge proposal or persisted discriminator-task proposal. The model never applies the merge directly. Discriminator proposals are not executed in this slice and have no authority to close, reward, reject, certify, or select nodes.
 
-Relation is not a universal synchronous barrier. Exact duplicates may be handled immediately; ordinary proximity creates optional or high-priority tasks. Only unresolved material conflicts among branches selected for synthesis must be resolved or explicitly disclosed.
+Relation is not a universal synchronous barrier. Exact duplicates may be
+handled immediately; ordinary proximity creates optional or high-priority
+tasks. Unresolved material pairs across both material scope and
+counterfactual-material disclosures must be resolved or explicitly disclosed.
+
+## Coverage-aware Synthesis architecture
+
+Every App-native initial seed receives stable coverage ancestry, and explicit
+run obligations may add domain-neutral coverage IDs. Selection is
+lexicographic: satisfy required coverage, close dependencies, retain material
+counterexamples/limitations, then fill a maximum-eight headline projection by
+Judge score and stable ID. The headline cap never truncates material scope.
+Every other eligible node receives a durable counterfactual disposition based
+on exact marginal structured differences rather than primarily Judge score.
+Missing coverage prevents natural readiness. An authorized forced synthesis at
+a safe checkpoint is honored with unresolved coverage recorded in the degraded
+terminal record, including scoped requests.
 
 In the App-native path, Relation is scheduled only after backend provisional Synthesis selection and before a new terminal action is committed. Blocking inventory generation completely enumerates selected-selected exact duplicates and shared-evidence divergent claims over the at-most-eight-node provisional set, so it has a hard upper bound of 28 pairs. These blockers are refreshed into the persistent candidate ledger before readiness and are never truncated by the separate enrichment window. Existing persisted terminal runs remain sticky and are reported as legacy-unchecked rather than reopened.
 
 After the complete blocking inventory resolves, high-priority selected or directly selected-related semantic pairs may be scheduled as nonblocking enrichment. Current candidate/record identities are removed before the enrichment window is truncated. Enrichment can therefore progress past previously seen pairs without becoming a whole-graph all-pairs pass.
 
-One App-native Relation episode contains only node-disjoint candidate pairs, for both blocking and enrichment grants. The request builder and commit boundary reject overlap, and merge provenance permits only one canonical target for each absorbed node. This is a transactional merge-safety invariant, not a verification rule.
+One App-native Relation episode contains only node-disjoint candidate pairs, for both blocking and enrichment grants. The request builder and commit boundary reject overlap, and merge provenance permits only one canonical target for each absorbed node. This is a transactional merge-safety invariant, not a verification rule. Batch selection is polynomial weighted greedy matching with a bounded one-edge replacement pass; it preserves the documented preference but is not a global-optimality guarantee.
 
 Equivalent classification does not give the model merge authority. The backend selects a canonical node from committed status, information/evidence completeness, Judge value, provenance stability, and a node-ID tie-break; absorbed nodes remain auditable aliases and cannot receive future Executor allocation or be double-counted by Synthesis selection.
 
@@ -411,6 +501,16 @@ Minimum target infrastructure:
 - transport-neutral episode adapter;
 - cache namespaces that include provider/model/rubric/prompt/schema identity;
 - command-adapter fallback during SDK/App Server rollout.
+
+Hook-enforced initialization adds a deterministic invocation key and an atomic
+create-if-absent registry. Git identity covers HEAD, index, staged/unstaged and
+untracked nonignored content, plus linked-worktree and common-directory
+identity. Registry generations record owner identity and recovery lineage;
+live owners are preserved while failed or orphaned generations are recoverable.
+Duplicate invocations return the same run. Explicit
+replays use distinct lineage-bound keys and persist the source run, source
+result hashes, trigger source, and model execution disposition. Neither a
+duplicate role label nor a replay is evidence of independent verification.
 
 Initial event types may include:
 

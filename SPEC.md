@@ -176,6 +176,13 @@ record `strict_fresh_context`, `shared_context_single_agent`, or
 as independent review unless the runtime supplies a fresh role-session
 attestation that the backend accepts.
 
+The request contract records `fresh_context_required=true` but never
+pre-claims verification. Verification is a committed transport/runtime fact.
+Model-authored results may report only `runtime_reported`; they cannot grant
+themselves `backend_verified`, which is reserved for a trusted adapter path
+outside structured model output. DTE validates only host-exposed attestations,
+not hidden provider-internal context state.
+
 ### Phase A: Seed
 
 Generate or ingest initial SearchNodes. A real run may use one bounded native Seed Episode that internally self-organizes exploration and returns several materially distinct, unranked SearchNodes.
@@ -239,13 +246,21 @@ presentation headline scope. Structured required coverage is satisfied first;
 support/challenge dependency closure, material counterexamples, and disclosures
 remain material even when the headline projection is capped at eight nodes.
 Every eligible node outside material scope receives a versioned counterfactual
-disposition. Required coverage, undisposed material nodes, incomplete material
-provenance, and unresolved blocking Relation pairs all fail readiness closed.
+disposition. Its materiality audit compares exact structured marginal coverage,
+assumptions, evidence, limitations, counterexamples, dependencies, conflicts,
+and normalized claims; Judge score is not the primary proxy. Required coverage,
+undisposed material nodes, incomplete material provenance, and unresolved
+blocking Relation pairs fail natural readiness closed.
 
 The material Relation review pool includes material scope, counterfactual-
-material unselected disclosures, dependencies, counterexamples, and shared-
-coverage alternatives. Deterministic node-disjoint batching maximizes critical
-material work before complementary or embedding-close enrichment. Enrichment
+material unselected disclosures, dependencies, and counterexamples. Shared
+coverage alone is never a blocking conflict: coverage-overlapping alternatives
+are bounded enrichment unless exact duplication, shared-evidence claim
+divergence, or an explicit challenge/contradiction/counterexample supplies a
+blocking reason. Deterministic node-disjoint batching uses polynomial weighted
+greedy matching plus a bounded one-edge replacement pass. It preserves the
+critical/material/priority/stable-ID preference but does not claim global
+optimality. Enrichment
 is ledger-aware and capped by the run-level
 `max_relation_enrichment_pairs` budget (default `3`, `0` disables enrichment).
 Only a successfully committed nonblocking observation consumes one pair;
@@ -648,10 +663,19 @@ compatibility.
 
 Executor and Judge output may contain one bounded `epistemic_contributions`
 object. Nonmaterial nodes are not forced to emit filler. A material node with
-no qualifying contribution may still commit useful node content, but it is
-marked `provenance_incomplete` and cannot pass Synthesis readiness until a
-bounded repair or corrected result supplies the required provenance. It
+no qualifying contribution may still commit useful node content.
+`material_provenance_policy=terminal_disclosure` (the App-native default)
+records missing provenance in an explicit degraded terminal result.
+`strict_repair` grants at most one backend-controlled provenance-only Judge
+repair per missing material node; it cannot rescore nodes or verify truth. If
+repair remains incomplete, the run records exhaustion and terminates degraded
+rather than looping in `await_operator_decision`. It
 supports:
+
+Natural synthesis remains blocked by unresolved required coverage. An
+authorized forced or scoped synthesis request is honored at a synthesis-safe
+checkpoint; omitted coverage is then preserved in the degraded terminal record
+instead of negating the stop command.
 
 ```text
 statement types: claim | assumption | evidence | open_question | failure_mode | heuristic
@@ -799,6 +823,12 @@ operations but never participate in receipt or manifest state identity.
 Hook initialization also uses an atomic create-if-absent invocation registry
 keyed by repository and worktree identity, hook type, RunSpec hash,
 initial-node hash, explicit nonce, and replay source where applicable.
+Git identity includes HEAD, the complete index, binary staged/unstaged state,
+untracked nonignored content, and linked-worktree/common-directory identity;
+ignored DTE outputs are excluded. Non-Git activation uses an explicit
+filesystem snapshot fallback. Registry v2 records generation, owner PID/token,
+timestamps, and recovery lineage. A live initializer is never overwritten;
+failed or ownerless generations may be retried deterministically.
 Repeating the same invocation returns the existing run instead of creating a
 nominally independent result. An explicit replay creates a distinct key and
 persists `replay_of_run_id`, source committed-result hashes, trigger source,

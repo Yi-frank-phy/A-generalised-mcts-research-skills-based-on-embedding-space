@@ -44,6 +44,8 @@ scientific commit. The current App main conversation is the explicit shared
 fallback, always has `isolation_verified=false`, carries correlated-error risk,
 and must not be described as independent review. The backend does not claim
 cryptographic knowledge of provider internals.
+The request records only `fresh_context_required`; verification is a committed
+runtime fact. Model output cannot self-assert `backend_verified`.
 
 Judge requests use opaque aliases and omit controller/synthesis state.
 Relation v2 requests contain blinded node material only; selection membership,
@@ -210,6 +212,9 @@ reported by an episode for possible researcher use, without claiming user
 learning or capability transfer. The App handoff contains material claims,
 dependencies, and explicit disclosures while excluding undisclosed nonmaterial
 node content. The maximum-eight headline cap does not truncate material scope.
+Report degraded-terminal reason codes, unresolved forced-synthesis coverage,
+and provenance repair exhaustion explicitly. Natural missing coverage remains
+blocking; an authorized stop at a safe checkpoint is honored with limitations.
 The handoff does not require a final Synthesis episode or assert that backend
 code audited the main agent's prose. Without an attested fresh Synthesis
 context, any main-conversation prose is unisolated commentary rather than

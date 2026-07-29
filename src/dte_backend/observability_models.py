@@ -75,6 +75,9 @@ class RunIdentityObservabilityV1(DTEBaseModel):
     terminal_action: str | None = None
     terminal_reason: str | None = None
     terminal_source: str | None = None
+    terminal_completeness: Literal["complete", "degraded"] | None = None
+    terminal_degradation_reason_codes: list[str] = Field(default_factory=list)
+    unresolved_coverage_ids: list[str] = Field(default_factory=list)
     controller_iterations: int | None = Field(default=None, ge=0)
     graph_revision: int | None = Field(default=None, ge=0)
     code_version: str | None = None

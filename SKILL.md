@@ -64,6 +64,10 @@ Every request carries a versioned role execution contract. Payload filtering is
 not context isolation. In `strict_fresh_context`, execute Judge, Executor,
 Relation, and any natural-language Synthesis in a genuinely fresh role session
 and return the runtime-reported session ID plus the exact request manifest hash.
+The request states a requirement and never pre-claims verification.
+Model-authored output may use host `runtime_reported` attestation, but must
+never self-assert `backend_verified`; DTE cannot prove hidden provider-internal
+isolation when the host exposes no stronger primitive.
 Missing, mismatched, or reused proof must be submitted as failure; do not retry
 it as shared isolation. The current App main conversation is
 `shared_context_single_agent`: it may be used only when that fallback is
@@ -84,11 +88,13 @@ materiality, priority, candidate-reason, or Judge fields. The backend reattaches
 those scheduling facts after classification.
 
 Material Synthesis scope is not the same as the maximum-eight presentation
-headline scope. Readiness requires required coverage, dependency closure,
-unselected-node dispositions, complete material provenance, and resolved or
-disclosed material Relation work. Empty `epistemic_contributions` may be valid
-for a nonmaterial node; for a material node they leave
-`provenance_incomplete` and block readiness rather than inviting generic filler.
+headline scope. Omitted-node dispositions use marginal coverage, assumptions,
+evidence, limitations, counterexamples, dependencies, conflicts, and distinct
+claims rather than Judge score alone. Empty `epistemic_contributions` may be
+valid: default policy discloses missing material provenance at degraded
+terminal; strict policy grants one provenance-only repair and then discloses
+exhaustion. Natural synthesis remains coverage-blocked, while an authorized
+forced synthesis at a safe boundary records unresolved coverage and stops.
 
 `hook-driver init` is idempotent for a stable invocation key. Use
 `--replay-of-run-id <run-id>` for an explicit rerun; add

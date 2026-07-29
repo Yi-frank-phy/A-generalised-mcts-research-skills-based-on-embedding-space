@@ -53,6 +53,12 @@ session with a matching request-manifest attestation satisfies
 `strict_fresh_context`; strict submission fails closed on missing, mismatched,
 or reused isolation facts.
 
+The request side expresses only `fresh_context_required` and begins unverified.
+Runtime attestation is committed separately. Structured model output cannot
+self-assert `backend_verified`; `runtime_reported` is a host claim, and DTE
+cannot prove hidden provider-internal isolation without a stronger host
+primitive.
+
 ### DTE children are not subagent threads
 
 A DTE child is a committed graph node. A Codex subagent is an implementation detail inside an episode.
@@ -293,8 +299,10 @@ benchmark, or later-outcome evidence.
 
 Executor and Judge may add bounded structured contributions to their role-valid
 output. Nonmaterial nodes need no filler. Material node content may commit
-provisionally without them, but readiness records `provenance_incomplete` until
-the required structured provenance exists. The backend validates role
+provisionally without them. Default policy records missing provenance as a
+degraded terminal limitation. Strict policy grants one provenance-only repair
+per missing material node without changing Judge score, then records bounded
+exhaustion instead of deadlocking. The backend validates role
 authority, node and fact identity,
 safe artifact paths, lifecycle, provenance source, and references. It does not
 validate scientific truth. The records are installed in the same commit
@@ -372,8 +380,10 @@ Candidate selection may use:
 - entropy plateau.
 
 The backend first constructs a material review pool from coverage
-representatives, dependencies, counterexamples, counterfactual-material
-unselected disclosures, and shared-coverage alternatives. Critical conflicts
+representatives, dependencies, counterexamples, and counterfactual-material
+unselected disclosures. Coverage overlap alone is enrichment, not conflict.
+Only duplicates, shared-evidence divergent claims, and explicit
+challenge/contradiction/counterexample facts create blockers. Critical conflicts
 and selected-versus-material challenges are scheduled before complementary or
 embedding-close enrichment. Oracle-visible Relation v2 payloads use blinded
 node aliases and omit selection membership, priority, candidate reason,
@@ -421,15 +431,17 @@ run obligations may add domain-neutral coverage IDs. Selection is
 lexicographic: satisfy required coverage, close dependencies, retain material
 counterexamples/limitations, then fill a maximum-eight headline projection by
 Judge score and stable ID. The headline cap never truncates material scope.
-Every other eligible node receives a durable counterfactual disposition.
-Missing coverage, undisposed material, incomplete material provenance, or
-unresolved blocking Relation work prevents readiness.
+Every other eligible node receives a durable counterfactual disposition based
+on exact marginal structured differences rather than primarily Judge score.
+Missing coverage prevents natural readiness. An authorized forced synthesis at
+a safe checkpoint is honored with unresolved coverage recorded in the degraded
+terminal record, including scoped requests.
 
 In the App-native path, Relation is scheduled only after backend provisional Synthesis selection and before a new terminal action is committed. Blocking inventory generation completely enumerates selected-selected exact duplicates and shared-evidence divergent claims over the at-most-eight-node provisional set, so it has a hard upper bound of 28 pairs. These blockers are refreshed into the persistent candidate ledger before readiness and are never truncated by the separate enrichment window. Existing persisted terminal runs remain sticky and are reported as legacy-unchecked rather than reopened.
 
 After the complete blocking inventory resolves, high-priority selected or directly selected-related semantic pairs may be scheduled as nonblocking enrichment. Current candidate/record identities are removed before the enrichment window is truncated. Enrichment can therefore progress past previously seen pairs without becoming a whole-graph all-pairs pass.
 
-One App-native Relation episode contains only node-disjoint candidate pairs, for both blocking and enrichment grants. The request builder and commit boundary reject overlap, and merge provenance permits only one canonical target for each absorbed node. This is a transactional merge-safety invariant, not a verification rule.
+One App-native Relation episode contains only node-disjoint candidate pairs, for both blocking and enrichment grants. The request builder and commit boundary reject overlap, and merge provenance permits only one canonical target for each absorbed node. This is a transactional merge-safety invariant, not a verification rule. Batch selection is polynomial weighted greedy matching with a bounded one-edge replacement pass; it preserves the documented preference but is not a global-optimality guarantee.
 
 Equivalent classification does not give the model merge authority. The backend selects a canonical node from committed status, information/evidence completeness, Judge value, provenance stability, and a node-ID tie-break; absorbed nodes remain auditable aliases and cannot receive future Executor allocation or be double-counted by Synthesis selection.
 
@@ -491,7 +503,11 @@ Minimum target infrastructure:
 - command-adapter fallback during SDK/App Server rollout.
 
 Hook-enforced initialization adds a deterministic invocation key and an atomic
-create-if-absent registry. Duplicate invocations return the same run. Explicit
+create-if-absent registry. Git identity covers HEAD, index, staged/unstaged and
+untracked nonignored content, plus linked-worktree and common-directory
+identity. Registry generations record owner identity and recovery lineage;
+live owners are preserved while failed or orphaned generations are recoverable.
+Duplicate invocations return the same run. Explicit
 replays use distinct lineage-bound keys and persist the source run, source
 result hashes, trigger source, and model execution disposition. Neither a
 duplicate role label nor a replay is evidence of independent verification.

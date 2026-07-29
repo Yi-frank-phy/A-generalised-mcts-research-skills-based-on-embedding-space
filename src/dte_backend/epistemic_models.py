@@ -533,6 +533,9 @@ class TerminalEpistemicHandoffV1(DTEBaseModel):
         default_factory=list
     )
     provenance_incomplete_node_ids: list[str] = Field(default_factory=list)
+    terminal_completeness: Literal["complete", "degraded"] | None = None
+    terminal_degradation_reason_codes: list[str] = Field(default_factory=list)
+    unresolved_coverage_ids: list[str] = Field(default_factory=list)
     material_relation_pairs_omitted_for_budget: list[str] = Field(
         default_factory=list
     )

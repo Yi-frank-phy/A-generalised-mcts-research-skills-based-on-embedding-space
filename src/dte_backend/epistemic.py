@@ -938,6 +938,11 @@ def build_terminal_epistemic_handoff(
         provenance_incomplete_node_ids=(
             operational_summary.run.provenance_incomplete_node_ids
         ),
+        terminal_completeness=operational_summary.run.terminal_completeness,
+        terminal_degradation_reason_codes=(
+            operational_summary.run.terminal_degradation_reason_codes
+        ),
+        unresolved_coverage_ids=operational_summary.run.unresolved_coverage_ids,
         material_relation_pairs_omitted_for_budget=(
             operational_summary.run.material_relation_pairs_omitted_for_budget
         ),

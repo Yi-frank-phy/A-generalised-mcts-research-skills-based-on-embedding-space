@@ -55,6 +55,10 @@ payloads do not erase shared conversation memory and therefore do not by
 themselves provide independent review. Treat a shared main-agent context as
 correlated fallback execution. Only a fresh runtime context with an accepted
 manifest/session attestation may be described as isolated.
+Request-side `fresh_context_required` is a requirement, not a verified fact.
+Model-authored output must never claim `backend_verified`; a
+`runtime_reported` attestation is only a host/runtime claim and does not prove
+hidden provider-internal context isolation.
 
 ### Strategy generation
 
@@ -183,7 +187,11 @@ UCB is not cost-aware by default. Cost is controlled by hard budgets and invocat
 
 ## Relation discipline
 
-Do not call Relation Oracle on every pair by default. Candidate pairs should first be selected by deterministic signals such as exact duplicate claims, close embeddings, near-tied UCB branches, or entropy plateau.
+Do not call Relation Oracle on every pair by default. Shared coverage alone is
+not a conflict. Blocking candidates require exact duplication, shared-evidence
+claim divergence, or explicit challenge/contradiction/counterexample facts;
+coverage alternatives, close embeddings, near-tied UCB branches, and entropy
+plateau are bounded enrichment signals.
 
 ## Required mental model
 

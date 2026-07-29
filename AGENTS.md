@@ -35,6 +35,9 @@ mismatched, or reused isolation facts fail closed before commit. The current App
 conversation satisfies only `shared_context_single_agent`, with
 `isolation_verified=false`. `hook-driver init` is idempotent; an intentional
 rerun uses `--replay-of-run-id` and retains source lineage.
+Request-side `fresh_context_required` is not proof. Model-authored results must
+never claim `backend_verified`; `runtime_reported` is only the host/runtime
+attestation, and no hidden provider-internal isolation is implied.
 
 For a sufficiently complex episode, use native subagents and tools when they
 materially improve coverage. Decompose according to the problem rather than a
@@ -58,8 +61,9 @@ For a Judge request, return only the granted nodes' observable scores, reasoning
 Executor and Judge outputs may include the bounded `epistemic_contributions`
 object when there is material information to preserve. Do not manufacture
 generic assumptions to fill the schema. A nonmaterial node needs no filler; a
-material node without qualifying provenance remains `provenance_incomplete`
-and blocks readiness. Prefer
+material node without qualifying provenance follows the RunSpec policy:
+terminal disclosure by default, or one provenance-only strict repair followed
+by explicit degraded exhaustion. Prefer
 critical dependencies, substantive support or challenge evidence, explicit
 counterexamples, transferable failure modes, and unresolved questions. Use
 machine identities for internal facts; give external evidence an `external:` or

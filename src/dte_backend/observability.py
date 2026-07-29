@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping, get_args
 
-from .app_driver import AppRunState, _validate_loaded_state
+from .app_driver import AppRunState, _upgrade_v2_state_payload, _validate_loaded_state
 from .continuation import count_committed_search_nodes
 from .episode_models import (
     ExecutorEpisodeOutput,
@@ -236,8 +236,11 @@ def _load_state_read_only(
     payload = deepcopy(raw)
     original_schema = payload.get("state_schema_version")
     reconstructed: list[str] = []
-    if original_schema != "app-run-state.v2":
-        payload["state_schema_version"] = "app-run-state.v2"
+    if original_schema == "app-run-state.v2":
+        _upgrade_v2_state_payload(payload)
+        reconstructed.append("state_schema_version:v2-to-v3")
+    elif original_schema != "app-run-state.v3":
+        payload["state_schema_version"] = "app-run-state.v3"
         reconstructed.append("state_schema_version")
     if "spec_hash" not in payload and isinstance(payload.get("spec"), dict):
         payload["spec_hash"] = hashlib.sha256(
@@ -2093,6 +2096,21 @@ def build_run_observability_summary(
                 if item.disposition == "budget_excluded"
             ],
             provenance_incomplete_node_ids=state.provenance_incomplete_node_ids,
+            terminal_completeness=(
+                None
+                if state.terminal_record is None
+                else state.terminal_record.completeness
+            ),
+            terminal_degradation_reason_codes=(
+                []
+                if state.terminal_record is None
+                else state.terminal_record.degradation_reason_codes
+            ),
+            unresolved_coverage_ids=(
+                []
+                if state.terminal_record is None
+                else state.terminal_record.unresolved_coverage_ids
+            ),
             material_relation_pairs_omitted_for_budget=(
                 []
                 if state.synthesis_readiness is None

@@ -2,6 +2,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 import pytest
@@ -1035,3 +1036,161 @@ def test_precontract_persisted_run_loads_as_direct_legacy_without_rewrite(tmp_pa
     loaded = load_app_run(run_dir)
     assert loaded.execution_contract.mode == "direct_legacy"
     assert "execution_contract" not in json.loads(state_path.read_text(encoding="utf-8"))
+
+
+def test_git_worktree_identity_tracks_all_material_local_states(tmp_path):
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    subprocess.run(["git", "init", "-q", str(repository)], check=True)
+    subprocess.run(
+        ["git", "-C", str(repository), "config", "user.name", "DTE Test"],
+        check=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(repository), "config", "user.email", "dte@example.invalid"],
+        check=True,
+    )
+    tracked = repository / "tracked.txt"
+    tracked.write_text("clean\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repository), "add", "tracked.txt"], check=True)
+    subprocess.run(
+        ["git", "-C", str(repository), "commit", "-q", "-m", "baseline"],
+        check=True,
+    )
+
+    clean = hook_driver._commit_worktree_identity(str(repository))
+    assert hook_driver._commit_worktree_identity(str(repository)) == clean
+
+    tracked.write_text("unstaged\n", encoding="utf-8")
+    unstaged = hook_driver._commit_worktree_identity(str(repository))
+    assert unstaged != clean
+    subprocess.run(["git", "-C", str(repository), "add", "tracked.txt"], check=True)
+    staged = hook_driver._commit_worktree_identity(str(repository))
+    assert staged not in {clean, unstaged}
+
+    untracked = repository / "untracked.bin"
+    untracked.write_bytes(b"\x00material-untracked\xff")
+    with_untracked = hook_driver._commit_worktree_identity(str(repository))
+    assert with_untracked != staged
+
+    info_exclude = repository / ".git" / "info" / "exclude"
+    info_exclude.write_text(".dte/\n", encoding="utf-8")
+    ignored = repository / ".dte" / "volatile.json"
+    ignored.parent.mkdir()
+    ignored.write_text("one", encoding="utf-8")
+    ignored_identity = hook_driver._commit_worktree_identity(str(repository))
+    ignored.write_text("two", encoding="utf-8")
+    assert hook_driver._commit_worktree_identity(str(repository)) == ignored_identity
+
+    linked = tmp_path / "linked"
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repository),
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "linked-test",
+            str(linked),
+            "HEAD",
+        ],
+        check=True,
+    )
+    linked_clean = hook_driver._commit_worktree_identity(str(linked))
+    assert linked_clean != clean
+    (linked / "tracked.txt").write_text("linked dirty\n", encoding="utf-8")
+    assert hook_driver._commit_worktree_identity(str(linked)) != linked_clean
+
+
+def test_invocation_registry_recovers_stale_and_failed_generations(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setenv("DTE_HOOK_STATE_ROOT", str(tmp_path / "hook-state"))
+    invocation_key = "a" * 64
+    registry = hook_driver.invocation_path(invocation_key)
+    registry.parent.mkdir(parents=True)
+    registry.write_text(
+        json.dumps(
+            {
+                "schema_version": "dte-hook-invocation.v2",
+                "status": "initializing",
+                "invocation_key": invocation_key,
+                "session_id": "dead-session",
+                "generation": 3,
+                "owner_pid": 424242,
+                "owner_token": "dead-owner",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(hook_driver, "_pid_is_alive", lambda pid: False)
+
+    stale_owner, existing = hook_driver._claim_invocation(
+        invocation_key=invocation_key,
+        session_id="retry-session",
+        trigger_source="explicit",
+        cwd=str(tmp_path),
+    )
+    assert existing is None
+    assert stale_owner is not None
+    assert stale_owner["generation"] == 4
+    assert stale_owner["recovery_history"][-1]["reason"] == "stale_initializing_owner"
+
+    hook_driver._atomic_json(
+        registry,
+        {
+            **stale_owner,
+            "status": "failed",
+            "error_type": "InjectedFailure",
+        },
+    )
+    failed_owner, existing = hook_driver._claim_invocation(
+        invocation_key=invocation_key,
+        session_id="retry-session",
+        trigger_source="explicit",
+        cwd=str(tmp_path),
+    )
+    assert existing is None
+    assert failed_owner is not None
+    assert failed_owner["generation"] == 5
+    assert failed_owner["recovery_history"][-1]["reason"] == "retry_after_failure"
+
+
+def test_invocation_registry_grants_single_concurrent_owner(tmp_path, monkeypatch):
+    monkeypatch.setenv("DTE_HOOK_STATE_ROOT", str(tmp_path / "hook-state"))
+    invocation_key = "b" * 64
+    barrier = threading.Barrier(2)
+    outcomes: list[str] = []
+
+    def claim(session_id: str) -> None:
+        barrier.wait()
+        try:
+            owner, _ = hook_driver._claim_invocation(
+                invocation_key=invocation_key,
+                session_id=session_id,
+                trigger_source="explicit",
+                cwd=str(tmp_path),
+            )
+        except RuntimeError:
+            outcomes.append("blocked")
+        else:
+            assert owner is not None
+            outcomes.append("owner")
+
+    threads = [
+        threading.Thread(target=claim, args=("session-one",)),
+        threading.Thread(target=claim, args=("session-two",)),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert sorted(outcomes) == ["blocked", "owner"]
+    registry = json.loads(
+        hook_driver.invocation_path(invocation_key).read_text(encoding="utf-8")
+    )
+    assert registry["status"] == "initializing"
+    assert registry["generation"] == 1

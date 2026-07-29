@@ -25,6 +25,7 @@ env/
 *.local
 
 # DTE runtime artifacts and caches
+.dte/
 .dte_cache/
 artifacts/
 *.log

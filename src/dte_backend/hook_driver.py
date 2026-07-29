@@ -11,6 +11,8 @@ import json
 import os
 import secrets
 import shutil
+import stat
+import subprocess
 import time
 import uuid
 from contextlib import contextmanager
@@ -142,6 +144,45 @@ def invocation_path(invocation_key: str) -> Path:
     return state_root() / "invocations" / f"{invocation_key}.json"
 
 
+@contextmanager
+def invocation_lock(invocation_key: str, *, timeout: float = 10.0) -> Iterator[None]:
+    """Serialize ownership changes for one content-addressed invocation."""
+
+    lock = state_root() / "invocation-locks" / f"{invocation_key}.lock"
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    deadline = time.monotonic() + timeout
+    descriptor: int | None = None
+    owner_token = uuid.uuid4().hex
+    owner_payload = json.dumps(
+        {
+            "schema_version": LOCK_SCHEMA,
+            "pid": os.getpid(),
+            "owner_token": owner_token,
+            "acquired_at": time.time(),
+        },
+        sort_keys=True,
+    ).encode("utf-8")
+    while descriptor is None:
+        try:
+            descriptor = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            written = 0
+            while written < len(owner_payload):
+                written += os.write(descriptor, owner_payload[written:])
+            os.fsync(descriptor)
+        except FileExistsError:
+            if _try_reclaim_stale_lock(lock):
+                continue
+            if time.monotonic() >= deadline:
+                raise TimeoutError("DTE hook invocation ownership is locked")
+            time.sleep(0.05)
+    try:
+        yield
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+        _release_owned_lock(lock, owner_token)
+
+
 def _atomic_json(path: Path, payload: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
@@ -166,6 +207,116 @@ def _pid_is_alive(pid: int) -> bool:
     except OSError:
         return False
     return True
+
+
+def _find_completed_invocation_run(cwd: str, invocation_key: str) -> dict[str, Any] | None:
+    """Recover a run published before its invocation registry was finalized."""
+
+    runs_root = Path(cwd) / ".dte" / "runs"
+    if not runs_root.is_dir():
+        return None
+    for candidate in sorted(runs_root.iterdir()):
+        state_file = candidate / "app_run_state.json"
+        if not candidate.is_dir() or candidate.name.startswith(".") or not state_file.is_file():
+            continue
+        try:
+            raw = json.loads(state_file.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            continue
+        if raw.get("hook_invocation_key") == invocation_key:
+            return {
+                "run_id": raw.get("run_id", candidate.name),
+                "run_dir": str(candidate.resolve()),
+                "replay_of_run_id": raw.get("replay_of_run_id"),
+                "source_episode_result_hashes": raw.get(
+                    "source_episode_result_hashes", []
+                ),
+                "model_execution_disposition": raw.get(
+                    "model_execution_disposition", "unknown"
+                ),
+            }
+    return None
+
+
+def _claim_invocation(
+    *,
+    invocation_key: str,
+    session_id: str,
+    trigger_source: str,
+    cwd: str,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """Claim one generation, recovering failed or ownerless generations safely."""
+
+    registry = invocation_path(invocation_key)
+    registry.parent.mkdir(parents=True, exist_ok=True)
+    with invocation_lock(invocation_key):
+        existing: dict[str, Any] | None = None
+        if registry.is_file():
+            existing = json.loads(registry.read_text(encoding="utf-8"))
+        if existing is not None and existing.get("status") == "complete":
+            return None, existing
+
+        generation = 1
+        recovery_history: list[dict[str, Any]] = []
+        if existing is not None:
+            generation = int(existing.get("generation", 1))
+            recovery_history = list(existing.get("recovery_history", []))
+            status = existing.get("status")
+            if status == "initializing":
+                owner_pid = existing.get("owner_pid")
+                if isinstance(owner_pid, int) and _pid_is_alive(owner_pid):
+                    raise RuntimeError(
+                        "an identical hook invocation is already initializing"
+                    )
+                if not isinstance(owner_pid, int):
+                    age = time.time() - registry.stat().st_mtime
+                    if age < MALFORMED_LOCK_STALE_SECONDS:
+                        raise RuntimeError(
+                            "an identical legacy hook invocation may still be "
+                            "initializing"
+                        )
+                recovered_run = _find_completed_invocation_run(cwd, invocation_key)
+                if recovered_run is not None:
+                    complete = {
+                        **existing,
+                        **recovered_run,
+                        "schema_version": "dte-hook-invocation.v2",
+                        "status": "complete",
+                        "completed_at": time.time(),
+                        "recovery_reason": "published_run_discovered",
+                    }
+                    _atomic_json(registry, complete)
+                    return None, complete
+                recovery_reason = "stale_initializing_owner"
+            elif status == "failed":
+                recovery_reason = "retry_after_failure"
+            else:
+                raise RuntimeError("hook invocation registry has an invalid status")
+            recovery_history.append(
+                {
+                    "generation": generation,
+                    "status": status,
+                    "owner_pid": existing.get("owner_pid"),
+                    "owner_token": existing.get("owner_token"),
+                    "reason": recovery_reason,
+                }
+            )
+            generation += 1
+
+        owner = {
+            "schema_version": "dte-hook-invocation.v2",
+            "status": "initializing",
+            "invocation_key": invocation_key,
+            "session_id": session_id,
+            "trigger_source": trigger_source,
+            "generation": generation,
+            "owner_pid": os.getpid(),
+            "owner_token": uuid.uuid4().hex,
+            "started_at": time.time(),
+            "recovery_history": recovery_history,
+        }
+        _atomic_json(registry, owner)
+        return owner, None
 
 
 def _try_reclaim_stale_lock(lock: Path) -> bool:
@@ -296,22 +447,132 @@ def _canonical_hash(value: Any) -> str:
 
 
 def _commit_worktree_identity(cwd: str) -> str:
+    """Hash the real Git index/worktree state, or an explicit non-Git snapshot."""
+
     root = Path(cwd).resolve()
-    git_entry = root / ".git"
-    if git_entry.is_file():
-        pointer = git_entry.read_text(encoding="utf-8", errors="replace").strip()
-        if pointer.startswith("gitdir:"):
-            git_entry = (root / pointer.split(":", 1)[1].strip()).resolve()
-    head = ""
-    if git_entry.is_dir() and (git_entry / "HEAD").is_file():
-        head = (git_entry / "HEAD").read_text(
-            encoding="utf-8", errors="replace"
-        ).strip()
-        if head.startswith("ref:"):
-            ref_path = git_entry / head.split(":", 1)[1].strip()
-            if ref_path.is_file():
-                head = f"{head}:{ref_path.read_text(encoding='ascii').strip()}"
-    return _canonical_hash({"cwd": str(root), "git_head": head or "unavailable"})
+
+    def git(*arguments: str, check: bool = True) -> bytes:
+        env = dict(os.environ)
+        env.update({"GIT_OPTIONAL_LOCKS": "0", "LC_ALL": "C", "LANG": "C"})
+        completed = subprocess.run(
+            ["git", "-C", str(root), *arguments],
+            capture_output=True,
+            env=env,
+            timeout=15,
+        )
+        if check and completed.returncode != 0:
+            detail = completed.stderr.decode("utf-8", errors="replace").strip()
+            raise ValueError(f"Git worktree identity failed: {detail}")
+        return completed.stdout
+
+    inside = git("rev-parse", "--is-inside-work-tree", check=False)
+    if inside.strip() != b"true":
+        excluded = {".git", ".dte", ".dte_cache", "artifacts"}
+        entries: list[tuple[str, str, str]] = []
+        if root.exists():
+            for path in sorted(root.rglob("*")):
+                relative = path.relative_to(root)
+                if any(part in excluded for part in relative.parts):
+                    continue
+                mode = path.lstat().st_mode
+                if stat.S_ISDIR(mode):
+                    continue
+                if stat.S_ISLNK(mode):
+                    content = os.readlink(path).encode("utf-8")
+                    kind = "symlink"
+                elif stat.S_ISREG(mode):
+                    content = path.read_bytes()
+                    kind = "file"
+                else:
+                    content = b""
+                    kind = "other"
+                entries.append(
+                    (
+                        relative.as_posix(),
+                        kind,
+                        hashlib.sha256(content).hexdigest(),
+                    )
+                )
+        return _canonical_hash(
+            {
+                "schema_version": "dte-filesystem-snapshot.v1",
+                "root": str(root),
+                "entries": entries,
+            }
+        )
+
+    toplevel = Path(
+        git("rev-parse", "--show-toplevel").decode("utf-8").strip()
+    ).resolve()
+    common_dir = Path(
+        git("rev-parse", "--path-format=absolute", "--git-common-dir")
+        .decode("utf-8")
+        .strip()
+    ).resolve()
+    git_dir = Path(
+        git("rev-parse", "--path-format=absolute", "--git-dir")
+        .decode("utf-8")
+        .strip()
+    ).resolve()
+    object_format = git("rev-parse", "--show-object-format").decode("ascii").strip()
+    head = git("rev-parse", "--verify", "HEAD^{commit}", check=False).decode(
+        "ascii", errors="replace"
+    ).strip() or "unborn"
+    index = git("ls-files", "--stage", "-z")
+    tracked_diff = git(
+        "diff",
+        "--binary",
+        "--full-index",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--no-renames",
+        "--no-color",
+        "--ignore-submodules=none",
+        "--",
+    )
+    untracked_paths = [
+        item.decode("utf-8", errors="surrogateescape")
+        for item in git("ls-files", "--others", "--exclude-standard", "-z").split(b"\0")
+        if item
+    ]
+    untracked: list[tuple[str, str, str]] = []
+    for relative_text in sorted(untracked_paths):
+        path = toplevel / relative_text
+        mode = path.lstat().st_mode
+        if stat.S_ISLNK(mode):
+            content = os.readlink(path).encode("utf-8")
+            kind = "symlink"
+        elif stat.S_ISREG(mode):
+            content = path.read_bytes()
+            kind = "file"
+        else:
+            content = b""
+            kind = "other"
+        untracked.append(
+            (relative_text, kind, hashlib.sha256(content).hexdigest())
+        )
+    return _canonical_hash(
+        {
+            "schema_version": "dte-git-worktree-identity.v2",
+            "repository": {
+                "common_git_dir": str(common_dir),
+                "object_format": object_format,
+            },
+            "worktree": {
+                "toplevel": str(toplevel),
+                "git_dir": str(git_dir),
+                "activation_root": str(root),
+            },
+            "snapshot": {
+                "head_oid": head,
+                "index_hash": hashlib.sha256(index).hexdigest(),
+                "tracked_worktree_diff_hash": hashlib.sha256(
+                    tracked_diff
+                ).hexdigest(),
+                "untracked": untracked,
+            },
+        }
+    )
 
 
 def hook_invocation_key(
@@ -1117,48 +1378,24 @@ def init_session(
                 },
             )
         registry = invocation_path(invocation_key)
-        registry.parent.mkdir(parents=True, exist_ok=True)
-        owner_payload = {
-            "schema_version": "dte-hook-invocation.v1",
-            "status": "initializing",
-            "invocation_key": invocation_key,
-            "session_id": session_id,
-            "trigger_source": manifest.activation_source,
-        }
-        try:
-            descriptor = os.open(
-                registry, os.O_CREAT | os.O_EXCL | os.O_WRONLY
-            )
-        except FileExistsError:
-            existing = json.loads(registry.read_text(encoding="utf-8"))
-            if (
-                existing.get("status") == "complete"
-                and isinstance(existing.get("run_dir"), str)
-            ):
-                return _record_receipt(
-                    manifest,
-                    operation="init",
-                    success=True,
-                    before_hash=before,
-                    controller_action="existing_run",
-                    payload={
-                        "run_dir": existing["run_dir"],
-                        "run_id": existing.get("run_id"),
-                        "duplicate_invocation": True,
-                        "invocation_key": invocation_key,
-                        "model_execution_disposition": "reused",
-                    },
+        owner_payload, existing = _claim_invocation(
+            invocation_key=invocation_key,
+            session_id=session_id,
+            trigger_source=manifest.activation_source,
+            cwd=manifest.cwd,
+        )
+        if existing is not None:
+            existing_session = existing.get("session_id")
+            if existing_session != session_id:
+                raise RuntimeError(
+                    "an identical hook invocation already belongs to another "
+                    f"session: {existing_session}"
                 )
             raise RuntimeError(
-                "an identical hook invocation is already initializing"
+                "the invocation run already exists but this session is not "
+                "bound to it; resume transaction recovery before init"
             )
-        else:
-            encoded = json.dumps(owner_payload, sort_keys=True).encode("utf-8")
-            try:
-                os.write(descriptor, encoded)
-                os.fsync(descriptor)
-            finally:
-                os.close(descriptor)
+        assert owner_payload is not None
         source_hashes: list[str] = []
         if replay_of_run_id is not None:
             source_dir = Path(manifest.cwd) / ".dte" / "runs" / replay_of_run_id
@@ -1231,6 +1468,7 @@ def init_session(
                     **owner_payload,
                     "status": "failed",
                     "error_type": type(exc).__name__,
+                    "failed_at": time.time(),
                 },
             )
             raise
@@ -1239,6 +1477,7 @@ def init_session(
             {
                 **owner_payload,
                 "status": "complete",
+                "completed_at": time.time(),
                 "run_id": run_id,
                 "run_dir": str(final_dir),
                 "replay_of_run_id": replay_of_run_id,
@@ -1272,6 +1511,8 @@ def init_session(
                 "run_dir": str(final_dir),
                 "invocation_key": invocation_key,
                 "duplicate_invocation": False,
+                "invocation_generation": owner_payload["generation"],
+                "invocation_recovery_history": owner_payload["recovery_history"],
                 "replay_of_run_id": replay_of_run_id,
                 "source_episode_result_hashes": source_hashes,
                 "model_execution_disposition": manifest.model_execution_disposition,

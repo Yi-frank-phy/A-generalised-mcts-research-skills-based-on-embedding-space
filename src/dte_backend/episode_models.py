@@ -39,6 +39,25 @@ IsolationAttestationSource = Literal[
     "backend_fallback",
     "legacy_unverified",
 ]
+REASONING_BOUNDARY_TRANSPORT_HINT_KEY = "dte_reasoning_boundary"
+
+
+def reasoning_boundary_transport_hint() -> dict[str, Any]:
+    """Return the immutable semantics attached to every newly built episode grant.
+
+    The backend does not inspect or preserve provider-private reasoning.  It only
+    declares that continuity is permitted inside the bounded episode and that no
+    private reasoning may be treated as an authorized cross-episode handoff.
+    Provider retained-reasoning and compaction state remain unattested.
+    """
+
+    return {
+        "schema_version": "dte-reasoning-boundary.v1",
+        "continuity_scope": "within_episode",
+        "cross_episode_private_reasoning_allowed": False,
+        "provider_retained_reasoning_attested": False,
+        "provider_compaction_attested": False,
+    }
 
 
 class RoleExecutionContract(DTEBaseModel):
@@ -430,6 +449,21 @@ def canonical_json_bytes(value: Any) -> bytes:
     ).encode("utf-8")
 
 
+def _bind_reasoning_boundary_transport_hint(request: EpisodeRequest) -> None:
+    """Install the backend-reserved reasoning firewall before manifest hashing."""
+
+    expected = reasoning_boundary_transport_hint()
+    hints = dict(request.transport_hints or {})
+    supplied = hints.get(REASONING_BOUNDARY_TRANSPORT_HINT_KEY)
+    if supplied is not None and supplied != expected:
+        raise ValueError(
+            "transport_hints.dte_reasoning_boundary is backend-reserved and "
+            "cannot authorize cross-episode private reasoning"
+        )
+    hints[REASONING_BOUNDARY_TRANSPORT_HINT_KEY] = expected
+    request.transport_hints = hints
+
+
 def compute_role_context_manifest_hash(request: EpisodeRequest) -> str:
     """Hash the exact serialized role-visible request, excluding its own digest."""
 
@@ -446,8 +480,9 @@ def bind_role_execution_contract(
     isolation_mode: RoleIsolationMode,
     previous_role_session_ids: list[str] | None = None,
 ) -> EpisodeRequest:
-    """Attach the final request-side isolation contract and its manifest digest."""
+    """Attach the final role isolation and reasoning-boundary contract."""
 
+    _bind_reasoning_boundary_transport_hint(request)
     request.role_execution_contract = RoleExecutionContract(
         isolation_mode=isolation_mode,
         context_manifest_hash="0" * 64,

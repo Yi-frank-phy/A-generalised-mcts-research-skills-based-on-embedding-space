@@ -39,25 +39,30 @@ IsolationAttestationSource = Literal[
     "backend_fallback",
     "legacy_unverified",
 ]
-REASONING_BOUNDARY_TRANSPORT_HINT_KEY = "dte_reasoning_boundary"
+REASONING_BOUNDARY_REQUIREMENT_PREFIX = "dte_reasoning_boundary="
 
 
-def reasoning_boundary_transport_hint() -> dict[str, Any]:
-    """Return the immutable semantics attached to every newly built episode grant.
+def reasoning_boundary_requirement() -> str:
+    """Return the canonical role-visible episode-boundary requirement.
 
-    The backend does not inspect or preserve provider-private reasoning.  It only
-    declares that continuity is permitted inside the bounded episode and that no
-    private reasoning may be treated as an authorized cross-episode handoff.
-    Provider retained-reasoning and compaction state remain unattested.
+    The backend does not inspect or preserve provider-opaque runtime state. It
+    declares only that continuity is permitted inside the bounded episode and
+    that such state is not an authorized cross-episode handoff. Provider
+    retained-reasoning and compaction state remain unattested.
     """
 
-    return {
+    payload = {
         "schema_version": "dte-reasoning-boundary.v1",
         "continuity_scope": "within_episode",
         "cross_episode_private_reasoning_allowed": False,
         "provider_retained_reasoning_attested": False,
         "provider_compaction_attested": False,
     }
+    return REASONING_BOUNDARY_REQUIREMENT_PREFIX + json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
 
 
 class RoleExecutionContract(DTEBaseModel):
@@ -449,19 +454,22 @@ def canonical_json_bytes(value: Any) -> bytes:
     ).encode("utf-8")
 
 
-def _bind_reasoning_boundary_transport_hint(request: EpisodeRequest) -> None:
-    """Install the backend-reserved reasoning firewall before manifest hashing."""
+def _bind_reasoning_boundary_requirement(request: EpisodeRequest) -> None:
+    """Install the backend-reserved episode boundary before manifest hashing."""
 
-    expected = reasoning_boundary_transport_hint()
-    hints = dict(request.transport_hints or {})
-    supplied = hints.get(REASONING_BOUNDARY_TRANSPORT_HINT_KEY)
-    if supplied is not None and supplied != expected:
-        raise ValueError(
-            "transport_hints.dte_reasoning_boundary is backend-reserved and "
-            "cannot authorize cross-episode private reasoning"
-        )
-    hints[REASONING_BOUNDARY_TRANSPORT_HINT_KEY] = expected
-    request.transport_hints = hints
+    expected = reasoning_boundary_requirement()
+    requirements = list(request.coverage_requirements)
+    for supplied in requirements:
+        if (
+            supplied.startswith(REASONING_BOUNDARY_REQUIREMENT_PREFIX)
+            and supplied != expected
+        ):
+            raise ValueError(
+                "dte_reasoning_boundary is backend-reserved and cannot be weakened"
+            )
+    if expected not in requirements:
+        requirements.append(expected)
+    request.coverage_requirements = requirements
 
 
 def compute_role_context_manifest_hash(request: EpisodeRequest) -> str:
@@ -480,13 +488,13 @@ def bind_role_execution_contract(
     isolation_mode: RoleIsolationMode,
     previous_role_session_ids: list[str] | None = None,
 ) -> EpisodeRequest:
-    """Attach the final role isolation and reasoning-boundary contract."""
+    """Attach the final role isolation and episode-boundary contract."""
 
-    _bind_reasoning_boundary_transport_hint(request)
+    _bind_reasoning_boundary_requirement(request)
     request.role_execution_contract = RoleExecutionContract(
         isolation_mode=isolation_mode,
         context_manifest_hash="0" * 64,
-        # This is a requirement, not a runtime fact.  Verification is attached
+        # This is a requirement, not a runtime fact. Verification is attached
         # only after transport/runtime attestation is validated at submission.
         isolation_attestation_source="legacy_unverified",
         visible_input_refs=sorted(request.selected_node_revisions),

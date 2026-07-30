@@ -60,6 +60,23 @@ Model-authored output must never claim `backend_verified`; a
 `runtime_reported` attestation is only a host/runtime claim and does not prove
 hidden provider-internal context isolation.
 
+### Episode reasoning firewall
+
+Private reasoning continuity, tool use, and runtime compaction may continue only
+inside the currently granted bounded AgentEpisode. At the episode boundary,
+private reasoning and full prior-role transcripts are not authorized handoff
+state. A later role receives only its exact structured `EpisodeRequest`,
+committed graph or epistemic facts selected by the backend, and any explicit
+terminal handoff. This is micro-continuity with macro-restart.
+
+The backend-reserved `dte_reasoning_boundary=<canonical-json>` role requirement
+is included in the role-context manifest. It declares
+`continuity_scope=within_episode` and
+`cross_episode_private_reasoning_allowed=false` without changing transport
+hints. It does not claim that DTE can observe or verify provider retained-
+reasoning or compaction state, and neither mechanism proves fresh-context
+isolation.
+
 ### Strategy generation
 
 Strategy generation creates candidate SearchNodes. It should produce mutually distinct routes and should not rank its own candidates. Ranking belongs to Judge and EvolutionController.

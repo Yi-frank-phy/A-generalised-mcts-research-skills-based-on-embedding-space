@@ -39,6 +39,30 @@ IsolationAttestationSource = Literal[
     "backend_fallback",
     "legacy_unverified",
 ]
+REASONING_BOUNDARY_REQUIREMENT_PREFIX = "dte_reasoning_boundary="
+
+
+def reasoning_boundary_requirement() -> str:
+    """Return the canonical role-visible episode-boundary requirement.
+
+    The backend does not inspect or preserve provider-opaque runtime state. It
+    declares only that continuity is permitted inside the bounded episode and
+    that such state is not an authorized cross-episode handoff. Provider
+    retained-reasoning and compaction state remain unattested.
+    """
+
+    payload = {
+        "schema_version": "dte-reasoning-boundary.v1",
+        "continuity_scope": "within_episode",
+        "cross_episode_private_reasoning_allowed": False,
+        "provider_retained_reasoning_attested": False,
+        "provider_compaction_attested": False,
+    }
+    return REASONING_BOUNDARY_REQUIREMENT_PREFIX + json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
 
 
 class RoleExecutionContract(DTEBaseModel):
@@ -430,6 +454,24 @@ def canonical_json_bytes(value: Any) -> bytes:
     ).encode("utf-8")
 
 
+def _bind_reasoning_boundary_requirement(request: EpisodeRequest) -> None:
+    """Install the backend-reserved episode boundary before manifest hashing."""
+
+    expected = reasoning_boundary_requirement()
+    requirements = list(request.coverage_requirements)
+    for supplied in requirements:
+        if (
+            supplied.startswith(REASONING_BOUNDARY_REQUIREMENT_PREFIX)
+            and supplied != expected
+        ):
+            raise ValueError(
+                "dte_reasoning_boundary is backend-reserved and cannot be weakened"
+            )
+    if expected not in requirements:
+        requirements.append(expected)
+    request.coverage_requirements = requirements
+
+
 def compute_role_context_manifest_hash(request: EpisodeRequest) -> str:
     """Hash the exact serialized role-visible request, excluding its own digest."""
 
@@ -446,12 +488,13 @@ def bind_role_execution_contract(
     isolation_mode: RoleIsolationMode,
     previous_role_session_ids: list[str] | None = None,
 ) -> EpisodeRequest:
-    """Attach the final request-side isolation contract and its manifest digest."""
+    """Attach the final role isolation and episode-boundary contract."""
 
+    _bind_reasoning_boundary_requirement(request)
     request.role_execution_contract = RoleExecutionContract(
         isolation_mode=isolation_mode,
         context_manifest_hash="0" * 64,
-        # This is a requirement, not a runtime fact.  Verification is attached
+        # This is a requirement, not a runtime fact. Verification is attached
         # only after transport/runtime attestation is validated at submission.
         isolation_attestation_source="legacy_unverified",
         visible_input_refs=sorted(request.selected_node_revisions),

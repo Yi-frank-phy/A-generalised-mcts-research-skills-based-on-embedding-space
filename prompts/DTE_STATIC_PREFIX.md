@@ -69,11 +69,13 @@ state. A later role receives only its exact structured `EpisodeRequest`,
 committed graph or epistemic facts selected by the backend, and any explicit
 terminal handoff. This is micro-continuity with macro-restart.
 
-The `dte_reasoning_boundary` transport hint is backend-reserved and included in
-the role-context manifest. It declares `continuity_scope=within_episode` and
-`cross_episode_private_reasoning_allowed=false`. It does not claim that DTE can
-observe or verify provider retained-reasoning or compaction state, and neither
-mechanism proves fresh-context isolation.
+The backend-reserved `dte_reasoning_boundary=<canonical-json>` role requirement
+is included in the role-context manifest. It declares
+`continuity_scope=within_episode` and
+`cross_episode_private_reasoning_allowed=false` without changing transport
+hints. It does not claim that DTE can observe or verify provider retained-
+reasoning or compaction state, and neither mechanism proves fresh-context
+isolation.
 
 ### Strategy generation
 

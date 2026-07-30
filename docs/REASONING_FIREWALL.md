@@ -20,24 +20,30 @@ independent reviewer in the same conversation.
 
 ## Machine contract
 
-Every newly built `EpisodeRequest` carries the backend-reserved transport hint:
+Every newly built `EpisodeRequest` carries a backend-reserved role requirement
+inside `coverage_requirements`:
+
+```text
+dte_reasoning_boundary=<canonical-json>
+```
+
+The canonical JSON records:
 
 ```json
 {
-  "dte_reasoning_boundary": {
-    "schema_version": "dte-reasoning-boundary.v1",
-    "continuity_scope": "within_episode",
-    "cross_episode_private_reasoning_allowed": false,
-    "provider_retained_reasoning_attested": false,
-    "provider_compaction_attested": false
-  }
+  "schema_version": "dte-reasoning-boundary.v1",
+  "continuity_scope": "within_episode",
+  "cross_episode_private_reasoning_allowed": false,
+  "provider_retained_reasoning_attested": false,
+  "provider_compaction_attested": false
 }
 ```
 
-The hint is installed before the role-context manifest is hashed. A caller may
-supply unrelated transport hints, but it cannot replace this object with a more
-permissive contract. A changed reasoning boundary therefore invalidates the
-manifest presented by a strict runtime.
+The requirement is installed before the role-context manifest is hashed. A
+caller may supply unrelated coverage requirements and transport hints, but it
+cannot replace the reserved requirement with a more permissive contract. A
+changed reasoning boundary therefore invalidates the manifest presented by a
+strict runtime without changing the existing transport-hints interface.
 
 The backend does not read, persist, or verify provider-private chain of thought.
 `provider_retained_reasoning_attested=false` and
@@ -86,4 +92,5 @@ the same request contract without changing DTE search or allocation mathematics.
 The firewall is injected only when a new role request is built. No field was
 added to the persisted `EpisodeRequest` or `RoleExecutionContract` Pydantic
 schemas, so historical serialized requests and their stored request hashes are
-not rewritten during load or migration.
+not rewritten during load or migration. Existing transport hints retain their
+previous shape.

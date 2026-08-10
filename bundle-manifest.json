@@ -8,8 +8,8 @@
     },
     {
       "path": "hooks/dte_enforcement_hook.py",
-      "size": 30039,
-      "sha256": "658ecf3996d3d587e59e570d7fdc109d3baf38603130e2d4ce0c1d2d9c3be960"
+      "size": 30613,
+      "sha256": "a0e997e778e4691117dddc62c277549dc214d80b64d0840cf1dcc6c7b0c2f1a4"
     },
     {
       "path": "prompts/DTE_STATIC_PREFIX.md",
@@ -327,5 +327,5 @@
       "sha256": "b7c578325f60737a6feda3660fd6c53b4d15782a3c931cf2a5e6718591ce4092"
     }
   ],
-  "bundle_sha256": "36888d0645cc386c9a5342827a7fc964821418ebb8833fb438d06a1eee87d719"
+  "bundle_sha256": "72475447ac9ee342a2b3e8627c5f3fd17a218b3adb8b83b6e1a3ad013d3d13c5"
 }

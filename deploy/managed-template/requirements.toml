@@ -8,8 +8,8 @@ windows_managed_dir = 'C:\ProgramData\Codex\DTE\hooks'
 [[hooks.UserPromptSubmit]]
 [[hooks.UserPromptSubmit.hooks]]
 type = "command"
-command = "python3 /opt/codex/dte/hooks/dte_enforcement_hook.py --dte-hook-content-sha256=658ecf3996d3d587e59e570d7fdc109d3baf38603130e2d4ce0c1d2d9c3be960 --dte-skill-root=/opt/codex/dte"
-command_windows = 'python C:\ProgramData\Codex\DTE\hooks\dte_enforcement_hook.py --dte-hook-content-sha256=658ecf3996d3d587e59e570d7fdc109d3baf38603130e2d4ce0c1d2d9c3be960 --dte-skill-root=C:\ProgramData\Codex\DTE'
+command = "python3 /opt/codex/dte/hooks/dte_enforcement_hook.py --dte-hook-content-sha256=a0e997e778e4691117dddc62c277549dc214d80b64d0840cf1dcc6c7b0c2f1a4 --dte-skill-root=/opt/codex/dte"
+command_windows = 'python C:\ProgramData\Codex\DTE\hooks\dte_enforcement_hook.py --dte-hook-content-sha256=a0e997e778e4691117dddc62c277549dc214d80b64d0840cf1dcc6c7b0c2f1a4 --dte-skill-root=C:\ProgramData\Codex\DTE'
 timeout = 30
 statusMessage = "Enforcing App-native DTE protocol"
 
@@ -17,8 +17,8 @@ statusMessage = "Enforcing App-native DTE protocol"
 matcher = "*"
 [[hooks.PreToolUse.hooks]]
 type = "command"
-command = "python3 /opt/codex/dte/hooks/dte_enforcement_hook.py --dte-hook-content-sha256=658ecf3996d3d587e59e570d7fdc109d3baf38603130e2d4ce0c1d2d9c3be960 --dte-skill-root=/opt/codex/dte"
-command_windows = 'python C:\ProgramData\Codex\DTE\hooks\dte_enforcement_hook.py --dte-hook-content-sha256=658ecf3996d3d587e59e570d7fdc109d3baf38603130e2d4ce0c1d2d9c3be960 --dte-skill-root=C:\ProgramData\Codex\DTE'
+command = "python3 /opt/codex/dte/hooks/dte_enforcement_hook.py --dte-hook-content-sha256=a0e997e778e4691117dddc62c277549dc214d80b64d0840cf1dcc6c7b0c2f1a4 --dte-skill-root=/opt/codex/dte"
+command_windows = 'python C:\ProgramData\Codex\DTE\hooks\dte_enforcement_hook.py --dte-hook-content-sha256=a0e997e778e4691117dddc62c277549dc214d80b64d0840cf1dcc6c7b0c2f1a4 --dte-skill-root=C:\ProgramData\Codex\DTE'
 timeout = 30
 statusMessage = "Enforcing App-native DTE protocol"
 
@@ -26,16 +26,16 @@ statusMessage = "Enforcing App-native DTE protocol"
 matcher = "*"
 [[hooks.PostToolUse.hooks]]
 type = "command"
-command = "python3 /opt/codex/dte/hooks/dte_enforcement_hook.py --dte-hook-content-sha256=658ecf3996d3d587e59e570d7fdc109d3baf38603130e2d4ce0c1d2d9c3be960 --dte-skill-root=/opt/codex/dte"
-command_windows = 'python C:\ProgramData\Codex\DTE\hooks\dte_enforcement_hook.py --dte-hook-content-sha256=658ecf3996d3d587e59e570d7fdc109d3baf38603130e2d4ce0c1d2d9c3be960 --dte-skill-root=C:\ProgramData\Codex\DTE'
+command = "python3 /opt/codex/dte/hooks/dte_enforcement_hook.py --dte-hook-content-sha256=a0e997e778e4691117dddc62c277549dc214d80b64d0840cf1dcc6c7b0c2f1a4 --dte-skill-root=/opt/codex/dte"
+command_windows = 'python C:\ProgramData\Codex\DTE\hooks\dte_enforcement_hook.py --dte-hook-content-sha256=a0e997e778e4691117dddc62c277549dc214d80b64d0840cf1dcc6c7b0c2f1a4 --dte-skill-root=C:\ProgramData\Codex\DTE'
 timeout = 30
 statusMessage = "Enforcing App-native DTE protocol"
 
 [[hooks.Stop]]
 [[hooks.Stop.hooks]]
 type = "command"
-command = "python3 /opt/codex/dte/hooks/dte_enforcement_hook.py --dte-hook-content-sha256=658ecf3996d3d587e59e570d7fdc109d3baf38603130e2d4ce0c1d2d9c3be960 --dte-skill-root=/opt/codex/dte"
-command_windows = 'python C:\ProgramData\Codex\DTE\hooks\dte_enforcement_hook.py --dte-hook-content-sha256=658ecf3996d3d587e59e570d7fdc109d3baf38603130e2d4ce0c1d2d9c3be960 --dte-skill-root=C:\ProgramData\Codex\DTE'
+command = "python3 /opt/codex/dte/hooks/dte_enforcement_hook.py --dte-hook-content-sha256=a0e997e778e4691117dddc62c277549dc214d80b64d0840cf1dcc6c7b0c2f1a4 --dte-skill-root=/opt/codex/dte"
+command_windows = 'python C:\ProgramData\Codex\DTE\hooks\dte_enforcement_hook.py --dte-hook-content-sha256=a0e997e778e4691117dddc62c277549dc214d80b64d0840cf1dcc6c7b0c2f1a4 --dte-skill-root=C:\ProgramData\Codex\DTE'
 timeout = 30
 statusMessage = "Enforcing App-native DTE protocol"
 
@@ -43,7 +43,7 @@ statusMessage = "Enforcing App-native DTE protocol"
 matcher = "startup|resume|clear|compact"
 [[hooks.SessionStart.hooks]]
 type = "command"
-command = "python3 /opt/codex/dte/hooks/dte_enforcement_hook.py --dte-hook-content-sha256=658ecf3996d3d587e59e570d7fdc109d3baf38603130e2d4ce0c1d2d9c3be960 --dte-skill-root=/opt/codex/dte"
-command_windows = 'python C:\ProgramData\Codex\DTE\hooks\dte_enforcement_hook.py --dte-hook-content-sha256=658ecf3996d3d587e59e570d7fdc109d3baf38603130e2d4ce0c1d2d9c3be960 --dte-skill-root=C:\ProgramData\Codex\DTE'
+command = "python3 /opt/codex/dte/hooks/dte_enforcement_hook.py --dte-hook-content-sha256=a0e997e778e4691117dddc62c277549dc214d80b64d0840cf1dcc6c7b0c2f1a4 --dte-skill-root=/opt/codex/dte"
+command_windows = 'python C:\ProgramData\Codex\DTE\hooks\dte_enforcement_hook.py --dte-hook-content-sha256=a0e997e778e4691117dddc62c277549dc214d80b64d0840cf1dcc6c7b0c2f1a4 --dte-skill-root=C:\ProgramData\Codex\DTE'
 timeout = 30
 statusMessage = "Enforcing App-native DTE protocol"

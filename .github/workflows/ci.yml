@@ -73,9 +73,9 @@ jobs:
           "$RUNNER_TEMP/dte-wheel-venv/bin/dte-backend" hook-driver --help
       - name: Verify repository Skill bundle
         run: |
-          python scripts/generate_bundle_manifest.py --verify
-          python scripts/install_skill_bundle.py --source . --target "$RUNNER_TEMP/dte-installed-skill"
-          python "$RUNNER_TEMP/dte-installed-skill/scripts/dte_hook_driver_entry.py" hook-driver --help
+          "$RUNNER_TEMP/dte-wheel-venv/bin/python" scripts/generate_bundle_manifest.py --verify
+          "$RUNNER_TEMP/dte-wheel-venv/bin/python" scripts/install_skill_bundle.py --source . --target "$RUNNER_TEMP/dte-installed-skill"
+          "$RUNNER_TEMP/dte-wheel-venv/bin/python" "$RUNNER_TEMP/dte-installed-skill/scripts/dte_hook_driver_entry.py" hook-driver --help
           python - <<'PY'
           import hashlib
           from pathlib import Path
@@ -101,5 +101,5 @@ jobs:
           assert requirements.count(f"--dte-hook-content-sha256={digest}") == 10
           assert requirements.count("--dte-skill-root=") == 10
           PY
-          python scripts/install_dte_hooks.py --scope managed-template
+          "$RUNNER_TEMP/dte-wheel-venv/bin/python" scripts/install_dte_hooks.py --scope managed-template
 

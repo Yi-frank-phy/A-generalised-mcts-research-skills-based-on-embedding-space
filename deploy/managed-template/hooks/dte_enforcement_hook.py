@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -78,17 +79,30 @@ def _skill_root(arguments: list[str]) -> Path:
 SKILL_ROOT = _skill_root(sys.argv[1:])
 SRC = SKILL_ROOT / "src"
 # An older editable DTE checkout may also be installed. The enforcement hook
-# must bind to the skill tree which supplied this dispatcher, not whichever
-# `.pth` entry happens to sort first in site-packages.
-filtered_path = []
+# must bind to the skill tree which supplied this dispatcher. Keep other
+# site-packages entries because they also supply runtime dependencies such as
+# Pydantic; putting the pinned source first is sufficient to win module lookup.
+filtered_path: list[str] = []
 for entry in sys.path:
     try:
-        competing_package = (Path(entry) / "dte_backend").is_dir()
+        duplicate_source = Path(entry).resolve() == SRC
     except (OSError, TypeError):
-        competing_package = False
-    if not competing_package:
+        duplicate_source = False
+    if not duplicate_source:
         filtered_path.append(entry)
 sys.path[:] = [str(SRC), *filtered_path]
+backend_spec = importlib.util.find_spec("dte_backend")
+expected_backend = (SRC / "dte_backend" / "__init__.py").resolve()
+try:
+    actual_backend = (
+        Path(backend_spec.origin).resolve()
+        if backend_spec is not None and isinstance(backend_spec.origin, str)
+        else None
+    )
+except OSError:
+    actual_backend = None
+if actual_backend != expected_backend:
+    raise RuntimeError("DTE hook could not bind to the pinned Skill backend")
 
 from dte_backend.hook_driver import (  # noqa: E402
     HookDriverReceipt,

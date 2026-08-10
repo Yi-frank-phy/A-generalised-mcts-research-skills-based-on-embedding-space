@@ -20,16 +20,19 @@ def calculate_ucb(
     tau: float = 1.0,
     c_explore: float = 1.0,
 ) -> float:
-    """Default DTE UCB.
+    """Return the canonical DTE upper-confidence score.
 
-    The base objective is not cost-aware:
+    The restored theoretical primitive is
 
-        U = V + c * tau * uncertainty
+        U = V + SD
 
-    Cost is controlled outside this formula by hard run budgets.
+    where ``uncertainty`` is the current standard-deviation/standard-error-like
+    estimator. ``tau`` and ``c_explore`` remain accepted temporarily for call-site
+    compatibility but do not alter the canonical score.
     """
 
-    return float(score + c_explore * tau * uncertainty)
+    del tau, c_explore
+    return float(score + uncertainty)
 
 
 def boltzmann_allocation(
@@ -42,14 +45,14 @@ def boltzmann_allocation(
     """Allocate integer expansion budgets with a Boltzmann rule.
 
     Args:
-        scores: value scores in [0, 1].
+        scores: allocation values, normally canonical UCB scores.
         allocation_mass_per_iteration: continuous Boltzmann allocation mass.
         max_children_per_iteration: hard cap on committed children.
         node_ids: stable identifiers used for deterministic trimming.
         temperature: higher means more uniform; lower means greedier.
 
     Returns:
-        A list of nonnegative integer expansion budgets.
+        A list of nonnegative integer child counts.
     """
 
     if allocation_mass_per_iteration <= 0 or max_children_per_iteration <= 0:
@@ -60,6 +63,8 @@ def boltzmann_allocation(
         raise ValueError("scores and node_ids must have equal length")
 
     values = np.asarray(scores, dtype=float)
+    # This tiny denominator is only a numerical representation of the T -> 0
+    # limiting distribution. Controller telemetry may still report T == 0.
     safe_t = max(float(temperature), 1e-10)
 
     # log-sum-exp for numerical stability
@@ -123,15 +128,15 @@ def allocate_frontier(
     temperature: float = 1.0,
     allocation_metric: str = "ucb",
 ) -> list[AllocationResult]:
-    """Compute UCB scores and Boltzmann expansion budgets for frontier nodes.
+    """Compute canonical UCB scores and Boltzmann expansion budgets.
 
-    This assumes Judge has already filled `score`. If `uncertainty` is missing,
-    a neutral value of 0.0 is used; real systems should use density/novelty.
+    Judge fills ``score`` and the geometry layer fills ``uncertainty``. The local
+    UCB score is always ``score + uncertainty``. Legacy ``tau`` and
+    ``c_explore`` arguments are accepted for compatibility but do not affect UCB.
 
-    `allocation_metric="ucb"` is the prototype default because the user
-    specifically wants entropy/uncertainty-guided exploration to affect actual
-    expansion, not merely display ranking. Use `"score"` to recover the older
-    pure-value allocation behavior.
+    ``allocation_metric=\"ucb\"`` remains the default so local uncertainty affects
+    actual expansion rather than display only. ``\"score\"`` retains the older
+    pure-value allocation behavior as an explicit compatibility option.
     """
 
     frontier = [n for n in nodes if n.status == "frontier"]

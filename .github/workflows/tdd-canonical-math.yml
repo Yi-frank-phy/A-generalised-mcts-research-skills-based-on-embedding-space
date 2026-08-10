@@ -5,11 +5,13 @@ on:
     paths:
       - "src/dte_backend/**"
       - "tests/**"
+      - "SPEC.md"
+      - "PROTOTYPE.md"
       - ".github/workflows/tdd-canonical-math.yml"
   workflow_dispatch:
 
 jobs:
-  focused:
+  full-regression:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -18,11 +20,12 @@ jobs:
           python-version: "3.12"
       - name: Install
         run: python -m pip install -e .[dev]
-      - name: Focused controller tests
-        run: >-
-          python -m pytest
-          tests/test_math_engine.py
-          tests/test_entropy.py
-          tests/test_runner.py
-          tests/test_canonical_controller_math.py
-          -q
+      - name: Authoritative math drift guard
+        run: |
+          if git grep -n 'U_i = V_i + c \* tau \* uncertainty_i' -- SPEC.md PROTOTYPE.md src/dte_backend; then exit 1; fi
+          if git grep -n 'max(entropy_state.normalized_temperature, 0.05)' -- src/dte_backend; then exit 1; fi
+          if git grep -n 'max(entropy_state.effective_temperature, 0.05)' -- src/dte_backend; then exit 1; fi
+      - name: Full tests
+        run: python -m pytest -q
+      - name: Smoke workflow
+        run: python scripts/smoke_workflow.py

@@ -577,6 +577,48 @@ def test_retry_only_commits_the_final_attempt_epistemic_records(tmp_path):
     assert state.epistemic_ledger.statements[0].attempt_id != first.attempt_id
 
 
+def test_repository_reference_is_repairable_on_the_same_attempt(tmp_path):
+    run_dir = tmp_path / "repository-repair"
+    create_app_run(
+        run_dir,
+        spec(),
+        [SearchNode(node_id="parent", claim="parent claim")],
+        run_id="repository-repair-run",
+    )
+    request = next_app_episode(run_dir).request
+    assert "repository:" not in request.allowed_epistemic_reference_prefixes
+    bad_bundle = assumption_bundle().model_copy(deep=True)
+    bad_bundle.statements[0].basis_refs = ["repository:README.md"]
+    bad_output = JudgeEpisodeOutput(
+        observations=[
+            JudgeObservation(
+                node_id="parent",
+                score=0.8,
+                reasoning="repairable provenance",
+                risks=[],
+            )
+        ],
+        epistemic_contributions=bad_bundle,
+    )
+    repaired = submit_app_episode_result(run_dir, result_for(request, bad_output))
+    assert repaired.repair_required is True
+    assert "repository:" in (repaired.commit_outcome.rejection_reason or "")
+    state = app_run_status(run_dir)
+    assert state.active_attempt_id == request.attempt_id
+    assert state.epistemic_ledger == EpistemicLedgerV1()
+
+    corrected_output = bad_output.model_copy(deep=True)
+    corrected_output.epistemic_contributions.statements[0].basis_refs = []
+    committed = submit_app_episode_result(
+        run_dir,
+        result_for(request, corrected_output),
+    )
+    assert committed.commit_outcome.accepted is True
+    final = app_run_status(run_dir)
+    assert len(final.epistemic_ledger.statements) == 1
+    assert final.epistemic_ledger.statements[0].attempt_id == request.attempt_id
+
+
 def test_late_superseded_attempt_cannot_write_epistemic_ledger(tmp_path):
     run_dir = tmp_path / "late"
     create_app_run(
@@ -586,6 +628,7 @@ def test_late_superseded_attempt_cannot_write_epistemic_ledger(tmp_path):
         run_id="late-run",
     )
     first = next_app_episode(run_dir).request
+    fail_app_episode(run_dir, first.episode_id, first.attempt_id, "retry for late-result test")
     retry = retry_app_episode(run_dir, first.episode_id).request
     output = JudgeEpisodeOutput(
         observations=[

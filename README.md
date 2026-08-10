@@ -128,13 +128,15 @@ The production App-native command loop is:
 python -m dte_backend hook-driver activate
 python -m dte_backend hook-driver init --spec <spec.json> --nodes <committed-nodes.json>
 python -m dte_backend hook-driver step
+# Read all chunks named by the compact request reference.
+python -m dte_backend hook-driver request --chunk-index 0
 # Current App main agent performs the returned request with native tools/subagents.
 python -m dte_backend hook-driver submit --result <result.json>
 # Repeat step / bounded App episode / submit until the backend becomes terminal.
 python -m dte_backend hook-driver handoff
 ```
 
-Use `hook-driver control --action retry|cancel|request-synthesis` for explicit
+Use `hook-driver control --action retry|fail-attempt|cancel-attempt|cancel-run|request-synthesis` for explicit
 operator transitions. The direct `create-run`, `next-episode`,
 `submit-episode-result`, `fail-episode`, `cancel-episode`, and `retry-episode`
 commands are development/direct-legacy interfaces and fail closed against a

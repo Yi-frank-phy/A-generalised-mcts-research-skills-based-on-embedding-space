@@ -11,6 +11,7 @@ import dte_backend.app_driver as app_driver
 from dte_backend.app_driver import (
     app_run_status,
     cancel_app_episode,
+    cancel_app_run,
     create_app_run,
     fail_app_episode,
     next_app_episode,
@@ -491,13 +492,69 @@ def test_retry_creates_new_attempt_and_supersedes_old_result(tmp_path):
     assert old_outcome.commit_outcome.accepted is False
     assert "superseded" in old_outcome.commit_outcome.rejection_reason
     assert graph_snapshot(run_dir) == before
-
     new_outcome = submit_app_episode_result(run_dir, result_for(retry.request))
     assert new_outcome.commit_outcome.accepted is True
     state = app_run_status(run_dir)
     episode = lifecycle_for(state, first.episode_id)
     assert episode.attempts[0].status == "superseded"
     assert episode.attempts[1].status == "committed"
+
+
+def test_active_attempt_requires_explicit_failure_before_retry(tmp_path):
+    run_dir = create_run(tmp_path)
+    first = next_app_episode(run_dir).request
+    with pytest.raises(ValueError, match="active attempt cannot be retried"):
+        retry_app_episode(run_dir, first.episode_id)
+    fail_app_episode(run_dir, first.episode_id, first.attempt_id, "executor failed")
+    retried = retry_app_episode(run_dir, first.episode_id)
+    assert retried.request is not None
+    assert retried.request.episode_id == first.episode_id
+    assert retried.attempt_id != first.attempt_id
+
+
+def test_repair_is_bounded_on_the_same_attempt(tmp_path):
+    run_dir = create_run(tmp_path)
+    request = next_app_episode(run_dir).request
+    before = graph_snapshot(run_dir)
+    invalid = result_for(request).model_dump(mode="json")
+    invalid["output_hash"] = "0" * 64
+
+    first = submit_app_episode_result(run_dir, invalid)
+    second = submit_app_episode_result(run_dir, invalid)
+    assert first.repair_required and second.repair_required
+    assert first.attempt_id == second.attempt_id == request.attempt_id
+    active = app_run_status(run_dir)
+    assert active.active_attempt_id == request.attempt_id
+    assert active.controller_action == "episode_required"
+    assert graph_snapshot(run_dir) == before
+
+    third = submit_app_episode_result(run_dir, invalid)
+    assert third.repair_exhausted and not third.repair_required
+    exhausted = app_run_status(run_dir)
+    assert exhausted.active_attempt_id is None
+    assert exhausted.controller_action == "await_operator_decision"
+    attempt = lifecycle_for(exhausted, request.episode_id).attempts[0]
+    assert attempt.status == "rejected"
+    assert attempt.repair_count == 3
+    assert graph_snapshot(run_dir) == before
+
+
+def test_cancel_run_records_backend_termination_and_cancels_active_attempt(tmp_path):
+    run_dir = create_run(tmp_path)
+    request = next_app_episode(run_dir).request
+    cancelled = cancel_app_run(
+        run_dir,
+        "operator stopped the run",
+        requested_by="user",
+    )
+    assert cancelled.controller_action == "run_cancelled"
+    assert cancelled.run_cancellation is not None
+    assert cancelled.run_cancellation.reason == "operator stopped the run"
+    assert cancelled.active_attempt_id is None
+    assert lifecycle_for(cancelled, request.episode_id).attempts[0].status == "cancelled"
+    terminal = next_app_episode(run_dir)
+    assert terminal.controller_action == "run_cancelled"
+    assert terminal.request is None
 
 
 def test_retry_limit_is_enforced(tmp_path):

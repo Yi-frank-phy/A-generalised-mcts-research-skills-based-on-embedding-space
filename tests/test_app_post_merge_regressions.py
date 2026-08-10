@@ -871,7 +871,7 @@ def test_active_relation_retry_exhaustion_does_not_release_live_grant(tmp_path):
     ).request
     before = (run_dir / "app_run_state.json").read_text(encoding="utf-8")
 
-    with pytest.raises(ValueError, match="retry limit exhausted"):
+    with pytest.raises(ValueError, match="active attempt cannot be retried"):
         retry_app_episode(run_dir, request.episode_id)
 
     assert (run_dir / "app_run_state.json").read_text(encoding="utf-8") == before
@@ -894,7 +894,7 @@ def test_rejected_relation_retry_exhaustion_releases_uncommittable_grant(tmp_pat
         runtime_limits=RuntimeLimits(max_retries=0),
     ).request
     invalid = relation_result(request).model_dump(mode="json")
-    invalid["output_hash"] = "0" * 64
+    invalid["run_id"] = "wrong-run"
     assert not submit_app_episode_result(run_dir, invalid).commit_outcome.accepted
     assert any(
         candidate.status == "granted"

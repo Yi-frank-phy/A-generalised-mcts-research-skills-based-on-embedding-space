@@ -36,12 +36,15 @@ from .epistemic import (
 from .file_cache import FileDTECache
 from .guards import enforce_run_spec_guard
 from .hook_driver import (
+    HookDriverReceipt,
     activate_session,
     control_session,
     driver_environment,
     handoff_session,
     init_session,
+    request_chunk_session,
     record_driver_failure,
+    resume_existing_session,
     status_session,
     step_session,
     submit_session,
@@ -379,6 +382,20 @@ def cmd_hook_driver(args: argparse.Namespace) -> None:
             )
         elif operation == "step":
             receipt = step_session(session_id, turn_id, capability)
+        elif operation == "request":
+            receipt = request_chunk_session(
+                session_id,
+                turn_id,
+                capability,
+                args.chunk_index,
+            )
+        elif operation == "resume":
+            receipt = resume_existing_session(
+                session_id,
+                turn_id,
+                capability,
+                args.run_id,
+            )
         elif operation == "submit":
             receipt = submit_session(
                 session_id,
@@ -405,8 +422,8 @@ def cmd_hook_driver(args: argparse.Namespace) -> None:
             raise ValueError(f"unsupported hook-driver operation: {operation}")
     except Exception as exc:
         receipt = record_driver_failure(operation, session_id, turn_id or None, exc)
-    print(receipt.model_dump_json(indent=2))
-    if not receipt.success:
+    print(receipt.model_dump_json())
+    if isinstance(receipt, HookDriverReceipt) and not receipt.success:
         raise SystemExit(1)
 
 
@@ -633,6 +650,18 @@ def build_parser() -> argparse.ArgumentParser:
 
     driver_sub.add_parser("step")
 
+    driver_request = driver_sub.add_parser(
+        "request",
+        help="read one bounded immutable chunk of the current EpisodeRequest",
+    )
+    driver_request.add_argument("--chunk-index", type=int, required=True)
+
+    driver_resume = driver_sub.add_parser(
+        "resume",
+        help="transfer a matching nonterminal invocation from another session",
+    )
+    driver_resume.add_argument("--run-id", required=True)
+
     driver_submit = driver_sub.add_parser("submit")
     driver_submit.add_argument("--result", required=True)
 
@@ -640,7 +669,14 @@ def build_parser() -> argparse.ArgumentParser:
     driver_control.add_argument(
         "--action",
         required=True,
-        choices=["retry", "cancel", "request-synthesis"],
+        choices=[
+            "retry",
+            "fail-attempt",
+            "cancel-attempt",
+            "cancel-run",
+            "cancel",
+            "request-synthesis",
+        ],
     )
     driver_control.add_argument("--reason")
     driver_control.add_argument(

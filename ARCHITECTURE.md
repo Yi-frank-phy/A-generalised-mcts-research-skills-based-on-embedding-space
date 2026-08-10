@@ -230,6 +230,19 @@ Codex lifecycle hook
       -> sole commit_episode_result boundary
 ```
 
+Large model-facing requests use a separate read-only delivery plane. A mutating
+`step` publishes only a compact hash-bound request reference. The root turn then
+reads bounded chunks from the immutable attempt request; those projections do
+not participate in the receipt chain or capability rotation. This keeps state
+transition evidence small and stable even when the EpisodeRequest is large, and
+turn interruption can reread a chunk without manufacturing an episode retry.
+
+Hook turn ownership is recoverable. Early Stop prevention remains a workflow
+gate, while the second Stop records a pause without changing AppRunState. Same-
+session resume updates only root-turn ownership. Cross-session resume is an
+audited capability transfer guarded by the deterministic invocation identity;
+it invalidates the previous capability instead of cloning the run.
+
 The hook does not calculate Judge output, geometry, allocation, Relation, or
 termination. It is also not the final security boundary: supported tool hooks
 have platform coverage limits and PostToolUse cannot roll back side effects.

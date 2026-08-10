@@ -40,8 +40,10 @@ Production App commands:
 python -m dte_backend hook-driver activate
 python -m dte_backend hook-driver init --spec <spec.json> --nodes <committed-nodes.json>
 python -m dte_backend hook-driver step
+python -m dte_backend hook-driver request --chunk-index <n>
+python -m dte_backend hook-driver resume --run-id <run-id>
 python -m dte_backend hook-driver submit --result <result.json>
-python -m dte_backend hook-driver control --action retry|cancel|request-synthesis
+python -m dte_backend hook-driver control --action retry|fail-attempt|cancel-attempt|cancel-run|request-synthesis
 python -m dte_backend hook-driver status
 python -m dte_backend hook-driver handoff
 ```
@@ -58,7 +60,25 @@ supplying Skill root. During an active run, do not modify any file under that
 Skill's `src/dte_backend`; both `python -m dte_backend` and `dte-backend`
 entrypoints are subject to the same production-path restrictions.
 
-Use `hook-driver control` for explicit retry, cancellation, and synthesis requests. A retry must use the newly granted `attempt_id`; late output from cancelled, expired, failed, superseded, rejected, or committed attempts cannot be resubmitted as success. Direct App mutator CLIs are legacy/development interfaces and fail closed for `hook_enforced_v1` runs.
+`step` returns a compact request reference; read every immutable UTF-8 chunk with
+`hook-driver request --chunk-index N`. Re-reading or repeating `step`, `request`,
+or `status` never consumes an attempt or rotates capability. Use `resume` only
+after `init` returns `resume_available` for the same invocation in a new session.
+
+Use `hook-driver control` for explicit retry, attempt failure/cancellation, run
+cancellation, and synthesis requests. An active attempt cannot be retried:
+record `fail-attempt` or `cancel-attempt` first. `cancel-run` terminates the run;
+the legacy `cancel` spelling is only a compatibility alias. Late output from
+cancelled, expired, failed, superseded, rejected, or committed attempts cannot
+be resubmitted as success. Direct App mutator CLIs are legacy/development
+interfaces and fail closed for `hook_enforced_v1` runs.
+
+JSON/schema, recomputable output-hash, and malformed epistemic-reference errors
+receive at most two `repair_required` responses on the same attempt. A third
+invalid submission enters operator decision. `repository:` is not a ledger
+prefix; replace it with a safe `artifact:`, explicit `external:`, or remove the
+nonessential contribution. Identity, revision, authority, forged backend fields,
+and stale/late submissions remain hard failures.
 
 Every request carries a versioned role execution contract. Payload filtering is
 not context isolation. In `strict_fresh_context`, execute Judge, Executor,

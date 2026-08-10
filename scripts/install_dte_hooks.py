@@ -18,6 +18,11 @@ from pathlib import Path
 from typing import Any
 
 
+SCRIPT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(SCRIPT_ROOT / "src"))
+
+from dte_backend.bundle_manifest import MANIFEST_NAME, verify_bundle_manifest
+
 EVENTS = ("UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop", "SessionStart")
 TOOL_EVENTS = {"PreToolUse", "PostToolUse"}
 HOOK_TIMEOUT = 30
@@ -306,6 +311,7 @@ def _backup(content_sha256: str) -> Path:
 
 
 def install_user() -> dict[str, Any]:
+    verify_bundle_manifest(skill_root())
     _self_test(source_hook())
     content_sha256 = _sha256(source_hook())
     existing: dict[str, Any] = {}
@@ -393,11 +399,13 @@ def _managed_requirements() -> str:
 
 
 def install_managed_template() -> dict[str, Any]:
+    bundle = verify_bundle_manifest(skill_root())
     _self_test(source_hook())
     output = skill_root() / "deploy" / "managed-template"
     hooks_dir = output / "hooks"
     hooks_dir.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source_hook(), hooks_dir / "dte_enforcement_hook.py")
+    shutil.copy2(skill_root() / MANIFEST_NAME, output / MANIFEST_NAME)
     _atomic_text(output / "requirements.toml", _managed_requirements())
     _atomic_text(
         output / "README.md",
@@ -414,12 +422,18 @@ def install_managed_template() -> dict[str, Any]:
         "scope": "managed-template",
         "output_dir": str(output),
         "administrator_install_performed": False,
+        "bundle_sha256": bundle["bundle_sha256"],
     }
 
 
 def verify_user() -> dict[str, Any]:
     errors: list[str] = []
     diagnostics = _backend_import_diagnostics()
+    try:
+        bundle = verify_bundle_manifest(skill_root())
+    except Exception as exc:
+        errors.append(f"Skill bundle verification failed: {exc}")
+        bundle = None
     content_sha256 = _sha256(source_hook())
     if not installed_hook().is_file():
         errors.append("installed enforcement script is missing")
@@ -479,6 +493,7 @@ def verify_user() -> dict[str, Any]:
         "hooks_config": str(hooks_config()),
         "installed_hook": str(installed_hook()),
         "errors": errors,
+        "bundle_sha256": None if bundle is None else bundle["bundle_sha256"],
         **diagnostics,
     }
     if errors:

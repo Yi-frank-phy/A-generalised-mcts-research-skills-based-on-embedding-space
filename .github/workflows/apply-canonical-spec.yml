@@ -20,119 +20,27 @@ jobs:
       - name: Apply exact specification replacements
         run: |
           python - <<'PY'
+          import base64
           from pathlib import Path
-
+          pairs = [
+              ("IyMgMi4gVUNCIG9iamVjdGl2ZQoKRGVmYXVsdCBVQ0IgcmVtYWlucyB2YWx1ZS91bmNlcnRhaW50eSBkcml2ZW46CgpgYGB0ZXh0ClVfaSA9IFZfaSArIGMgKiB0YXUgKiB1bmNlcnRhaW50eV9pCmBgYAoKd2hlcmU6CgotIGBWX2lgIGlzIGFuIG9ic2VydmFibGUgSnVkZ2UgZXN0aW1hdGUgb2YgcmVzZWFyY2ggcG90ZW50aWFsOwotIGB0YXVgIGlzIG5vcm1hbGl6ZWQgdGVtcGVyYXR1cmU7Ci0gYHVuY2VydGFpbnR5X2lgIGNvbWVzIGZyb20gZW1iZWRkaW5nLXNwYWNlIGRlbnNpdHkvS0RFIG9yIGFub3RoZXIgZXhwbGljaXRseSBjb25maWd1cmVkIG5vdmVsdHkgZXN0aW1hdGUuCgpDb3N0IGlzIG5vdCBwYXJ0IG9mIFVDQiBieSBkZWZhdWx0LiBDb21wdXRlIGFuZCBxdW90YSBsaW1pdHMgYXJlIGVuZm9yY2VkIG91dHNpZGUgdGhlIG9iamVjdGl2ZSB0aHJvdWdoIHJ1biBwb2xpY3ksIGVwaXNvZGUgcG9saWN5LCBhbmQgaGFyZCBjYXBzLgoKSnVkZ2UgdmFsdWUgaXMgbm90IGEgY29ycmVjdG5lc3MgcHJvb2YuIEl0IGVzdGltYXRlcyB3aGV0aGVyIGEgYnJhbmNoIGlzIGNvaGVyZW50LCBpbmZvcm1hdGl2ZSwgdHJhY3RhYmxlLCBhbmQgd29ydGggZnVydGhlciBpbnZlc3RpZ2F0aW9uIHVuZGVyIGluY29tcGxldGUgZXZpZGVuY2UuCg==", "IyMgMi4gVUNCIG9iamVjdGl2ZQoKVGhlIGNhbm9uaWNhbCBsb2NhbCB1cHBlci1jb25maWRlbmNlIHByaW1pdGl2ZSBpczoKCmBgYHRleHQKVV9pID0gVl9pICsgU0RfaQpgYGAKCndoZXJlOgoKLSBgVl9pYCBpcyBhbiBvYnNlcnZhYmxlIEp1ZGdlIGVzdGltYXRlIG9mIHJlc2VhcmNoIHBvdGVudGlhbDsKLSBgU0RfaWAgaXMgYSBzdGFuZGFyZC1kZXZpYXRpb24vc3RhbmRhcmQtZXJyb3ItbGlrZSB1bmNlcnRhaW50eSBlc3RpbWF0ZSBmb3IgYnJhbmNoIGBpYDsKLSB0aGUgY3VycmVudCBgdW5jZXJ0YWludHlfaWAgZmllbGQgaXMgdGhlIHByb3Zpc2lvbmFsIGVzdGltYXRvciBzdXBwbGllZCBhcyBgU0RfaWAuCgpHbG9iYWwgdGVtcGVyYXR1cmUgZG9lcyBub3QgbXVsdGlwbHkgdGhlIGxvY2FsIHVuY2VydGFpbnR5IHRlcm0uIExlZ2FjeSBgdGF1YCBhbmQgYGNfZXhwbG9yZWAgaW5wdXRzIG1heSByZW1haW4gdGVtcG9yYXJpbHkgcGFyc2VhYmxlIGZvciBjb21wYXRpYmlsaXR5LCBidXQgdGhleSBkbyBub3QgY2hhbmdlIGNhbm9uaWNhbCBVQ0IuCgpDb3N0IGlzIG5vdCBwYXJ0IG9mIFVDQiBieSBkZWZhdWx0LiBDb21wdXRlIGFuZCBxdW90YSBsaW1pdHMgYXJlIGVuZm9yY2VkIG91dHNpZGUgdGhlIG9iamVjdGl2ZSB0aHJvdWdoIHJ1biBwb2xpY3ksIGVwaXNvZGUgcG9saWN5LCBhbmQgaGFyZCBjYXBzLgoKSnVkZ2UgdmFsdWUgaXMgbm90IGEgY29ycmVjdG5lc3MgcHJvb2YuIEl0IGVzdGltYXRlcyB3aGV0aGVyIGEgYnJhbmNoIGlzIGNvaGVyZW50LCBpbmZvcm1hdGl2ZSwgdHJhY3RhYmxlLCBhbmQgd29ydGggZnVydGhlciBpbnZlc3RpZ2F0aW9uIHVuZGVyIGluY29tcGxldGUgZXZpZGVuY2UuCg=="),
+              ("RFRFJ3MgZW50cm9weSBjb250cm9sbGVyIHJlcXVpcmVzIGEgY29udGludW91cyBlbWJlZGRpbmcgZ2VvbWV0cnk6CgpgYGB0ZXh0CnhfaSA9IEUodl9pKQpyaG9faSA9IEtERSh4X2kpClNfdCA9IC1tZWFuKGxvZyByaG9faSkKYGBgCg==", "VGhlIGN1cnJlbnQgY29tcGF0aWJpbGl0eSBjb250cm9sbGVyIHN0aWxsIG9idGFpbnMgYSBiYXRjaC1yZWxhdGl2ZSBkaXZlcnNpdHkgcHJveHkgZnJvbSBlbWJlZGRpbmcgZ2VvbWV0cnk6CgpgYGB0ZXh0CnhfaSA9IEUodl9pKQpyaG9faSA9IEtERSh4X2kpCkhfdCA9IC1tZWFuKGxvZyByaG9faSkKYGBgCgpGb3IgYSBsaXZlIGZyb250aWVyIG9mIHNpemUgYE5fdGAsIGdsb2JhbCBjb250cm9sbGVyIHRlbXBlcmF0dXJlIGlzIHNlcGFyYXRlIGZyb20gVUNCOgoKYGBgdGV4dAp0YXVfdCA9IEhfdCAvIGxvZyhOX3QpICAgaWYgTl90ID4gMSBlbHNlIDAKVF90ID0gVF9tYXggKiB0YXVfdApgYGAKClRoZSBwcmVzZW50IHNlbGYtaW5jbHVkaW5nLCBwZXItYmF0Y2ggS0RFIHF1YW50aXR5IGlzIHNlbWFudGljYWxseSBxdWFyYW50aW5lZDogaXQgaXMgYSBiYXRjaC1yZWxhdGl2ZSBrZXJuZWwgc3VycHJpc2FsIHByb3h5LCBub3QgYSB2YWxpZGF0ZWQgdGhlcm1vZHluYW1pYyBlbnRyb3B5IGFuZCBub3QgcHJvb2Ygb2YgZXBpc3RlbWljIGNvbnZlcmdlbmNlLiBJdCByZW1haW5zIHRoZSB0ZW1wb3JhcnkgYEhfdGAgaW5wdXQgb25seSB1bnRpbCBhIGJldHRlciByZXNlYXJjaC1zdGF0ZSBvYnNlcnZhYmxlIGlzIGp1c3RpZmllZC4KCkNyb3NzLWl0ZXJhdGlvbiBgZGVsdGEgSGAgaXMgcGxhdGVhdS9jb250aW51YXRpb24gdGVsZW1ldHJ5IG9ubHkuIEl0IGRvZXMgbm90IGRlZmluZSBgVV9pYCwgYHRhdV90YCwgb3IgYFRfdGAuCg=="),
+              ("R2l2ZW4gYWxsb2NhdGlvbiB2YWx1ZXMgYEFfaWAsIHRlbXBlcmF0dXJlIGBUYCwgYW5kIGEgcGVyLWl0ZXJhdGlvbiBhbGxvY2F0aW9uIG1hc3MgYENgOgoKYGBgdGV4dApwX2kgPSBleHAoQV9pIC8gVCkgLyBzdW1faiBleHAoQV9qIC8gVCkKcV9pID0gQyAqIHBfaQpgYGAK", "R2l2ZW4gY2Fub25pY2FsIFVDQiB2YWx1ZXMgYFVfaWAsIGdsb2JhbCB0ZW1wZXJhdHVyZSBgVGAsIGFuZCBhIHBlci1pdGVyYXRpb24gYWxsb2NhdGlvbiBtYXNzIGBDYDoKCmBgYHRleHQKcF9pID0gZXhwKFVfaSAvIFQpIC8gc3VtX2ogZXhwKFVfaiAvIFQpCnFfaSA9IEMgKiBwX2kKYGBgCgpBdCBgVCA9IDBgLCB0aGlzIGlzIGludGVycHJldGVkIGJ5IGl0cyB6ZXJvLXRlbXBlcmF0dXJlIGxpbWl0OiBwcm9iYWJpbGl0eSBtYXNzIGlzIHN1cHBvcnRlZCBvbmx5IG9uIHRoZSBtYXhpbWFsLWBVYCBicmFuY2ggb3IgdGllZCBtYXhpbWFsIGJyYW5jaGVzLiBBIHRpbnkgcG9zaXRpdmUgZGVub21pbmF0b3IgbWF5IGJlIHVzZWQgaW50ZXJuYWxseSBmb3IgbnVtZXJpY2FsIHN0YWJpbGl0eSwgYnV0IGNvbnRyb2xsZXIgdGVsZW1ldHJ5IG11c3Qgbm90IGV4cG9zZSBhbiBhcnRpZmljaWFsIHBvc2l0aXZlIHRlbXBlcmF0dXJlIGZsb29yLgo="),
+              ("QnkgZGVmYXVsdCBgQV9pID0gVV9pYCwgc28gZW50cm9weSBhbmQgdW5jZXJ0YWludHkgYWZmZWN0IGFjdHVhbCBleHBhbnNpb24gcmF0aGVyIHRoYW4gbWVyZWx5IGRpc3BsYXkgcmFua2luZy4KCkVudHJvcHkgY29udHJvbHMgdGVtcGVyYXR1cmUgYW5kIGVtaXRzIGEgcmVwbGF5YWJsZSBwbGF0ZWF1IHNpZ25hbC4=", "Qm9sdHptYW5uIGFsbG9jYXRpb24gdXNlcyBgVV9pYCwgc28gbG9jYWwgdW5jZXJ0YWludHkgYWZmZWN0cyBhY3R1YWwgZXhwYW5zaW9uIHJhdGhlciB0aGFuIG1lcmVseSBkaXNwbGF5IHJhbmtpbmcuIEdsb2JhbCB0ZW1wZXJhdHVyZSBjb250cm9scyBob3cgY29uY2VudHJhdGVkIHRoYXQgYWxsb2NhdGlvbiBpcyBhY3Jvc3MgdGhlIGFscmVhZHktY29tcHV0ZWQgVUNCIHZhbHVlcy4KClRoZSBjdXJyZW50IGRpdmVyc2l0eSBwcm94eSBjb250cm9scyB0ZW1wZXJhdHVyZSBhbmQgaXRzIGNyb3NzLWl0ZXJhdGlvbiBkZWx0YSBlbWl0cyBhIHJlcGxheWFibGUgcGxhdGVhdSBzaWduYWwu")
+          ]
           path = Path("SPEC.md")
           text = path.read_text(encoding="utf-8")
-
-          replacements = [
-              (
-                  '''## 2. UCB objective
-
-Default UCB remains value/uncertainty driven:
-
-```text
-U_i = V_i + c * tau * uncertainty_i
-```
-
-where:
-
-- `V_i` is an observable Judge estimate of research potential;
-- `tau` is normalized temperature;
-- `uncertainty_i` comes from embedding-space density/KDE or another explicitly configured novelty estimate.
-
-Cost is not part of UCB by default. Compute and quota limits are enforced outside the objective through run policy, episode policy, and hard caps.
-
-Judge value is not a correctness proof. It estimates whether a branch is coherent, informative, tractable, and worth further investigation under incomplete evidence.
-''',
-                  '''## 2. UCB objective
-
-The canonical local upper-confidence primitive is:
-
-```text
-U_i = V_i + SD_i
-```
-
-where:
-
-- `V_i` is an observable Judge estimate of research potential;
-- `SD_i` is a standard-deviation/standard-error-like uncertainty estimate for branch `i`;
-- the current `uncertainty_i` field is the provisional estimator supplied as `SD_i`.
-
-Global temperature does not multiply the local uncertainty term. Legacy `tau` and `c_explore` inputs may remain temporarily parseable for compatibility, but they do not change canonical UCB.
-
-Cost is not part of UCB by default. Compute and quota limits are enforced outside the objective through run policy, episode policy, and hard caps.
-
-Judge value is not a correctness proof. It estimates whether a branch is coherent, informative, tractable, and worth further investigation under incomplete evidence.
-'''
-              ),
-              (
-                  '''DTE's entropy controller requires a continuous embedding geometry:
-
-```text
-x_i = E(v_i)
-rho_i = KDE(x_i)
-S_t = -mean(log rho_i)
-```
-''',
-                  '''The current compatibility controller still obtains a batch-relative diversity proxy from embedding geometry:
-
-```text
-x_i = E(v_i)
-rho_i = KDE(x_i)
-H_t = -mean(log rho_i)
-```
-
-For a live frontier of size `N_t`, global controller temperature is separate from UCB:
-
-```text
-tau_t = H_t / log(N_t)   if N_t > 1 else 0
-T_t = T_max * tau_t
-```
-
-The present self-including, per-batch KDE quantity is semantically quarantined: it is a batch-relative kernel surprisal proxy, not a validated thermodynamic entropy and not proof of epistemic convergence. It remains the temporary `H_t` input only until a better research-state observable is justified.
-
-Cross-iteration `delta H` is plateau/continuation telemetry only. It does not define `U_i`, `tau_t`, or `T_t`.
-'''
-              ),
-              (
-                  '''Given allocation values `A_i`, temperature `T`, and a per-iteration allocation mass `C`:
-
-```text
-p_i = exp(A_i / T) / sum_j exp(A_j / T)
-q_i = C * p_i
-```
-''',
-                  '''Given canonical UCB values `U_i`, global temperature `T`, and a per-iteration allocation mass `C`:
-
-```text
-p_i = exp(U_i / T) / sum_j exp(U_j / T)
-q_i = C * p_i
-```
-
-At `T = 0`, this is interpreted by its zero-temperature limit: probability mass is supported only on the maximal-`U` branch or tied maximal branches. A tiny positive denominator may be used internally for numerical stability, but controller telemetry must not expose an artificial positive temperature floor.
-'''
-              ),
-              (
-                  '''By default `A_i = U_i`, so entropy and uncertainty affect actual expansion rather than merely display ranking.
-
-Entropy controls temperature and emits a replayable plateau signal.''',
-                  '''Boltzmann allocation uses `U_i`, so local uncertainty affects actual expansion rather than merely display ranking. Global temperature controls how concentrated that allocation is across the already-computed UCB values.
-
-The current diversity proxy controls temperature and its cross-iteration delta emits a replayable plateau signal.'''
-              ),
-          ]
-
-          for old, new in replacements:
+          for old64, new64 in pairs:
+              old = base64.b64decode(old64).decode("utf-8")
+              new = base64.b64decode(new64).decode("utf-8")
               count = text.count(old)
               if count != 1:
                   raise SystemExit(f"expected exactly one SPEC target, found {count}: {old[:80]!r}")
               text = text.replace(old, new, 1)
-
           path.write_text(text, encoding="utf-8")
           PY
           git diff --check
-          ! git grep -n 'U_i = V_i + c \* tau \* uncertainty_i' -- SPEC.md
+          if git grep -n 'U_i = V_i + c \* tau \* uncertainty_i' -- SPEC.md; then exit 1; fi
       - name: Commit patch
         run: |
           git config user.name "github-actions[bot]"

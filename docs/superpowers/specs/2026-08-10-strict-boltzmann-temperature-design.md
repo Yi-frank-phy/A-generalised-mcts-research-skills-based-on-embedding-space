@@ -1,0 +1,209 @@
+# Strict Boltzmann Entropy–Temperature Controller Design
+
+## Goal
+
+Restore the DTE temperature controller to a strict Boltzmann entropy–temperature correspondence while preserving the existing DTE search equations and current spatial-entropy observable.
+
+This change is deliberately narrow. It does **not** redesign KDE, uncertainty, Judge value, UCB, allocation mass, stopping policy, Relation, or the search graph.
+
+## Preserved equations
+
+The UCB objective remains
+
+\[
+U_i = V_i + c\,\tau\,u_i.
+\]
+
+Boltzmann allocation remains
+
+\[
+p_i(T)=\frac{\exp(A_i/T)}{\sum_j \exp(A_j/T)},
+\]
+
+with the prototype default \(A_i=U_i\).
+
+The current spatial entropy observable remains, for this change only,
+
+\[
+S_{\mathrm{spatial}}=-\frac1N\sum_i \log \rho_i,
+\]
+
+where \(\rho_i\) is the current KDE-derived density proxy. This design does not endorse that observable as the final research-state entropy; it only prevents the temperature controller from adding a second heuristic distortion.
+
+## Strict Boltzmann correspondence
+
+For a fixed non-degenerate allocation-value vector \(A=(A_1,\ldots,A_N)\), define
+
+\[
+p_i(T)=\frac{e^{A_i/T}}{Z(T)},\qquad
+Z(T)=\sum_j e^{A_j/T},
+\]
+
+and
+
+\[
+S_B(T)=-\sum_i p_i(T)\log p_i(T).
+\]
+
+For \(T>0\),
+
+\[
+\frac{dS_B}{dT}=\frac{\operatorname{Var}_{p(T)}(A)}{T^3}\ge 0.
+\]
+
+If not all \(A_i\) are equal, the variance is positive and \(S_B(T)\) is strictly increasing. Therefore the mapping between entropy and temperature is unique on the attainable entropy interval.
+
+Limits:
+
+- \(T\to0^+\): probability concentrates uniformly over the maximizing \(A_i\); if the maximum is unique, \(S_B\to0\).
+- \(T\to\infty\): \(p_i\to1/N\) and \(S_B\to\log N\).
+
+The controller must therefore obtain temperature by solving
+
+\[
+S_B(T)=S_{\mathrm{target}},
+\]
+
+not by an empirical formula involving \(|\Delta S|\).
+
+## Target entropy and normalized UCB coordinate
+
+For the present implementation, the target entropy is the existing spatial entropy clipped only for numerical safety to its mathematically valid range:
+
+\[
+S_{\mathrm{target}}=\operatorname{clip}(S_{\mathrm{spatial}},0,\log N).
+\]
+
+The bounded quantity used in the unchanged UCB equation is
+
+\[
+\tau=
+\begin{cases}
+S_{\mathrm{target}}/\log N,&N>1,\\
+0,&N\le1.
+\end{cases}
+\]
+
+Thus \(\tau\in[0,1]\) remains a normalized monotone coordinate of the entropy/temperature state while the actual Boltzmann allocation uses the uniquely inverted physical temperature \(T\).
+
+This preserves the scale expected by the existing UCB formula without inventing a second temperature schedule.
+
+## Controller data flow
+
+Each controller iteration becomes:
+
+1. Compute the current frontier embeddings/KDE and \(S_{\mathrm{spatial}}\) exactly as today.
+2. Compute \(S_{\mathrm{target}}\) and \(\tau=S_{\mathrm{target}}/\log N\).
+3. Compute the unchanged UCB/allocation values \(A_i=V_i+c\tau u_i\).
+4. Holding those \(A_i\) fixed, solve the unique Boltzmann temperature \(T\) satisfying \(S_B(T)=S_{\mathrm{target}}\).
+5. Allocate with the existing Boltzmann rule using that \(T\).
+6. Compute \(\Delta S\) only for plateau/continuation telemetry and legacy stopping compatibility. \(\Delta S\) no longer determines \(\tau\) or \(T\).
+
+The present hard floors
+
+```text
+max(normalized_temperature, 0.05)
+max(effective_temperature, 0.05)
+```
+
+must be removed from both the ordinary runner and App driver, because they break the strict mapping at low entropy.
+
+## Numerical inversion
+
+Use deterministic bisection because monotonicity is guaranteed for non-degenerate \(A\).
+
+Required behavior:
+
+- If \(S_{\mathrm{target}}\) is at the lower attainable endpoint, return \(T=0\); existing Boltzmann code may continue to use its tiny internal numerical denominator only for exponent evaluation.
+- If \(S_{\mathrm{target}}\approx\log N\), return \(T=+\infty\), which yields an exactly uniform soft allocation in the Boltzmann formula.
+- Otherwise bracket by geometrically increasing the upper temperature until \(S_B(T_{\mathrm{hi}})\ge S_{\mathrm{target}}\), then bisect to a fixed deterministic tolerance.
+- Use stable shifted logits when evaluating \(p_i(T)\).
+
+No stochastic root finder and no learned calibration are permitted.
+
+## Degenerate allocation values
+
+If all \(A_i\) are equal, temperature is not identifiable: the Boltzmann distribution is uniform for every \(T\), so \(S_B=\log N\) regardless of temperature.
+
+The controller must not fabricate a unique temperature. It shall:
+
+- allocate uniformly;
+- expose the effective temperature as \(+\infty\) for this iteration;
+- set the bounded UCB coordinate \(\tau\) from the target entropy exactly as above;
+- preserve \(S_{\mathrm{target}}\) and \(\Delta S\) telemetry;
+- document that the requested entropy is unattainable by temperature alone if \(S_{\mathrm{target}}<\log N\).
+
+This is a true symmetry/identifiability limit, not an implementation error.
+
+For \(N\le1\), allocation is trivial; use \(\tau=0\) and treat temperature as non-identifiable without changing the only available branch.
+
+## Entropy delta and stopping
+
+The existing relative entropy delta remains
+
+\[
+\Delta S_t=\frac{|S_t-S_{t-1}|}{\max(|S_{t-1}|,1)}.
+\]
+
+For this change, it retains only its present plateau/continuation role. The existing confirmation count and legacy `entropy_plateau` semantics are preserved.
+
+The forbidden relationship after this change is
+
+\[
+T\propto\Delta S
+\]
+
+or any equivalent hand-tuned temperature schedule.
+
+## State and telemetry compatibility
+
+`EntropyState` keeps the current public concepts:
+
+- `spatial_entropy`
+- `entropy_delta`
+- `effective_temperature`
+- `normalized_temperature`
+- plateau fields
+
+but their meanings become:
+
+- `effective_temperature`: the strict Boltzmann temperature \(T\), including \(0\) and \(+\infty\) endpoint semantics;
+- `normalized_temperature`: the bounded monotone entropy coordinate \(\tau=S_{\mathrm{target}}/\log N\), not an entropy-delta heuristic.
+
+Persistent App controller records currently store `normalized_temperature` but not `effective_temperature`; no state-schema migration is required solely for this change. Existing historical records remain historical facts produced by the old controller and must not be silently recomputed.
+
+## Files expected to change during implementation
+
+Architecture-level behavior is documented before code, per `AGENTS.md`.
+
+Expected implementation scope:
+
+- `SPEC.md`: replace the heuristic temperature description with the strict correspondence and clarify `normalized_temperature` semantics.
+- `src/dte_backend/entropy.py`: entropy normalization, Boltzmann entropy evaluation, strict inversion, plateau bookkeeping.
+- `src/dte_backend/math_engine.py`: expose/reuse deterministic Boltzmann probability/entropy logic as needed without changing the allocation equation.
+- `src/dte_backend/runner.py`: compute the strict temperature from current allocation values and remove the `0.05` floors.
+- `src/dte_backend/app_driver.py`: same deterministic controller path and removal of the `0.05` floors.
+- `tests/test_entropy.py`: mathematical monotonicity, inversion, endpoints, degeneracy, and plateau separation.
+- `tests/test_math_engine.py` and controller tests as needed: confirm unchanged UCB/Boltzmann equations and strict-temperature integration.
+
+No unrelated refactor is in scope.
+
+## Test requirements
+
+Implementation must be test-driven and must lock down at least these properties:
+
+1. For fixed non-equal \(A\), \(S_B(T)\) increases with \(T\).
+2. Round-trip: for several finite \(T\), compute \(S_B(T)\), invert it, and recover \(T\) within tolerance.
+3. \(S_{\mathrm{target}}=0\) gives the zero-temperature endpoint when the maximizing allocation value is unique.
+4. \(S_{\mathrm{target}}=\log N\) gives uniform allocation / infinite-temperature endpoint.
+5. Equal allocation values are recognized as non-identifiable and allocate uniformly rather than inventing a root.
+6. Changing only `previous_entropy` changes plateau telemetry but does not change the current \(\tau\) or strict \(T\).
+7. Runner and App driver no longer impose an artificial `0.05` minimum.
+8. Existing UCB equation and Boltzmann allocation equation remain unchanged.
+9. Existing hard child/node budgets and deterministic discretization remain unchanged.
+
+## Non-goals
+
+This change does not decide whether KDE node-text entropy is the correct research entropy. It deliberately leaves that research question for the subsequent DTE work on method–understanding transitions, interpretation divergence, and annealing signals.
+
+It also does not add a new verifier, reward, history mechanism, method vector, or convergence metric.

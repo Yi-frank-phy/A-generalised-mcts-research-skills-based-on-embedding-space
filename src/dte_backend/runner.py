@@ -208,6 +208,7 @@ def run_frontier_search(
 
         entropy_state = evaluate_entropy_state(
             spatial_entropy=kde_state.spatial_entropy,
+            frontier_size=len(frontier),
             previous_entropy=previous_entropy,
             iteration=iteration,
             min_iterations=spec.budget.min_iterations_before_synthesis,
@@ -257,9 +258,7 @@ def run_frontier_search(
             nodes,
             allocation_mass_per_iteration=spec.budget.allocation_mass_per_iteration,
             max_children_per_iteration=effective_child_cap,
-            tau=max(entropy_state.normalized_temperature, 0.05),
-            c_explore=1.0,
-            temperature=max(entropy_state.effective_temperature, 0.05),
+            temperature=entropy_state.effective_temperature,
         )
         for allocation in allocations:
             for node in frontier:

@@ -1,3 +1,7 @@
+from dataclasses import replace
+
+import pytest
+
 from dte_backend.entropy import evaluate_entropy_state, spatial_entropy_from_embeddings
 
 
@@ -32,3 +36,18 @@ def test_entropy_plateau_requires_configured_confirmations():
     assert second.plateau_signal
     assert second.consecutive_plateau_count == 2
     assert second.stop_reason == "entropy_plateau"
+
+
+def test_metric_delta_requires_identical_metric_identity():
+    from dte_backend.entropy import MetricObservation, relative_metric_delta
+    from dte_backend.kde import LEGACY_KDE_METRIC_IDENTITY
+
+    current = MetricObservation(1.1, LEGACY_KDE_METRIC_IDENTITY)
+    previous = MetricObservation(1.0, LEGACY_KDE_METRIC_IDENTITY)
+    assert relative_metric_delta(current, previous) == pytest.approx(0.1)
+
+    incompatible = MetricObservation(
+        1.0,
+        replace(LEGACY_KDE_METRIC_IDENTITY, version=2),
+    )
+    assert relative_metric_delta(current, incompatible) is None

@@ -113,7 +113,7 @@ Therefore this patch restores the controller structure without prematurely redes
 
 ### 2.2 Global diversity state / temperature
 
-Let `H_t` be the current population-level diversity observable used by the controller.
+Let `H_t` be the current population-level diversity observable used by the controller, and let `N_t` be the number of live frontier states from the same batch. `N_t` is an explicit controller input; it must not be inferred from the entropy value or reconstructed through a fitted normalization.
 
 The canonical normalized temperature coordinate is
 
@@ -139,6 +139,8 @@ The current backend's self-including kernel quantity satisfies
 \]
 
 because each KDE-like mean kernel density contains the self-kernel contribution and hence lies in `[1/N,1]`.
+
+For this compatibility input, finite values outside that analytically guaranteed range indicate a metric/implementation defect and must not be silently repaired with a new controller schedule. Normal floating-point tolerance may be handled explicitly in tests/validation.
 
 However, issue #26 has already established that this quantity is only a batch-relative kernel surprisal proxy and must not be presented as an absolute thermodynamic entropy or as proof of convergence. Therefore:
 
@@ -312,18 +314,20 @@ Expected files:
   - explicitly handle the `T=0` limiting allocation without exposing an artificial controller floor.
 
 - `src/dte_backend/entropy.py`
+  - accept the current live `frontier_size` explicitly alongside the diversity observable;
   - derive `normalized_temperature` from current `H/log N`, not entropy delta;
   - derive `effective_temperature = t_max * normalized_temperature`;
   - leave entropy delta and plateau bookkeeping separate;
   - retain issue #26's semantic quarantine of the legacy input metric.
 
 - `src/dte_backend/runner.py`
+  - pass the current live frontier size into the entropy/temperature controller;
   - stop passing temperature into UCB;
   - use the restored effective temperature for allocation;
   - remove any artificial minimum temperature that changes controller semantics.
 
 - `src/dte_backend/app_driver.py`
-  - mirror runner semantics exactly;
+  - mirror runner semantics exactly, including explicit frontier size;
   - remove the same artificial floors/temperature-in-UCB path.
 
 - `src/dte_backend/__main__.py` and compatibility call sites
@@ -389,15 +393,19 @@ This guards against regression to the legacy `Boltzmann(V/T)` split.
 
 Two states with the same current `H` and frontier but different previous `H` must have identical UCB values and temperature. Only delta/plateau telemetry may differ.
 
-### 7.8 Budget invariants
+### 7.8 Frontier-size dependency is explicit
+
+Two controller evaluations with the same scalar `H` but different valid frontier sizes may have different normalized temperatures because the normalization denominator is `log N`. Tests must pass `N` explicitly and must reject/inhibit any implementation that guesses `N` from `H`.
+
+### 7.9 Budget invariants
 
 Existing allocation mass semantics, deterministic piecewise discretization, stable tie handling, and hard per-iteration/node caps remain unchanged.
 
-### 7.9 Metric-semantic compatibility
+### 7.10 Metric-semantic compatibility
 
 Issue #26's counterexamples and metric-identity protections must continue to pass. This restoration must not relabel the current batch-relative kernel surprisal as validated thermodynamic entropy.
 
-### 7.10 Full regression
+### 7.11 Full regression
 
 All focused mathematical/controller tests and the full repository test suite must pass before completion is claimed.
 

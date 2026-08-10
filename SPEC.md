@@ -25,17 +25,19 @@ External model runtimes may perform bounded research episodes, including native 
 
 ## 2. UCB objective
 
-Default UCB remains value/uncertainty driven:
+The canonical local upper-confidence primitive is:
 
 ```text
-U_i = V_i + c * tau * uncertainty_i
+U_i = V_i + SD_i
 ```
 
 where:
 
 - `V_i` is an observable Judge estimate of research potential;
-- `tau` is normalized temperature;
-- `uncertainty_i` comes from embedding-space density/KDE or another explicitly configured novelty estimate.
+- `SD_i` is a standard-deviation/standard-error-like uncertainty estimate for branch `i`;
+- the current `uncertainty_i` field is the provisional estimator supplied as `SD_i`.
+
+Global temperature does not multiply the local uncertainty term. Legacy `tau` and `c_explore` inputs may remain temporarily parseable for compatibility, but they do not change canonical UCB.
 
 Cost is not part of UCB by default. Compute and quota limits are enforced outside the objective through run policy, episode policy, and hard caps.
 
@@ -43,13 +45,24 @@ Judge value is not a correctness proof. It estimates whether a branch is coheren
 
 ## 3. Geometry and embedding dimension
 
-DTE's entropy controller requires a continuous embedding geometry:
+The current compatibility controller still obtains a batch-relative diversity proxy from embedding geometry:
 
 ```text
 x_i = E(v_i)
 rho_i = KDE(x_i)
-S_t = -mean(log rho_i)
+H_t = -mean(log rho_i)
 ```
+
+For a live frontier of size `N_t`, global controller temperature is separate from UCB:
+
+```text
+tau_t = H_t / log(N_t)   if N_t > 1 else 0
+T_t = T_max * tau_t
+```
+
+The present self-including, per-batch KDE quantity is semantically quarantined: it is a batch-relative kernel surprisal proxy, not a validated thermodynamic entropy and not proof of epistemic convergence. It remains the temporary `H_t` input only until a better research-state observable is justified.
+
+Cross-iteration `delta H` is plateau/continuation telemetry only. It does not define `U_i`, `tau_t`, or `T_t`.
 
 For real runs, geometry should use the highest-quality configured embedding profile by default. `embedding_dimension` currently defaults to `3072`; lower dimensions are debug/fallback profiles. Hash embeddings are only for offline tests and CI.
 
@@ -65,12 +78,14 @@ embedding_contract_version
 
 ## 4. Boltzmann allocation and budget semantics
 
-Given allocation values `A_i`, temperature `T`, and a per-iteration allocation mass `C`:
+Given canonical UCB values `U_i`, global temperature `T`, and a per-iteration allocation mass `C`:
 
 ```text
-p_i = exp(A_i / T) / sum_j exp(A_j / T)
+p_i = exp(U_i / T) / sum_j exp(U_j / T)
 q_i = C * p_i
 ```
+
+At `T = 0`, this is interpreted by its zero-temperature limit: probability mass is supported only on the maximal-`U` branch or tied maximal branches. A tiny positive denominator may be used internally for numerical stability, but controller telemetry must not expose an artificial positive temperature floor.
 
 `q_i` is a continuous expansion mass, not a conserved integer child count.
 
@@ -129,9 +144,9 @@ If tentative allocation exceeds `H`, the controller must trim children by a dete
 
 Python's built-in bankers rounding is not the normative rule. Half values below one use round-half-up semantics.
 
-By default `A_i = U_i`, so entropy and uncertainty affect actual expansion rather than merely display ranking.
+Boltzmann allocation uses `U_i`, so local uncertainty affects actual expansion rather than merely display ranking. Global temperature controls how concentrated that allocation is across the already-computed UCB values.
 
-Entropy controls temperature and emits a replayable plateau signal. It has no
+The current diversity proxy controls temperature and its cross-iteration delta emits a replayable plateau signal. It has no
 direct Synthesis authority under `bounded_node_yield_v1`. A confirmed plateau
 or a single canonical frontier triggers a continuation gate. Continuation is
 granted only when committed facts show a narrow material-yield signal, a

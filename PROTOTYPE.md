@@ -9,13 +9,16 @@ The prototype is deliberately deterministic and does not call external LLMs. Its
 - Pydantic run spec and search node models.
 - Deterministic batch Judge heuristic with per-run content-hash cache.
 - Local hashed text features for offline novelty/uncertainty estimation with embedding cache.
-- UCB score:
+- Canonical local UCB score:
 
 ```text
-U_i = V_i + c * tau * uncertainty_i
+U_i = V_i + SD_i
 ```
 
-- Boltzmann expansion allocation over UCB by default.
+  where the current `uncertainty` field is the provisional standard-deviation/standard-error-like estimator.
+- Global controller temperature is separate from UCB: for the current provisional diversity proxy `H`, `tau = H / log(N)` when `N > 1` (else `0`) and `T = T_max * tau`.
+- Boltzmann expansion allocation over UCB by default: `p_i ∝ exp(U_i / T)`.
+- Cross-iteration entropy/proxy delta is plateau telemetry only; it does not define UCB or temperature.
 - Executor subprocess adapter boundary with strict child-node validation.
 - Conservative equivalent-claim merge skeleton.
 - Cache telemetry written to `cache_stats.json`.
@@ -23,6 +26,8 @@ U_i = V_i + c * tau * uncertainty_i
 - Mandatory frontier loop: Judge → novelty/uncertainty → UCB/allocation → expansion → synthesis.
 - CLI commands for validate, allocate, and run.
 - Tests for schema, math engine, runner, cache, adapter boundary, and merge skeleton.
+
+The current KDE-derived `H` is retained only as a compatibility diversity proxy. It is not claimed to be a validated thermodynamic entropy or proof of epistemic convergence.
 
 ## Executor adapter boundary
 
@@ -43,7 +48,8 @@ python -m dte_backend run --spec examples/run_spec.json --nodes examples/frontie
 
 - Real LLM Judge.
 - Concrete Codex/Kimi/OpenClaw command wrappers around the subprocess executor adapter boundary.
-- Real embedding model / KDE backend.
+- Final research-grade estimator for local `SD_i`.
+- Final research-state diversity/entropy observable replacing the quarantined batch-relative KDE proxy.
 - Model-backed complementary/conflict merge operator beyond the current equivalent-claim skeleton.
 - Persistent cache layer beyond the current in-memory per-run cache.
 - Hook enforcement beyond the validation example.
@@ -68,8 +74,8 @@ python -m dte_backend run --spec examples/run_spec.json --nodes examples/frontie
 
 ## Design choice: UCB not cost-aware
 
-The prototype does not add cost penalty into UCB. The exploration objective remains value/uncertainty driven. Costs are controlled by hard budgets and model/executor policy.
+The prototype does not add cost penalty into UCB. The local exploration objective remains value plus uncertainty. Costs are controlled by hard budgets and model/executor policy. Global temperature only controls how concentrated Boltzmann resource allocation is across the already-computed UCB values.
 
 ## Next step
 
-Wire one real executor adapter that accepts an expansion request and returns structured `SearchNode` JSON. The adapter must not produce final answers directly.
+Replace the provisional local `SD_i` and global diversity proxy only when the method→understanding research provides better estimators; preserve the canonical controller separation unless new mathematics justifies changing it.

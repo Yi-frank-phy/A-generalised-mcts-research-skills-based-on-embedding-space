@@ -223,8 +223,8 @@
     },
     {
       "path": "src/dte_backend/math_engine.py",
-      "size": 5928,
-      "sha256": "c8811c158369a9393002c995cdce711a714322ae2ad24ee287e078a15120c642"
+      "size": 6206,
+      "sha256": "d1012868eb167aca613d3776f513167c547c3e5e1e9f04bcd0f8750394d1bfdc"
     },
     {
       "path": "src/dte_backend/merge.py",
@@ -327,5 +327,5 @@
       "sha256": "b7c578325f60737a6feda3660fd6c53b4d15782a3c931cf2a5e6718591ce4092"
     }
   ],
-  "bundle_sha256": "d534e0c00abaff7758d6bec45e7c8cff7ac8b840397ea0de1b574e6c91bb8bb9"
+  "bundle_sha256": "15c182c69b594fd5f5306fb1d7c284ffcfb2e4303cf2efe413853923c333172a"
 }

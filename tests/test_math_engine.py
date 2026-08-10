@@ -25,6 +25,26 @@ def test_boltzmann_allocation_nonempty_budget():
     assert len(allocation) == 2
 
 
+def test_zero_temperature_boltzmann_concentrates_on_unique_maximum():
+    assert boltzmann_allocation(
+        [0.2, 0.9, 0.4],
+        allocation_mass_per_iteration=3,
+        max_children_per_iteration=5,
+        node_ids=["a", "b", "c"],
+        temperature=0.0,
+    ) == [0, 3, 0]
+
+
+def test_zero_temperature_tied_maxima_are_symmetric():
+    assert boltzmann_allocation(
+        [0.9, 0.9, 0.2],
+        allocation_mass_per_iteration=2,
+        max_children_per_iteration=5,
+        node_ids=["a", "b", "c"],
+        temperature=0.0,
+    ) == [1, 1, 0]
+
+
 def test_discretize_allocation_uses_round_half_up_below_one():
     assert discretize_allocation([0.5], [1.0], ["a"], max_children_per_iteration=5) == [1]
 
@@ -74,6 +94,22 @@ def test_allocate_frontier_is_invariant_to_input_order_by_node_id():
         item.node_id: item.expansion_budget for item in reverse
     }
     assert sum(item.expansion_budget for item in forward) <= 5
+
+
+def test_higher_sd_changes_actual_ucb_allocation_support():
+    nodes = [
+        SearchNode(node_id="a", claim="A", score=0.5, uncertainty=0.1),
+        SearchNode(node_id="b", claim="B", score=0.5, uncertainty=0.4),
+    ]
+    result = allocate_frontier(
+        nodes,
+        allocation_mass_per_iteration=4,
+        max_children_per_iteration=5,
+        temperature=0.25,
+    )
+    by_id = {item.node_id: item for item in result}
+    assert by_id["b"].ucb_score > by_id["a"].ucb_score
+    assert by_id["b"].expansion_budget >= by_id["a"].expansion_budget
 
 
 def test_allocate_frontier():

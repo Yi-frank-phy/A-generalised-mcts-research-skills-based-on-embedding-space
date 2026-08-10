@@ -45,6 +45,16 @@ def test_zero_temperature_tied_maxima_are_symmetric():
     ) == [1, 1, 0]
 
 
+def test_zero_temperature_excludes_near_but_nonmaximal_branch():
+    assert boltzmann_allocation(
+        [0.9, 0.9 - 1e-12],
+        allocation_mass_per_iteration=2,
+        max_children_per_iteration=5,
+        node_ids=["a", "b"],
+        temperature=0.0,
+    ) == [2, 0]
+
+
 def test_discretize_allocation_uses_round_half_up_below_one():
     assert discretize_allocation([0.5], [1.0], ["a"], max_children_per_iteration=5) == [1]
 

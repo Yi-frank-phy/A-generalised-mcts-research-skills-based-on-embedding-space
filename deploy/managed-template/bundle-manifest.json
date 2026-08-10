@@ -148,8 +148,8 @@
     },
     {
       "path": "src/dte_backend/entropy.py",
-      "size": 2771,
-      "sha256": "1401ec2c6967c932da1f01e8617b3eedb97c9519fec1ebc09c8cc893a64d976b"
+      "size": 3446,
+      "sha256": "ebcb623bcb810d0ed1c73bd1ff7a303373b9f136d2d9e7a081f419d5c87c6b19"
     },
     {
       "path": "src/dte_backend/episode_adapter.py",
@@ -218,8 +218,8 @@
     },
     {
       "path": "src/dte_backend/kde.py",
-      "size": 2922,
-      "sha256": "fac535b93f34ed7d985bcf0e27a6c16887fb82182a7336b9e8b3a948842ddc92"
+      "size": 3754,
+      "sha256": "7fb4dac3dbf964a222bdabb80363f8069931892f7d610b8e10cf2401ae4494cf"
     },
     {
       "path": "src/dte_backend/math_engine.py",
@@ -327,5 +327,5 @@
       "sha256": "b7c578325f60737a6feda3660fd6c53b4d15782a3c931cf2a5e6718591ce4092"
     }
   ],
-  "bundle_sha256": "72475447ac9ee342a2b3e8627c5f3fd17a218b3adb8b83b6e1a3ad013d3d13c5"
+  "bundle_sha256": "1ca374e2fe072a3fdae70a5d9e1b2578b09ef77e45001714d0da4b025731b3e0"
 }

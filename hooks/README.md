@@ -27,15 +27,18 @@ execution contract and atomic commit boundary provide the anti-bypass check.
 python -m dte_backend hook-driver activate
 python -m dte_backend hook-driver init --spec <spec.json> --nodes <nodes.json>
 python -m dte_backend hook-driver step
+python -m dte_backend hook-driver request --chunk-index <n>
+python -m dte_backend hook-driver resume --run-id <run-id>
 python -m dte_backend hook-driver submit --result <result.json>
-python -m dte_backend hook-driver control --action retry|cancel|request-synthesis
+python -m dte_backend hook-driver control --action retry|fail-attempt|cancel-attempt|cancel-run|request-synthesis
 python -m dte_backend hook-driver status
 python -m dte_backend hook-driver handoff
 ```
 
-Every command prints exactly one `dte-hook-receipt.v1` JSON object. A failed or
-replayed capability cannot produce a successful receipt or advance graph
-revision.
+Mutating commands print exactly one `dte-hook-receipt.v1` JSON object. `step`
+may idempotently return `dte-request-ref.v1`; `request` and `status` return
+strict read-only projections. A failed or replayed capability cannot produce a
+successful receipt or advance graph revision.
 
 ## Install, verify, and rollback
 

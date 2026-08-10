@@ -21,21 +21,26 @@ from typing import Any, Iterator, Literal
 
 from pydantic import Field
 
+from .bundle_manifest import verify_bundle_manifest
 from .app_driver import (
     AppRunState,
     DriverExecutionContext,
     ExecutionContract,
     cancel_app_episode,
+    cancel_app_run,
     create_app_run,
+    fail_app_episode,
     load_app_run,
     next_app_episode,
     request_app_synthesis,
+    rebind_app_execution_contract,
+    record_app_episode_repair_required,
     retry_app_episode,
     rotate_app_execution_capability,
     submit_app_episode_result,
 )
 from .epistemic import build_terminal_epistemic_handoff
-from .episode_models import canonical_json_bytes
+from .episode_models import EpisodeRequest, canonical_json_bytes
 from .guards import enforce_run_spec_guard
 from .models import DTEBaseModel, DTERunSpec, SearchNode, SynthesisControlRequest
 from .observability import build_run_observability_summary
@@ -49,6 +54,26 @@ ZERO_HASH = "0" * 64
 TRANSACTION_SCHEMA = "dte-hook-transaction.internal.v1"
 LOCK_SCHEMA = "dte-hook-lock.internal.v1"
 MALFORMED_LOCK_STALE_SECONDS = 30.0
+REQUEST_CHUNK_BYTES = 8192
+REQUEST_REFERENCE_SCHEMA = "dte-request-ref.v1"
+REQUEST_CHUNK_SCHEMA = "dte-request-chunk.v1"
+STATUS_PROJECTION_SCHEMA = "dte-hook-status.v1"
+
+
+def _runtime_bundle_identity() -> tuple[str, str]:
+    root = Path(__file__).resolve().parents[2]
+    manifest = verify_bundle_manifest(root)
+    hook_hash = hashlib.sha256(
+        (root / "hooks" / "dte_enforcement_hook.py").read_bytes()
+    ).hexdigest()
+    hook_record = next(
+        record
+        for record in manifest["files"]
+        if record["path"] == "hooks/dte_enforcement_hook.py"
+    )
+    if hook_record["sha256"] != hook_hash:
+        raise ValueError("bundle manifest does not bind the enforcement hook bytes")
+    return manifest["bundle_sha256"], hook_hash
 
 SessionPhase = Literal[
     "awaiting_init",
@@ -58,6 +83,8 @@ SessionPhase = Literal[
     "terminal_pending_handoff",
     "handoff_ready",
     "cancelled",
+    "transferred",
+    "observed_terminal",
     "failed",
 ]
 
@@ -82,12 +109,16 @@ class HookSessionManifest(DTEBaseModel):
     capability_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     manifest_identity_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     repeated_stop_count: int = Field(default=0, ge=0)
+    paused: bool = False
     failure_reason: str | None = None
     trigger_source: str | None = None
     invocation_key: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     replay_of_run_id: str | None = None
     source_episode_result_hashes: list[str] = Field(default_factory=list)
     model_execution_disposition: Literal["reused", "rerun", "unknown"] | None = None
+    pending_resume_session_id: str | None = None
+    pending_resume_run_id: str | None = None
+    pending_resume_run_dir: str | None = None
 
 
 class HookDriverReceipt(DTEBaseModel):
@@ -109,6 +140,68 @@ class HookDriverReceipt(DTEBaseModel):
     receipt_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     error: str | None = None
     payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class HookRequestReference(DTEBaseModel):
+    """Compact identity for one durable EpisodeRequest."""
+
+    schema_version: Literal["dte-request-ref.v1"] = REQUEST_REFERENCE_SCHEMA
+    session_id: str
+    root_turn_id: str
+    run_id: str
+    episode_id: str
+    attempt_id: str
+    input_graph_revision: int = Field(ge=0)
+    role: str
+    request_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    canonical_size_bytes: int = Field(ge=2)
+    chunk_size_bytes: int = Field(default=REQUEST_CHUNK_BYTES, ge=1)
+    chunk_count: int = Field(ge=1)
+    next_required_action: str = (
+        "read every request chunk with hook-driver request --chunk-index N, "
+        "then execute the bounded EpisodeRequest and submit one strict result"
+    )
+
+
+class HookRequestChunk(DTEBaseModel):
+    """One bounded, hash-bound projection of the current EpisodeRequest."""
+
+    schema_version: Literal["dte-request-chunk.v1"] = REQUEST_CHUNK_SCHEMA
+    session_id: str
+    root_turn_id: str
+    run_id: str
+    episode_id: str
+    attempt_id: str
+    input_graph_revision: int = Field(ge=0)
+    request_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    canonical_size_bytes: int = Field(ge=2)
+    chunk_index: int = Field(ge=0)
+    chunk_count: int = Field(ge=1)
+    byte_start: int = Field(ge=0)
+    byte_end: int = Field(ge=1)
+    content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    content: str
+
+
+class HookStatusProjection(DTEBaseModel):
+    """Read-only model-facing summary of one hook session."""
+
+    schema_version: Literal["dte-hook-status.v1"] = STATUS_PROJECTION_SCHEMA
+    session_id: str
+    root_turn_id: str
+    run_id: str | None = None
+    phase: SessionPhase
+    controller_action: str | None = None
+    current_episode_id: str | None = None
+    current_attempt_id: str | None = None
+    current_graph_revision: int | None = Field(default=None, ge=0)
+    last_committed_graph_revision: int = Field(ge=0)
+    receipt_sequence: int = Field(ge=0)
+    last_receipt_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    manifest_state_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    next_required_action: str
+    paused: bool = False
+    request_ref: HookRequestReference | None = None
 
 
 def state_root() -> Path:
@@ -253,7 +346,7 @@ def _claim_invocation(
         existing: dict[str, Any] | None = None
         if registry.is_file():
             existing = json.loads(registry.read_text(encoding="utf-8"))
-        if existing is not None and existing.get("status") == "complete":
+        if existing is not None and existing.get("status") in {"complete", "cancelled"}:
             return None, existing
 
         generation = 1
@@ -785,6 +878,13 @@ def _begin_operation_intent(
         and _capability_hash(current_capability) != manifest.capability_hash
     ):
         raise PermissionError("provided capability is stale or invalid")
+    operation_metadata = dict(metadata or {})
+    if manifest.run_dir:
+        backend_state = Path(manifest.run_dir) / "app_run_state.json"
+        if backend_state.is_file():
+            operation_metadata["backend_state_hash_before"] = hashlib.sha256(
+                backend_state.read_bytes()
+            ).hexdigest()
     _atomic_json(
         path,
         {
@@ -801,7 +901,7 @@ def _begin_operation_intent(
                 "operation": operation,
                 "before_hash": before_hash,
             },
-            "operation_metadata": metadata or {},
+            "operation_metadata": operation_metadata,
         },
     )
 
@@ -976,6 +1076,9 @@ def _recover_operation_intent(transaction: dict[str, Any]) -> None:
         "submit",
         "status",
         "control:retry",
+        "control:fail-attempt",
+        "control:cancel-attempt",
+        "control:cancel-run",
         "control:cancel",
         "control:request-synthesis",
     }:
@@ -988,18 +1091,26 @@ def _recover_operation_intent(transaction: dict[str, Any]) -> None:
         or _capability_hash(current_capability) != baseline.capability_hash
     ):
         raise ValueError("pending App operation capability is invalid")
-    before_hash = transaction["receipt_fields"]["before_hash"]
-    if state_identity_hash(baseline) == before_hash:
-        # The backend call did not durably change authoritative state. There is
-        # no successful transition to reconstruct and retry remains safe.
+    backend_state_path = Path(baseline.run_dir) / "app_run_state.json"
+    current_backend_hash = hashlib.sha256(backend_state_path.read_bytes()).hexdigest()
+    before_backend_hash = transaction.get("operation_metadata", {}).get(
+        "backend_state_hash_before"
+    )
+    if before_backend_hash == current_backend_hash:
+        # The backend call did not durably change authoritative state.
         _discard_transaction(session_id)
         return
     state = load_app_run(baseline.run_dir)
     target = baseline.model_copy(deep=True)
     _sync_from_state(target, state)
-    if operation == "control:cancel":
-        target.phase = "cancelled"
-        target.next_required_action = "report explicit cancellation; do not claim success"
+    if (
+        before_backend_hash is None
+        and state_identity_hash(target) == transaction["receipt_fields"]["before_hash"]
+    ):
+        # Legacy v1 intents did not bind the backend file hash. Preserve their
+        # previous manifest-visible recovery rule without weakening new intents.
+        _discard_transaction(session_id)
+        return
     prepared = _prepare_recovery_transaction(
         transaction,
         target,
@@ -1161,6 +1272,7 @@ def _protected_paths(cwd: str, run_dir: str | None = None) -> list[str]:
         str(skill_root / "hooks"),
         str(skill_root / "src" / "dte_backend"),
         str(skill_root / "scripts" / "install_dte_hooks.py"),
+        str(skill_root / "scripts" / "dte_hook_driver_entry.py"),
         str(Path.home() / ".codex" / "hooks" / "dte_enforcement_hook.py"),
     ]
     if run_dir:
@@ -1169,7 +1281,13 @@ def _protected_paths(cwd: str, run_dir: str | None = None) -> list[str]:
 
 
 def is_terminal_phase(phase: SessionPhase) -> bool:
-    return phase in {"handoff_ready", "cancelled", "failed"}
+    return phase in {
+        "handoff_ready",
+        "cancelled",
+        "transferred",
+        "observed_terminal",
+        "failed",
+    }
 
 
 def is_active_manifest(manifest: HookSessionManifest | None) -> bool:
@@ -1259,6 +1377,8 @@ def resume_session_turn(session_id: str, turn_id: str) -> HookDriverReceipt | No
         before = state_identity_hash(manifest)
         manifest.active_root_turn_id = turn_id
         manifest.repeated_stop_count = 0
+        manifest.paused = False
+        manifest.failure_reason = None
         return _record_receipt(
             manifest,
             operation="resume-turn",
@@ -1312,12 +1432,20 @@ def _sync_from_state(manifest: HookSessionManifest, state: AppRunState) -> None:
         )
     elif action == "await_operator_decision":
         manifest.phase = "awaiting_operator"
+        if manifest.current_episode_id is None:
+            manifest.current_episode_id = _blocking_operator_episode_id(state)
         manifest.next_required_action = (
-            "ask the user or call hook-driver control --action retry|cancel|request-synthesis"
+            "ask the user or call hook-driver control --action "
+            "retry|fail-attempt|cancel-attempt|cancel-run|request-synthesis"
         )
     elif action in {"ready_for_synthesis", "run_complete"}:
         manifest.phase = "terminal_pending_handoff"
         manifest.next_required_action = "hook-driver handoff"
+        manifest.current_episode_id = None
+        manifest.current_attempt_id = None
+    elif action == "run_cancelled":
+        manifest.phase = "cancelled"
+        manifest.next_required_action = "report explicit run cancellation; do not claim success"
         manifest.current_episode_id = None
         manifest.current_attempt_id = None
     else:
@@ -1325,6 +1453,209 @@ def _sync_from_state(manifest: HookSessionManifest, state: AppRunState) -> None:
         manifest.next_required_action = "hook-driver step"
         manifest.current_episode_id = None
         manifest.current_attempt_id = None
+
+
+def _blocking_operator_episode_id(state: AppRunState) -> str | None:
+    """Return the newest durable logical episode awaiting an explicit retry."""
+
+    for episode in reversed(state.episodes):
+        if episode.committed_attempt_id is not None:
+            continue
+        latest = episode.attempts[-1]
+        if (
+            latest.status in {"rejected", "failed", "cancelled", "expired"}
+            and not latest.retry_exhaustion_released
+        ):
+            return episode.episode_id
+    return None
+
+
+def _current_attempt_request(
+    manifest: HookSessionManifest,
+) -> tuple[AppRunState, EpisodeRequest, str, bytes]:
+    """Load the authoritative active request and verify its immutable artifact."""
+
+    if (
+        not manifest.run_dir
+        or not manifest.run_id
+        or not manifest.current_episode_id
+        or not manifest.current_attempt_id
+    ):
+        raise ValueError("request projection requires an active EpisodeRequest")
+    state = load_app_run(manifest.run_dir)
+    if (
+        state.run_id != manifest.run_id
+        or state.active_episode_id != manifest.current_episode_id
+        or state.active_attempt_id != manifest.current_attempt_id
+        or state.controller_action != "episode_required"
+    ):
+        raise ValueError("request projection identity disagrees with App run state")
+    episode = next(
+        (
+            item
+            for item in state.episodes
+            if item.episode_id == manifest.current_episode_id
+        ),
+        None,
+    )
+    if episode is None:
+        raise ValueError("active EpisodeRequest has no durable logical episode")
+    attempt = next(
+        (
+            item
+            for item in episode.attempts
+            if item.attempt_id == manifest.current_attempt_id
+        ),
+        None,
+    )
+    if attempt is None or attempt.status != "in_progress":
+        raise ValueError("active EpisodeRequest has no durable in-progress attempt")
+    artifact = (
+        Path(manifest.run_dir)
+        / "episodes"
+        / attempt.request.episode_id
+        / attempt.request.attempt_id
+        / "request.json"
+    )
+    persisted = EpisodeRequest.model_validate_json(artifact.read_text(encoding="utf-8"))
+    if persisted.model_dump(mode="json") != attempt.request.model_dump(mode="json"):
+        raise ValueError("request artifact disagrees with the authoritative App attempt")
+    canonical = canonical_json_bytes(persisted)
+    request_hash = hashlib.sha256(canonical).hexdigest()
+    if request_hash != attempt.request_hash:
+        raise ValueError("request artifact disagrees with its durable request hash")
+    return state, persisted, request_hash, canonical
+
+
+def _bounded_utf8_chunks(payload: bytes) -> list[tuple[int, int, str]]:
+    """Split canonical UTF-8 without cutting a multi-byte code point."""
+
+    chunks: list[tuple[int, int, str]] = []
+    start = 0
+    while start < len(payload):
+        end = min(len(payload), start + REQUEST_CHUNK_BYTES)
+        while end < len(payload) and (payload[end] & 0xC0) == 0x80:
+            end -= 1
+        if end <= start:  # pragma: no cover - UTF-8 code points are at most 4 bytes.
+            raise ValueError("request chunk size cannot contain one UTF-8 code point")
+        chunks.append((start, end, payload[start:end].decode("utf-8")))
+        start = end
+    if not chunks:
+        raise ValueError("EpisodeRequest canonical payload cannot be empty")
+    return chunks
+
+
+def _request_reference(
+    manifest: HookSessionManifest,
+    request: EpisodeRequest,
+    request_hash: str,
+    canonical: bytes,
+) -> HookRequestReference:
+    return HookRequestReference(
+        session_id=manifest.session_id,
+        root_turn_id=manifest.active_root_turn_id,
+        run_id=request.run_id,
+        episode_id=request.episode_id,
+        attempt_id=request.attempt_id,
+        input_graph_revision=request.input_graph_revision,
+        role=request.role,
+        request_hash=request_hash,
+        canonical_size_bytes=len(canonical),
+        chunk_count=len(_bounded_utf8_chunks(canonical)),
+    )
+
+
+def request_reference_session(
+    session_id: str,
+    turn_id: str,
+    capability: str,
+) -> HookRequestReference:
+    """Return the current request identity without changing hook or App state."""
+
+    with session_lock(session_id):
+        manifest = _require_operable(session_id, turn_id, capability)
+        if manifest.phase != "episode_required":
+            raise ValueError("request projection requires phase=episode_required")
+        _, request, request_hash, canonical = _current_attempt_request(manifest)
+        return _request_reference(manifest, request, request_hash, canonical)
+
+
+def request_chunk_session(
+    session_id: str,
+    turn_id: str,
+    capability: str,
+    chunk_index: int,
+) -> HookRequestChunk:
+    """Read one bounded request chunk without a receipt or capability rotation."""
+
+    with session_lock(session_id):
+        manifest = _require_operable(session_id, turn_id, capability)
+        if manifest.phase != "episode_required":
+            raise ValueError("request chunk requires phase=episode_required")
+        _, request, request_hash, canonical = _current_attempt_request(manifest)
+        chunks = _bounded_utf8_chunks(canonical)
+        if chunk_index < 0 or chunk_index >= len(chunks):
+            raise ValueError(
+                f"request chunk_index must be between 0 and {len(chunks) - 1}"
+            )
+        start, end, content = chunks[chunk_index]
+        content_bytes = content.encode("utf-8")
+        return HookRequestChunk(
+            session_id=manifest.session_id,
+            root_turn_id=manifest.active_root_turn_id,
+            run_id=request.run_id,
+            episode_id=request.episode_id,
+            attempt_id=request.attempt_id,
+            input_graph_revision=request.input_graph_revision,
+            request_hash=request_hash,
+            canonical_size_bytes=len(canonical),
+            chunk_index=chunk_index,
+            chunk_count=len(chunks),
+            byte_start=start,
+            byte_end=end,
+            content_sha256=hashlib.sha256(content_bytes).hexdigest(),
+            content=content,
+        )
+
+
+def validate_request_projection(
+    projection: HookRequestReference | HookRequestChunk,
+    manifest: HookSessionManifest,
+) -> None:
+    """Verify a model-facing request projection against protected durable state."""
+
+    if projection.session_id != manifest.session_id:
+        raise ValueError("request projection session does not match manifest")
+    if projection.root_turn_id != manifest.active_root_turn_id:
+        raise ValueError("request projection turn does not match manifest")
+    _, request, request_hash, canonical = _current_attempt_request(manifest)
+    reference = _request_reference(manifest, request, request_hash, canonical)
+    if isinstance(projection, HookRequestReference):
+        if projection != reference:
+            raise ValueError("request reference differs from the durable active request")
+        return
+    chunks = _bounded_utf8_chunks(canonical)
+    if projection.chunk_index >= len(chunks):
+        raise ValueError("request chunk index exceeds the durable request")
+    start, end, content = chunks[projection.chunk_index]
+    expected = HookRequestChunk(
+        session_id=reference.session_id,
+        root_turn_id=reference.root_turn_id,
+        run_id=reference.run_id,
+        episode_id=reference.episode_id,
+        attempt_id=reference.attempt_id,
+        input_graph_revision=reference.input_graph_revision,
+        request_hash=reference.request_hash,
+        canonical_size_bytes=reference.canonical_size_bytes,
+        chunk_index=projection.chunk_index,
+        chunk_count=reference.chunk_count,
+        byte_start=start,
+        byte_end=end,
+        content_sha256=hashlib.sha256(content.encode("utf-8")).hexdigest(),
+        content=content,
+    )
+    if projection != expected:
+        raise ValueError("request chunk differs from the durable active request")
 
 
 def init_session(
@@ -1387,9 +1718,66 @@ def init_session(
         if existing is not None:
             existing_session = existing.get("session_id")
             if existing_session != session_id:
-                raise RuntimeError(
-                    "an identical hook invocation already belongs to another "
-                    f"session: {existing_session}"
+                existing_run_id = existing.get("run_id")
+                existing_run_dir = existing.get("run_dir")
+                if not all(
+                    isinstance(value, str) and value
+                    for value in (existing_session, existing_run_id, existing_run_dir)
+                ):
+                    raise RuntimeError(
+                        "an identical hook invocation has incomplete resume metadata"
+                    )
+                existing_state = load_app_run(existing_run_dir)
+                if existing_state.controller_action in {
+                    "ready_for_synthesis",
+                    "run_complete",
+                    "run_cancelled",
+                }:
+                    manifest.phase = "observed_terminal"
+                    manifest.invocation_key = invocation_key
+                    manifest.next_required_action = (
+                        "report the existing terminal run state; create a new run only "
+                        "with explicit replay or invocation nonce"
+                    )
+                    return _record_receipt(
+                        manifest,
+                        operation="init",
+                        success=True,
+                        before_hash=before,
+                        controller_action=existing_state.controller_action,
+                        payload={
+                            "terminal_invocation": True,
+                            "run_id": existing_run_id,
+                            "run_dir": existing_run_dir,
+                            "terminal_action": existing_state.controller_action,
+                            "run_cancellation": (
+                                None
+                                if existing_state.run_cancellation is None
+                                else existing_state.run_cancellation.model_dump(mode="json")
+                            ),
+                            "invocation_key": invocation_key,
+                        },
+                    )
+                manifest.invocation_key = invocation_key
+                manifest.pending_resume_session_id = existing_session
+                manifest.pending_resume_run_id = existing_run_id
+                manifest.pending_resume_run_dir = existing_run_dir
+                manifest.next_required_action = (
+                    f"hook-driver resume --run-id {existing_run_id}"
+                )
+                return _record_receipt(
+                    manifest,
+                    operation="init",
+                    success=True,
+                    before_hash=before,
+                    controller_action="resume_available",
+                    payload={
+                        "resume_available": True,
+                        "run_id": existing_run_id,
+                        "run_dir": existing_run_dir,
+                        "previous_session_id": existing_session,
+                        "invocation_key": invocation_key,
+                    },
                 )
             raise RuntimeError(
                 "the invocation run already exists but this session is not "
@@ -1415,6 +1803,7 @@ def init_session(
         if runs_root.resolve() not in temporary_dir.parents:
             raise ValueError("computed run path escaped the activation directory")
         next_capability = _new_capability()
+        bundle_hash, hook_hash = _runtime_bundle_identity()
         identity = _manifest_identity(session_id, manifest.cwd, run_id, str(final_dir))
         contract = ExecutionContract(
             mode="hook_enforced_v1",
@@ -1423,6 +1812,8 @@ def init_session(
             manifest_identity_hash=identity,
             driver_protocol_version=DRIVER_PROTOCOL,
             capability_hash=_capability_hash(next_capability),
+            skill_bundle_hash=bundle_hash,
+            hook_content_hash=hook_hash,
         )
         _begin_operation_intent(
             manifest,
@@ -1520,10 +1911,181 @@ def init_session(
         )
 
 
-def step_session(session_id: str, turn_id: str, capability: str) -> HookDriverReceipt:
+def resume_existing_session(
+    session_id: str,
+    turn_id: str,
+    capability: str,
+    run_id: str,
+) -> HookDriverReceipt:
+    """Transfer a matching nonterminal invocation from another Codex session."""
+
+    candidate = load_manifest(session_id)
+    if candidate is None or candidate.pending_resume_session_id is None:
+        raise ValueError("session has no pending cross-session resume")
+    previous_session_id = candidate.pending_resume_session_id
+    if previous_session_id == session_id:
+        raise ValueError("cross-session resume requires a different previous session")
+    load_manifest(previous_session_id)
+    first, second = sorted((session_id, previous_session_id))
+    with session_lock(first):
+        with session_lock(second):
+            manifest = _load_manifest_unreconciled(session_id)
+            previous = _load_manifest_unreconciled(previous_session_id)
+            if manifest is None or previous is None:
+                raise ValueError("resume manifests are missing after transaction recovery")
+            if manifest.active_root_turn_id != turn_id:
+                raise PermissionError("only the active root turn may resume DTE")
+            _execution_context(manifest, capability)
+            if (
+                manifest.pending_resume_session_id != previous_session_id
+                or manifest.pending_resume_run_id != run_id
+                or manifest.pending_resume_run_dir != previous.run_dir
+                or manifest.invocation_key is None
+                or manifest.invocation_key != previous.invocation_key
+            ):
+                raise ValueError("pending resume identity does not match the previous session")
+            if previous.run_id != run_id or not previous.run_dir:
+                raise ValueError("previous session does not own the requested run")
+            if is_terminal_phase(previous.phase) and previous.phase != "transferred":
+                raise ValueError(
+                    f"previous DTE session is terminal and cannot resume: {previous.phase}"
+                )
+            expected_run_dir = (
+                Path(manifest.cwd) / ".dte" / "runs" / run_id
+            ).resolve()
+            if Path(previous.run_dir).resolve() != expected_run_dir:
+                raise ValueError("resume run escaped the matching activation directory")
+            registry = json.loads(
+                invocation_path(manifest.invocation_key).read_text(encoding="utf-8")
+            )
+            if (
+                registry.get("status") != "complete"
+                or registry.get("session_id") not in {previous_session_id, session_id}
+                or registry.get("run_id") != run_id
+                or Path(str(registry.get("run_dir"))).resolve() != expected_run_dir
+            ):
+                raise ValueError("invocation registry does not authorize this resume")
+            state = load_app_run(expected_run_dir)
+            if state.hook_invocation_key != manifest.invocation_key:
+                raise ValueError("App run invocation identity does not match resume")
+            if state.controller_action in {"ready_for_synthesis", "run_complete"}:
+                raise ValueError("backend terminal runs cannot transfer sessions")
+            next_identity = _manifest_identity(
+                session_id,
+                manifest.cwd,
+                run_id,
+                str(expected_run_dir),
+            )
+            contract = state.execution_contract
+            if contract.enforcement_session_id == previous_session_id:
+                previous_capability = load_capability(previous_session_id, previous)
+                previous_context = _execution_context(previous, previous_capability)
+                state = rebind_app_execution_contract(
+                    expected_run_dir,
+                    previous_context,
+                    next_session_id=session_id,
+                    next_manifest_identity_hash=next_identity,
+                    next_capability=capability,
+                    driver_protocol_version=DRIVER_PROTOCOL,
+                )
+            elif contract.enforcement_session_id == session_id:
+                if (
+                    contract.manifest_identity_hash != next_identity
+                    or contract.capability_hash != _capability_hash(capability)
+                    or contract.driver_protocol_version != DRIVER_PROTOCOL
+                ):
+                    raise ValueError("partially resumed execution contract is inconsistent")
+            else:
+                raise ValueError("App execution contract is owned by an unrelated session")
+
+            if previous.phase != "transferred":
+                previous_before = state_identity_hash(previous)
+                previous.phase = "transferred"
+                previous.paused = False
+                previous.failure_reason = None
+                previous.next_required_action = (
+                    f"run ownership transferred to session {session_id}; do not submit from this session"
+                )
+                previous.current_episode_id = None
+                previous.current_attempt_id = None
+                transfer_receipt = _record_receipt(
+                    previous,
+                    operation="transfer-out",
+                    success=True,
+                    before_hash=previous_before,
+                    controller_action="transferred",
+                    payload={"next_session_id": session_id, "run_id": run_id},
+                )
+                _archive_terminal_manifest(previous)
+                previous_receipt_hash = transfer_receipt.receipt_hash
+            else:
+                previous_receipt_hash = previous.last_receipt_hash
+
+            before = state_identity_hash(manifest)
+            manifest.run_id = run_id
+            manifest.run_dir = str(expected_run_dir)
+            manifest.trigger_source = previous.trigger_source
+            manifest.replay_of_run_id = previous.replay_of_run_id
+            manifest.source_episode_result_hashes = list(
+                previous.source_episode_result_hashes
+            )
+            manifest.model_execution_disposition = previous.model_execution_disposition
+            manifest.manifest_identity_hash = next_identity
+            manifest.protected_paths = _protected_paths(
+                manifest.cwd,
+                str(expected_run_dir),
+            )
+            manifest.pending_resume_session_id = None
+            manifest.pending_resume_run_id = None
+            manifest.pending_resume_run_dir = None
+            manifest.paused = False
+            manifest.failure_reason = None
+            _sync_from_state(manifest, state)
+            if registry.get("session_id") != session_id:
+                with invocation_lock(manifest.invocation_key):
+                    _atomic_json(
+                        invocation_path(manifest.invocation_key),
+                        {
+                            **registry,
+                            "session_id": session_id,
+                            "generation": int(registry.get("generation", 1)) + 1,
+                            "resumed_at": time.time(),
+                            "recovery_history": [
+                                *list(registry.get("recovery_history", [])),
+                                {
+                                    "reason": "cross_session_resume",
+                                    "previous_session_id": previous_session_id,
+                                    "next_session_id": session_id,
+                                },
+                            ],
+                        },
+                    )
+            return _record_receipt(
+                manifest,
+                operation="resume",
+                success=True,
+                before_hash=before,
+                controller_action=state.controller_action,
+                payload={
+                    "resumed": True,
+                    "run_id": run_id,
+                    "previous_session_id": previous_session_id,
+                    "previous_receipt_hash": previous_receipt_hash,
+                },
+            )
+
+
+def step_session(
+    session_id: str,
+    turn_id: str,
+    capability: str,
+) -> HookDriverReceipt | HookRequestReference:
     with session_lock(session_id):
         manifest = _require_operable(session_id, turn_id, capability)
-        if manifest.phase not in {"awaiting_controller", "episode_required"}:
+        if manifest.phase == "episode_required":
+            _, request, request_hash, canonical = _current_attempt_request(manifest)
+            return _request_reference(manifest, request, request_hash, canonical)
+        if manifest.phase != "awaiting_controller":
             raise ValueError(f"step is invalid in phase={manifest.phase}")
         before = state_identity_hash(manifest)
         _begin_operation_intent(
@@ -1538,13 +2100,28 @@ def step_session(session_id: str, turn_id: str, capability: str) -> HookDriverRe
         )
         state = load_app_run(manifest.run_dir or "")
         _sync_from_state(manifest, state)
+        payload: dict[str, Any]
+        if manifest.phase == "episode_required":
+            _, request, request_hash, canonical = _current_attempt_request(manifest)
+            payload = {
+                "request_ref": _request_reference(
+                    manifest,
+                    request,
+                    request_hash,
+                    canonical,
+                ).model_dump(mode="json")
+            }
+        else:
+            outcome_payload = outcome.model_dump(mode="json")
+            outcome_payload.pop("request", None)
+            payload = {"outcome": outcome_payload}
         return _record_receipt(
             manifest,
             operation="step",
             success=True,
             before_hash=before,
             controller_action=outcome.controller_action,
-            payload={"outcome": outcome.model_dump(mode="json")},
+            payload=payload,
             rotate_from=capability,
         )
 
@@ -1559,12 +2136,27 @@ def submit_session(
         manifest = _require_operable(session_id, turn_id, capability)
         if manifest.phase != "episode_required":
             raise ValueError("submit requires an active EpisodeRequest")
-        raw = json.loads(Path(result_path).read_text(encoding="utf-8"))
-        if raw.get("episode_id") != manifest.current_episode_id:
+        raw_text = Path(result_path).read_text(encoding="utf-8")
+        parse_error: str | None = None
+        try:
+            raw = json.loads(raw_text)
+        except Exception as exc:
+            raw = None
+            parse_error = f"episode result JSON/schema repair required: {exc}"
+        if isinstance(raw, dict) and raw.get("episode_id") not in {
+            None,
+            manifest.current_episode_id,
+        }:
             raise ValueError("result episode_id does not match the manifest grant")
-        if raw.get("attempt_id") != manifest.current_attempt_id:
+        if isinstance(raw, dict) and raw.get("attempt_id") not in {
+            None,
+            manifest.current_attempt_id,
+        }:
             raise ValueError("result attempt_id does not match the manifest grant")
-        if raw.get("input_graph_revision") != manifest.current_graph_revision:
+        if isinstance(raw, dict) and raw.get("input_graph_revision") not in {
+            None,
+            manifest.current_graph_revision,
+        }:
             raise ValueError("result graph revision does not match the manifest grant")
         before = state_identity_hash(manifest)
         _begin_operation_intent(
@@ -1573,11 +2165,35 @@ def submit_session(
             before_hash=before,
             current_capability=capability,
         )
-        outcome = submit_app_episode_result(
-            manifest.run_dir or "",
-            raw,
-            execution_context=_execution_context(manifest, capability),
-        )
+        context = _execution_context(manifest, capability)
+        if parse_error is not None or not isinstance(raw, dict):
+            outcome = record_app_episode_repair_required(
+                manifest.run_dir or "",
+                manifest.current_episode_id or "",
+                manifest.current_attempt_id or "",
+                parse_error or "episode result JSON must be an object",
+                payload=raw_text,
+                execution_context=context,
+            )
+        elif any(raw.get(field_name) is None for field_name in (
+            "episode_id",
+            "attempt_id",
+            "input_graph_revision",
+        )):
+            outcome = record_app_episode_repair_required(
+                manifest.run_dir or "",
+                manifest.current_episode_id or "",
+                manifest.current_attempt_id or "",
+                "episode result is missing required identity fields",
+                payload=raw,
+                execution_context=context,
+            )
+        else:
+            outcome = submit_app_episode_result(
+                manifest.run_dir or "",
+                raw,
+                execution_context=context,
+            )
         state = load_app_run(manifest.run_dir or "")
         _sync_from_state(manifest, state)
         accepted = outcome.commit_outcome.accepted
@@ -1588,7 +2204,11 @@ def submit_session(
             before_hash=before,
             accepted=accepted,
             controller_action=outcome.next_controller_action,
-            payload={"outcome": outcome.model_dump(mode="json")},
+            payload={
+                "outcome": outcome.model_dump(mode="json"),
+                "repair_required": outcome.repair_required,
+                "repair_exhausted": outcome.repair_exhausted,
+            },
             rotate_from=capability,
         )
 
@@ -1597,7 +2217,14 @@ def control_session(
     session_id: str,
     turn_id: str,
     capability: str,
-    action: Literal["retry", "cancel", "request-synthesis"],
+    action: Literal[
+        "retry",
+        "fail-attempt",
+        "cancel-attempt",
+        "cancel-run",
+        "cancel",
+        "request-synthesis",
+    ],
     *,
     reason: str | None = None,
     requested_by: Literal["user", "main_agent"] = "main_agent",
@@ -1606,6 +2233,12 @@ def control_session(
 ) -> HookDriverReceipt:
     with session_lock(session_id):
         manifest = _require_operable(session_id, turn_id, capability)
+        retry_episode_id = manifest.current_episode_id
+        if action == "retry" and manifest.run_dir:
+            retry_episode_id = (
+                _blocking_operator_episode_id(load_app_run(manifest.run_dir))
+                or retry_episode_id
+            )
         before = state_identity_hash(manifest)
         context = _execution_context(manifest, capability)
         _begin_operation_intent(
@@ -1616,27 +2249,49 @@ def control_session(
             metadata={"action": action},
         )
         if action == "retry":
-            if not manifest.current_episode_id:
+            if not retry_episode_id:
                 raise ValueError("retry requires a current logical episode")
             outcome = retry_app_episode(
                 manifest.run_dir or "",
-                manifest.current_episode_id,
+                retry_episode_id,
                 execution_context=context,
             )
             controller_action = outcome.controller_action
-            payload = {"outcome": outcome.model_dump(mode="json")}
-        elif action == "cancel":
+            outcome_payload = outcome.model_dump(mode="json")
+            outcome_payload.pop("request", None)
+            payload = {"outcome": outcome_payload}
+        elif action in {"fail-attempt", "cancel-attempt"}:
             if not manifest.current_episode_id or not manifest.current_attempt_id:
-                raise ValueError("cancel requires a current active attempt")
-            outcome = cancel_app_episode(
+                raise ValueError(f"{action} requires a current active attempt")
+            if not reason or not reason.strip():
+                raise ValueError(f"{action} requires --reason")
+            transition = fail_app_episode if action == "fail-attempt" else cancel_app_episode
+            outcome = transition(
                 manifest.run_dir or "",
                 manifest.current_episode_id,
                 manifest.current_attempt_id,
-                reason or "cancelled through the DTE hook driver",
+                reason,
                 execution_context=context,
             )
             controller_action = outcome.controller_action
             payload = {"outcome": outcome.model_dump(mode="json")}
+        elif action in {"cancel-run", "cancel"}:
+            if not reason or not reason.strip():
+                raise ValueError(f"{action} requires --reason")
+            state = cancel_app_run(
+                manifest.run_dir or "",
+                reason,
+                requested_by=requested_by,
+                execution_context=context,
+            )
+            controller_action = state.controller_action
+            payload = {
+                "run_cancellation": (
+                    None
+                    if state.run_cancellation is None
+                    else state.run_cancellation.model_dump(mode="json")
+                )
+            }
         else:
             request = SynthesisControlRequest(
                 action="force_synthesis_after_current_task",
@@ -1654,9 +2309,27 @@ def control_session(
             payload = {"control_request": request.model_dump(mode="json")}
         state = load_app_run(manifest.run_dir or "")
         _sync_from_state(manifest, state)
-        if action == "cancel":
-            manifest.phase = "cancelled"
-            manifest.next_required_action = "report explicit cancellation; do not claim success"
+        if action == "retry" and manifest.phase == "episode_required":
+            _, request, request_hash, canonical = _current_attempt_request(manifest)
+            payload["request_ref"] = _request_reference(
+                manifest,
+                request,
+                request_hash,
+                canonical,
+            ).model_dump(mode="json")
+        if action in {"cancel-run", "cancel"} and manifest.invocation_key:
+            registry_path = invocation_path(manifest.invocation_key)
+            with invocation_lock(manifest.invocation_key):
+                registry = json.loads(registry_path.read_text(encoding="utf-8"))
+                _atomic_json(
+                    registry_path,
+                    {
+                        **registry,
+                        "status": "cancelled",
+                        "cancelled_at": time.time(),
+                        "cancellation_reason": reason,
+                    },
+                )
         return _record_receipt(
             manifest,
             operation=f"control:{action}",
@@ -1668,28 +2341,48 @@ def control_session(
         )
 
 
-def status_session(session_id: str, turn_id: str, capability: str) -> HookDriverReceipt:
+def _status_projection(manifest: HookSessionManifest) -> HookStatusProjection:
+    state = None if not manifest.run_dir else load_app_run(manifest.run_dir)
+    request_ref = None
+    if manifest.phase == "episode_required":
+        _, request, request_hash, canonical = _current_attempt_request(manifest)
+        request_ref = _request_reference(manifest, request, request_hash, canonical)
+    return HookStatusProjection(
+        session_id=manifest.session_id,
+        root_turn_id=manifest.active_root_turn_id,
+        run_id=manifest.run_id,
+        phase=manifest.phase,
+        controller_action=None if state is None else state.controller_action,
+        current_episode_id=manifest.current_episode_id,
+        current_attempt_id=manifest.current_attempt_id,
+        current_graph_revision=manifest.current_graph_revision,
+        last_committed_graph_revision=manifest.last_committed_graph_revision,
+        receipt_sequence=manifest.receipt_sequence,
+        last_receipt_hash=manifest.last_receipt_hash,
+        manifest_state_hash=state_identity_hash(manifest),
+        next_required_action=manifest.next_required_action,
+        paused=manifest.paused,
+        request_ref=request_ref,
+    )
+
+
+def status_session(
+    session_id: str,
+    turn_id: str,
+    capability: str,
+) -> HookStatusProjection:
     with session_lock(session_id):
         manifest = _require_operable(session_id, turn_id, capability, allow_terminal=True)
-        before = state_identity_hash(manifest)
-        _begin_operation_intent(
-            manifest,
-            operation="status",
-            before_hash=before,
-            current_capability=capability if manifest.run_dir else None,
-        )
-        state = None if not manifest.run_dir else load_app_run(manifest.run_dir)
-        if state is not None and not is_terminal_phase(manifest.phase):
-            _sync_from_state(manifest, state)
-        return _record_receipt(
-            manifest,
-            operation="status",
-            success=True,
-            before_hash=before,
-            controller_action=None if state is None else state.controller_action,
-            payload={"manifest": manifest.model_dump(mode="json")},
-            rotate_from=capability if state is not None else None,
-        )
+        audit_manifest(manifest)
+        return _status_projection(manifest)
+
+
+def validate_status_projection(
+    projection: HookStatusProjection,
+    manifest: HookSessionManifest,
+) -> None:
+    if projection != _status_projection(manifest):
+        raise ValueError("status projection differs from protected durable state")
 
 
 def _materialize_handoff(
@@ -1830,12 +2523,22 @@ def audit_manifest(manifest: HookSessionManifest) -> None:
             raise ValueError("manifest and App state run IDs disagree")
         if contract.mode != "hook_enforced_v1":
             raise ValueError("active hook session points to a non-enforced run")
-        if contract.enforcement_session_id != manifest.session_id:
-            raise ValueError("App execution contract session mismatch")
-        if contract.manifest_identity_hash != manifest.manifest_identity_hash:
-            raise ValueError("App execution contract manifest mismatch")
-        if contract.capability_hash != manifest.capability_hash:
-            raise ValueError("App execution contract capability mismatch")
+        if contract.skill_bundle_hash is not None:
+            bundle_hash, hook_hash = _runtime_bundle_identity()
+            if contract.skill_bundle_hash != bundle_hash:
+                raise ValueError("App execution contract Skill bundle hash mismatch")
+            if contract.hook_content_hash != hook_hash:
+                raise ValueError("App execution contract hook content hash mismatch")
+        if manifest.phase == "transferred":
+            if contract.enforcement_session_id == manifest.session_id:
+                raise ValueError("transferred session still owns the App execution contract")
+        else:
+            if contract.enforcement_session_id != manifest.session_id:
+                raise ValueError("App execution contract session mismatch")
+            if contract.manifest_identity_hash != manifest.manifest_identity_hash:
+                raise ValueError("App execution contract manifest mismatch")
+            if contract.capability_hash != manifest.capability_hash:
+                raise ValueError("App execution contract capability mismatch")
     files = sorted(receipts_dir(manifest.session_id).glob("*.json"))
     if len(files) != manifest.receipt_sequence:
         raise ValueError("receipt sequence count does not match persisted chain")
@@ -1926,6 +2629,37 @@ def record_driver_failure(
     }
     payload["receipt_hash"] = _receipt_hash(payload)
     return HookDriverReceipt.model_validate(payload)
+
+
+def pause_session_turn(
+    session_id: str,
+    turn_id: str,
+    reason: str,
+) -> HookDriverReceipt:
+    """Record an operational pause without changing the backend episode state."""
+
+    with session_lock(session_id):
+        manifest = load_manifest(session_id)
+        if manifest is None or manifest.active_root_turn_id != turn_id:
+            raise PermissionError("turn pause does not own the active root turn")
+        if is_terminal_phase(manifest.phase):
+            raise ValueError("terminal DTE sessions cannot be paused")
+        before = state_identity_hash(manifest)
+        manifest.repeated_stop_count += 1
+        manifest.paused = True
+        manifest.failure_reason = None
+        return _record_receipt(
+            manifest,
+            operation="pause-turn",
+            success=True,
+            before_hash=before,
+            controller_action=manifest.phase,
+            payload={
+                "reason": reason,
+                "preserved_phase": manifest.phase,
+                "preserved_next_action": manifest.next_required_action,
+            },
+        )
 
 
 def mark_stop_impasse(

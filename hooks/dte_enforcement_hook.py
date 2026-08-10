@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import os
 import re
+import shlex
 import sys
 from pathlib import Path
 from typing import Any
@@ -77,29 +79,49 @@ def _skill_root(arguments: list[str]) -> Path:
 SKILL_ROOT = _skill_root(sys.argv[1:])
 SRC = SKILL_ROOT / "src"
 # An older editable DTE checkout may also be installed. The enforcement hook
-# must bind to the skill tree which supplied this dispatcher, not whichever
-# `.pth` entry happens to sort first in site-packages.
-filtered_path = []
+# must bind to the skill tree which supplied this dispatcher. Keep other
+# site-packages entries because they also supply runtime dependencies such as
+# Pydantic; putting the pinned source first is sufficient to win module lookup.
+filtered_path: list[str] = []
 for entry in sys.path:
     try:
-        competing_package = (Path(entry) / "dte_backend").is_dir()
+        duplicate_source = Path(entry).resolve() == SRC
     except (OSError, TypeError):
-        competing_package = False
-    if not competing_package:
+        duplicate_source = False
+    if not duplicate_source:
         filtered_path.append(entry)
 sys.path[:] = [str(SRC), *filtered_path]
+backend_spec = importlib.util.find_spec("dte_backend")
+expected_backend = (SRC / "dte_backend" / "__init__.py").resolve()
+try:
+    actual_backend = (
+        Path(backend_spec.origin).resolve()
+        if backend_spec is not None and isinstance(backend_spec.origin, str)
+        else None
+    )
+except OSError:
+    actual_backend = None
+if actual_backend != expected_backend:
+    raise RuntimeError("DTE hook could not bind to the pinned Skill backend")
 
 from dte_backend.hook_driver import (  # noqa: E402
     HookDriverReceipt,
+    HookRequestChunk,
+    HookRequestReference,
+    HookStatusProjection,
     activate_session,
     audit_manifest,
     handoff_session,
     is_active_manifest,
+    is_terminal_phase,
     load_capability,
     load_manifest,
     mark_stop_impasse,
+    pause_session_turn,
     resume_session_turn,
+    validate_request_projection,
     validate_receipt,
+    validate_status_projection,
 )
 
 
@@ -140,24 +162,38 @@ DTE_ENTRYPOINT_PATTERN = (
     rf"(?:{PYTHON_EXECUTABLE_PATTERN}\s+-m\s+dte_backend|"
     rf"{CONSOLE_EXECUTABLE_PATTERN})"
 )
-DRIVER_ACTION_PATTERN = r"(activate|init|step|submit|control|status|handoff)"
+WRAPPER_PATH_PATTERN = (
+    r"(?:"
+    r'"[^"\r\n]*dte_hook_driver_entry\.py"|'
+    r"'[^'\r\n]*dte_hook_driver_entry\.py'|"
+    r"[^\s;&|\r\n]*dte_hook_driver_entry\.py"
+    r")"
+)
+PINNED_ENTRYPOINT_PATTERN = rf"{PYTHON_EXECUTABLE_PATTERN}\s+{WRAPPER_PATH_PATTERN}"
+ANY_DTE_ENTRYPOINT_PATTERN = rf"(?:{DTE_ENTRYPOINT_PATTERN}|{PINNED_ENTRYPOINT_PATTERN})"
+PYTHON_MODULE_ENTRYPOINT = re.compile(
+    rf"(?P<python>{PYTHON_EXECUTABLE_PATTERN})\s+-m\s+dte_backend",
+    re.IGNORECASE,
+)
+CONSOLE_ENTRYPOINT = re.compile(CONSOLE_EXECUTABLE_PATTERN, re.IGNORECASE)
+DRIVER_ACTION_PATTERN = r"(activate|init|step|request|resume|submit|control|status|handoff)"
 DRIVER_COMMAND = re.compile(
     rf"^\s*(?:&\s*)?{DTE_ENTRYPOINT_PATTERN}\s+hook-driver\s+"
     rf"{DRIVER_ACTION_PATTERN}\b[^\r\n;&|]*$",
     re.IGNORECASE,
 )
 DRIVER_ACTION_SEARCH = re.compile(
-    rf"{DTE_ENTRYPOINT_PATTERN}\s+hook-driver\s+{DRIVER_ACTION_PATTERN}\b",
+    rf"{ANY_DTE_ENTRYPOINT_PATTERN}\s+hook-driver\s+{DRIVER_ACTION_PATTERN}\b",
     re.IGNORECASE,
 )
 DIRECT_MUTATOR = re.compile(
-    rf"{DTE_ENTRYPOINT_PATTERN}\s+"
+    rf"{ANY_DTE_ENTRYPOINT_PATTERN}\s+"
     r"(?:create-run|next-episode|submit-episode-result|fail-episode|cancel-episode|"
     r"retry-episode|request-synthesis)\b",
     re.IGNORECASE,
 )
 STRICT_REAL = re.compile(
-    rf"{DTE_ENTRYPOINT_PATTERN}\s+strict-run\b"
+    rf"{ANY_DTE_ENTRYPOINT_PATTERN}\s+strict-run\b"
     r"(?=[^\r\n]*(?:--mode(?:=|\s+)real\b))",
     re.IGNORECASE,
 )
@@ -274,6 +310,36 @@ def _quote_env(value: str) -> str:
     return value.replace("'", "''")
 
 
+def _pin_driver_entrypoint(command: str) -> str:
+    """Replace ambiguous module/console resolution with the supplying wrapper."""
+
+    wrapper = SKILL_ROOT / "scripts" / "dte_hook_driver_entry.py"
+    if not wrapper.is_file():
+        raise HookInputError("the supplying DTE Skill lacks its pinned driver wrapper")
+    module_match = PYTHON_MODULE_ENTRYPOINT.search(command)
+    if module_match is not None:
+        wrapper_argument = (
+            f"'{_quote_env(str(wrapper))}'"
+            if os.name == "nt"
+            else shlex.quote(str(wrapper))
+        )
+        replacement = f"{module_match.group('python')} {wrapper_argument}"
+        return command[: module_match.start()] + replacement + command[module_match.end() :]
+
+    console_match = CONSOLE_ENTRYPOINT.search(command)
+    if console_match is None:
+        raise HookInputError("DTE driver command has no recognized entrypoint")
+    if os.name == "nt":
+        python_argument = f"'{_quote_env(str(Path(sys.executable).resolve()))}'"
+        wrapper_argument = f"'{_quote_env(str(wrapper))}'"
+        prefix = command[: console_match.start()]
+        call_operator = "" if prefix.rstrip().endswith("&") else "& "
+        replacement = f"{call_operator}{python_argument} {wrapper_argument}"
+    else:
+        replacement = shlex.join([str(Path(sys.executable).resolve()), str(wrapper)])
+    return command[: console_match.start()] + replacement + command[console_match.end() :]
+
+
 def _rewrite_driver_command(command: str, payload: dict[str, Any], capability: str) -> str:
     values = {
         "DTE_HOOK_SESSION_ID": payload["session_id"],
@@ -283,16 +349,17 @@ def _rewrite_driver_command(command: str, payload: dict[str, Any], capability: s
         "DTE_SKILL_ROOT": str(SKILL_ROOT),
         "PYTHONPATH": str(SRC),
     }
+    pinned_command = _pin_driver_entrypoint(command)
     if os.name == "nt":
         prefix = "; ".join(
             f"$env:{key}='{_quote_env(value)}'" for key, value in values.items()
         )
-        return f"{prefix}; {command}"
+        return f"{prefix}; {pinned_command}"
     prefix = " ".join(
         f"{key}='{value.replace(chr(39), chr(39) + chr(34) + chr(39) + chr(34) + chr(39))}'"
         for key, value in values.items()
     )
-    return f"{prefix} {command}"
+    return f"{prefix} {pinned_command}"
 
 
 def _driver_shell_is_supported(payload: dict[str, Any]) -> bool:
@@ -413,9 +480,15 @@ def _extract_json_objects(value: Any) -> list[dict[str, Any]]:
     payload must never be reparsed as another command result.
     """
 
+    model_facing_schemas = {
+        "dte-hook-receipt.v1",
+        "dte-request-ref.v1",
+        "dte-request-chunk.v1",
+        "dte-hook-status.v1",
+    }
     objects: list[dict[str, Any]] = []
     if isinstance(value, dict):
-        if value.get("schema_version") == "dte-hook-receipt.v1":
+        if value.get("schema_version") in model_facing_schemas:
             return [value]
         for child in value.values():
             objects.extend(_extract_json_objects(child))
@@ -427,9 +500,23 @@ def _extract_json_objects(value: Any) -> list[dict[str, Any]]:
         try:
             parsed = json.loads(stripped)
         except Exception:
-            return objects
+            rendered = re.fullmatch(
+                r"(?:Chunk ID:[^\r\n]*\r?\n)?"
+                r"Wall time:[^\r\n]*\r?\n"
+                r"Process exited with code -?\d+\r?\n"
+                r"(?:(?:Original token count:[^\r\n]*\r?\n)?Output:|"
+                r"Final output:)\r?\n"
+                r"(?P<stdout>[\s\S]*)",
+                stripped,
+            )
+            if rendered is None:
+                return objects
+            try:
+                parsed = json.loads(rendered.group("stdout").strip())
+            except Exception:
+                return objects
         if isinstance(parsed, dict):
-            if parsed.get("schema_version") == "dte-hook-receipt.v1":
+            if parsed.get("schema_version") in model_facing_schemas:
                 objects.append(parsed)
             else:
                 objects.extend(_extract_json_objects(parsed))
@@ -474,7 +561,7 @@ def handle_user_prompt(payload: dict[str, Any]) -> dict[str, Any] | None:
         assert manifest is not None
         return _context(
             "UserPromptSubmit",
-            "Resume the existing enforced DTE run; do not create a parallel run. "
+            "DTE session resumed; do not create a parallel run. "
             f"run_id={manifest.run_id or 'not-initialized'} phase={manifest.phase} "
             f"episode_id={manifest.current_episode_id or 'none'} "
             f"attempt_id={manifest.current_attempt_id or 'none'} "
@@ -554,13 +641,77 @@ def handle_post_tool(payload: dict[str, Any]) -> dict[str, Any] | None:
     if manifest is None:
         return {"decision": "block", "reason": "DTE driver returned without a persisted session manifest."}
     receipts: list[HookDriverReceipt] = []
+    references: list[HookRequestReference] = []
+    chunks: list[HookRequestChunk] = []
+    statuses: list[HookStatusProjection] = []
     for candidate in _extract_json_objects(payload["tool_response"]):
-        if candidate.get("schema_version") != "dte-hook-receipt.v1":
-            continue
         try:
-            receipts.append(HookDriverReceipt.model_validate(candidate))
+            schema = candidate.get("schema_version")
+            if schema == "dte-hook-receipt.v1":
+                receipts.append(HookDriverReceipt.model_validate(candidate))
+            elif schema == "dte-request-ref.v1":
+                references.append(HookRequestReference.model_validate(candidate))
+            elif schema == "dte-request-chunk.v1":
+                chunks.append(HookRequestChunk.model_validate(candidate))
+            elif schema == "dte-hook-status.v1":
+                statuses.append(HookStatusProjection.model_validate(candidate))
         except Exception:
             continue
+    if action == "request":
+        if len(chunks) != 1 or receipts or references or statuses:
+            return {
+                "decision": "block",
+                "reason": "DTE request output did not contain exactly one strict request chunk; reread the chunk.",
+            }
+        try:
+            validate_request_projection(chunks[0], manifest)
+        except Exception as exc:
+            return {
+                "decision": "block",
+                "reason": f"DTE request chunk verification failed: {exc}. Reread the chunk.",
+            }
+        return _context(
+            "PostToolUse",
+            "Verified DTE request chunk "
+            f"{chunks[0].chunk_index + 1}/{chunks[0].chunk_count}; request_hash={chunks[0].request_hash}",
+        )
+    if (
+        action == "step"
+        and len(references) == 1
+        and not receipts
+        and not chunks
+        and not statuses
+    ):
+        try:
+            validate_request_projection(references[0], manifest)
+        except Exception as exc:
+            return {
+                "decision": "block",
+                "reason": f"DTE request reference verification failed: {exc}. Reread the request reference.",
+            }
+        return _context(
+            "PostToolUse",
+            "Verified existing DTE request reference; step was idempotent and did not consume a retry. "
+            f"request_hash={references[0].request_hash}",
+        )
+    if action == "status":
+        if len(statuses) != 1 or receipts or references or chunks:
+            return {
+                "decision": "block",
+                "reason": "DTE status output did not contain exactly one strict status projection.",
+            }
+        try:
+            validate_status_projection(statuses[0], manifest)
+        except Exception as exc:
+            return {
+                "decision": "block",
+                "reason": f"DTE status verification failed: {exc}.",
+            }
+        return _context(
+            "PostToolUse",
+            "Verified read-only DTE status; no capability or attempt was consumed. "
+            f"phase={statuses[0].phase} next={statuses[0].next_required_action}",
+        )
     if len(receipts) != 1:
         return {"decision": "block", "reason": "DTE driver output did not contain exactly one strict receipt; run hook-driver status for audit."}
     receipt = receipts[0]
@@ -584,15 +735,15 @@ def handle_stop(payload: dict[str, Any]) -> dict[str, Any] | None:
     if not isinstance(turn_id, str) or not turn_id:
         raise HookInputError("Stop requires turn_id")
     manifest = load_manifest(payload["session_id"])
-    if manifest is None or manifest.phase in {"handoff_ready", "cancelled", "failed"}:
+    if manifest is None or is_terminal_phase(manifest.phase):
         return None
     if manifest.phase == "awaiting_operator":
         return None
     if payload.get("stop_hook_active") is True:
-        mark_stop_impasse(
+        pause_session_turn(
             payload["session_id"],
             turn_id,
-            "Stop continuation repeated without the required DTE transition",
+            "turn ended before the required DTE transition; preserve the active run for resume",
         )
         return None
     if manifest.phase == "terminal_pending_handoff":
@@ -615,6 +766,12 @@ def handle_stop(payload: dict[str, Any]) -> dict[str, Any] | None:
         "reason": (
             "DTE enforcement prevents an early final response. Perform the unique next action: "
             f"{manifest.next_required_action}"
+            + (
+                ". If the request display was truncated, wrapped, or lost chunks, "
+                "reread the request chunks; do not fail or retry the scientific attempt"
+                if manifest.phase == "episode_required"
+                else ""
+            )
         ),
     }
 

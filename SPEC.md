@@ -820,6 +820,25 @@ before/after state hashes and the preceding receipt hash, and are atomically
 written as an append-only reconstructable chain. Timestamps may be recorded for
 operations but never participate in receipt or manifest state identity.
 
+An `episode_required` transition never embeds the complete `EpisodeRequest` in
+its receipt. The receipt carries one compact `dte-request-ref.v1` identity with
+the request hash, canonical UTF-8 size, and bounded chunk count. The owning root
+turn reads the immutable current request through `hook-driver request
+--chunk-index N`; each `dte-request-chunk.v1` is capability-bound, hash-checked
+against the durable attempt, and limited to 8192 content bytes. Request reads are
+read-only projections: they append no receipt, rotate no capability, and advance
+no controller or attempt state. Calling `step` while a request is already active
+is the same idempotent projection and cannot create another transition.
+
+A repeated Stop caused by an unfinished DTE turn is an operational pause, not an
+episode failure. The hook blocks the first early Stop, then records a `pause-turn`
+receipt while preserving the backend phase and active attempt. A later root turn
+records `resume-turn` and continues that identity. When the same invocation is
+resumed from another Codex session, the driver may atomically transfer the
+execution contract and capability only after matching the invocation, RunSpec,
+initial nodes, worktree identity, and durable run. The old capability becomes
+invalid immediately; historical receipts are never rewritten.
+
 Hook initialization also uses an atomic create-if-absent invocation registry
 keyed by repository and worktree identity, hook type, RunSpec hash,
 initial-node hash, explicit nonce, and replay source where applicable.
@@ -834,6 +853,23 @@ nominally independent result. An explicit replay creates a distinct key and
 persists `replay_of_run_id`, source committed-result hashes, trigger source,
 and whether model work was reused, rerun, or unavailable. Replay lineage is
 audit metadata, not evidence of independence.
+
+Retry is valid only after a durable rejected, failed, cancelled, or expired
+attempt. An active attempt must first pass through the explicit `fail-attempt`
+or `cancel-attempt` control transition with a reason; transport rereads and turn
+resumption do not consume retry. Commit preparation may return at most two
+`repair_required` outcomes on the same active attempt for correctable JSON,
+schema, output-hash, or epistemic-reference errors. Repair never changes the
+graph, ledger, controller, or attempt identity. Authority, capability, stale or
+late identity, ungranted-node, and forged-controller violations remain hard
+failures. Bare `repository:` references are not ledger identities and receive a
+repair diagnostic directing the producer to `artifact:` or `external:`.
+
+`cancel-attempt` preserves a resumable run. `cancel-run` (and the legacy
+App-facing `cancel` alias) writes a backend-owned cancellation record, cancels
+any active attempt, clears active identity, emits `run_cancelled`, and terminates
+the invocation. A cancelled duplicate invocation is observable but never
+silently restarted; a new run requires an explicit replay or nonce.
 
 Before any App call which may persist state, the driver writes a run-external
 internal operation intent. Recovery distinguishes an unchanged authoritative

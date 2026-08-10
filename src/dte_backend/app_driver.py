@@ -40,7 +40,7 @@ from .episode_adapter import (
     build_judge_episode_request,
     build_relation_episode_request,
 )
-from .episode_commit import EpisodeGraph, commit_episode_result
+from .episode_commit import CONTROLLER_OWNED_FIELDS, EpisodeGraph, commit_episode_result
 from .episode_models import (
     CommitOutcome,
     EpisodeRequest,
@@ -102,6 +102,7 @@ ControllerAction = Literal[
     "await_operator_decision",
     "ready_for_synthesis",
     "run_complete",
+    "run_cancelled",
 ]
 
 
@@ -114,6 +115,8 @@ class ExecutionContract(DTEBaseModel):
     manifest_identity_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     driver_protocol_version: str | None = None
     capability_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    skill_bundle_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    hook_content_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
 
     @model_validator(mode="after")
     def validate_enforced_fields(self) -> "ExecutionContract":
@@ -124,9 +127,16 @@ class ExecutionContract(DTEBaseModel):
             self.driver_protocol_version,
             self.capability_hash,
         )
+        bundle_fields = (self.skill_bundle_hash, self.hook_content_hash)
+        if any(value is None for value in bundle_fields) and any(
+            value is not None for value in bundle_fields
+        ):
+            raise ValueError("execution contract bundle and hook hashes must be paired")
         if self.mode == "hook_enforced_v1" and any(value is None for value in required):
             raise ValueError("hook_enforced_v1 requires a complete execution contract")
-        if self.mode == "direct_legacy" and any(value is not None for value in required):
+        if self.mode == "direct_legacy" and any(
+            value is not None for value in (*required, *bundle_fields)
+        ):
             raise ValueError("direct_legacy cannot carry hook enforcement authority")
         return self
 
@@ -218,6 +228,8 @@ class EpisodeAttemptRecord(DTEBaseModel):
     superseded_from_status: AttemptStatus | None = None
     retry_exhaustion_released: bool = False
     canonical_node_id_map: dict[str, str] = Field(default_factory=dict)
+    repair_count: int = Field(default=0, ge=0)
+    repair_diagnostics: list[str] = Field(default_factory=list)
 
 
 class EpisodeLifecycleRecord(DTEBaseModel):
@@ -255,6 +267,15 @@ class TerminalRecord(DTEBaseModel):
     degradation_reason_codes: list[str] = Field(default_factory=list)
     unresolved_coverage_ids: list[str] = Field(default_factory=list)
     provenance_incomplete_node_ids: list[str] = Field(default_factory=list)
+
+
+class RunCancellationRecord(DTEBaseModel):
+    """Immutable audit record for an explicitly cancelled run."""
+
+    reason: str = Field(min_length=1)
+    requested_by: Literal["user", "main_agent"]
+    graph_revision: int = Field(ge=0)
+    cancelled_at: str
 
 
 class ControllerIterationRecord(DTEBaseModel):
@@ -336,6 +357,7 @@ class AppRunState(DTEBaseModel):
     ] | None = None
     pending_terminal_gate_evaluated: bool = False
     terminal_record: TerminalRecord | None = None
+    run_cancellation: RunCancellationRecord | None = None
     pending_telemetry_events: list[PendingTelemetryEvent] = Field(default_factory=list)
     created_at: str
     updated_at: str
@@ -465,6 +487,9 @@ class SubmitEpisodeOutcome(DTEBaseModel):
     attempt_id: str
     commit_outcome: CommitOutcome
     next_controller_action: ControllerAction
+    repair_required: bool = False
+    repair_exhausted: bool = False
+    repair_count: int = Field(default=0, ge=0)
 
 
 class TransitionOutcome(DTEBaseModel):
@@ -2455,6 +2480,8 @@ def _validate_loaded_state(state: AppRunState) -> None:
                 raise ValueError("active Relation request lacks its committed candidate grant")
 
     terminal = state.controller_action in {"ready_for_synthesis", "run_complete"}
+    run_cancelled = state.controller_action == "run_cancelled"
+    run_terminated = terminal or run_cancelled
     selection_present = state.provisional_synthesis_selection is not None
     readiness_present = state.synthesis_readiness is not None
     if selection_present != readiness_present:
@@ -2469,7 +2496,7 @@ def _validate_loaded_state(state: AppRunState) -> None:
             raise ValueError("unevaluated synthesis state contains controller-owned readiness")
     else:
         raise ValueError("legacy unchecked synthesis readiness cannot authorize App state")
-    if terminal and active_identity[0] is not None:
+    if run_terminated and active_identity[0] is not None:
         raise ValueError("terminal App state cannot retain an active attempt")
     pending_values = (
         state.pending_terminal_action,
@@ -2480,7 +2507,7 @@ def _validate_loaded_state(state: AppRunState) -> None:
         value is not None for value in pending_values
     ):
         raise ValueError("persisted pending terminal action/reason/source must be present together")
-    if terminal and state.pending_terminal_action is not None:
+    if run_terminated and state.pending_terminal_action is not None:
         raise ValueError("terminal App state cannot retain pending terminal intent")
     if state.pending_terminal_action is None and state.pending_terminal_gate_evaluated:
         raise ValueError("Relation gate marker lacks pending terminal intent")
@@ -2559,7 +2586,7 @@ def _validate_loaded_state(state: AppRunState) -> None:
     if state.controller_action == "await_operator_decision":
         if not blocking_operator_attempts and not relation_gate_blocked:
             raise ValueError("await_operator_decision lacks a durable blocking fact")
-    elif blocking_operator_attempts:
+    elif blocking_operator_attempts and not run_cancelled:
         raise ValueError("controller action bypasses an unresolved operator decision")
     if terminal and state.terminal_record is None:
         raise ValueError("terminal App state lacks its immutable terminal record")
@@ -2582,6 +2609,21 @@ def _validate_loaded_state(state: AppRunState) -> None:
             or state.terminal_record.controller_iteration != state.controller_iteration
         ):
             raise ValueError("persisted terminal record disagrees with current controller state")
+    if run_cancelled:
+        if state.run_cancellation is None:
+            raise ValueError("cancelled App state lacks its cancellation record")
+        cancelled_at = _parse_time(state.run_cancellation.cancelled_at)
+        if cancelled_at < created_at or cancelled_at > updated_at:
+            raise ValueError("run cancellation timestamp is outside the run lifetime")
+        if (
+            state.run_cancellation.graph_revision != state.graph_revision
+            or not state.run_cancellation.reason.strip()
+        ):
+            raise ValueError("run cancellation record disagrees with App state")
+        if state.terminal_record is not None:
+            raise ValueError("cancelled App state cannot carry a scientific terminal record")
+    elif state.run_cancellation is not None:
+        raise ValueError("non-cancelled App state carries a cancellation record")
     if terminal:
         selection = state.provisional_synthesis_selection
         readiness = state.synthesis_readiness
@@ -3181,7 +3223,7 @@ def _select_unjudged_frontier(state: AppRunState) -> list[SearchNode]:
 
 
 def _ensure_nonterminal(state: AppRunState, operation: str) -> None:
-    if state.controller_action in {"ready_for_synthesis", "run_complete"}:
+    if state.controller_action in {"ready_for_synthesis", "run_complete", "run_cancelled"}:
         raise ValueError(
             f"cannot {operation}: controller terminal action {state.controller_action!r} is sticky"
         )
@@ -4387,7 +4429,7 @@ def next_app_episode(
 
     source_limits = runtime_limits or RuntimeLimits(max_retries=1)
     limits = RuntimeLimits.model_validate(source_limits.model_dump(mode="json"))
-    if state.controller_action in {"ready_for_synthesis", "run_complete"}:
+    if state.controller_action in {"ready_for_synthesis", "run_complete", "run_cancelled"}:
         return NextEpisodeOutcome(
             run_id=state.run_id,
             controller_action=state.controller_action,
@@ -4853,7 +4895,7 @@ def submit_app_episode_result(
             _result_identity_hint(raw_result),
             f"episode result JSON detachment failed: {exc}",
         )
-    if state.controller_action in {"ready_for_synthesis", "run_complete"}:
+    if state.controller_action in {"ready_for_synthesis", "run_complete", "run_cancelled"}:
         episode_value = payload.get("episode_id")
         attempt_value = payload.get("attempt_id")
         episode_id = episode_value if isinstance(episode_value, str) else ""
@@ -4934,6 +4976,28 @@ def submit_app_episode_result(
         reason = f"attempt lifecycle forbids commit: status={attempt.status}"
     else:
         reason = ""
+    if reason and (invalid_lifecycle or not_active or already_committed):
+        return _identity_rejection(run_dir, state, payload, reason)
+    if not reason:
+        expected_envelope = {
+            "run_id": attempt.request.run_id,
+            "role": attempt.request.role,
+            "input_graph_revision": attempt.request.input_graph_revision,
+            "selected_node_revisions": attempt.request.selected_node_revisions,
+            "schema_version": attempt.request.output_schema_version,
+        }
+        for field_name, expected in expected_envelope.items():
+            if field_name in payload and payload[field_name] != expected:
+                reason = {
+                    "run_id": "run ID mismatch",
+                    "role": "role mismatch",
+                    "input_graph_revision": "stale graph revision",
+                    "selected_node_revisions": "selected node revisions mismatch",
+                    "schema_version": "output schema version mismatch",
+                }[field_name]
+                break
+    if not reason and _contains_backend_authority_forgery(payload):
+        reason = "result contains controller-owned or forged backend authority fields"
     attestation = RoleIsolationAttestation()
     if not reason:
         attestation, isolation_error = _validate_role_isolation(
@@ -4947,9 +5011,25 @@ def submit_app_episode_result(
             )
 
     if reason:
+        if _repairable_submission_reason(reason):
+            return _record_repair_required(
+                run_dir,
+                state,
+                episode,
+                attempt,
+                reason,
+                payload,
+            )
         outcome = _rejection_outcome(state, attempt.request, reason)
         if attempt.commit_outcome is None:
             attempt.commit_outcome = outcome
+        if attempt.status != "expired":
+            attempt.status = "rejected"
+            attempt.submitted_at = _iso(submitted_at)
+        attempt.failure_reason = reason
+        state.active_episode_id = None
+        state.active_attempt_id = None
+        state.controller_action = "await_operator_decision"
         rejected_path = result_path.with_name(f"rejected_result_{uuid.uuid4().hex}.json")
         _write_json_atomic(rejected_path, payload)
         _queue_event(
@@ -5004,9 +5084,6 @@ def submit_app_episode_result(
         )
 
     epistemic_context = _epistemic_reference_context(run_dir, state)
-    attempt.submitted_at = _iso(submitted_at)
-    attempt.status = "completed_uncommitted"
-    _write_json_atomic(result_path, payload)
     try:
         commit_request, commit_payload = _canonicalize_blinded_contract(
             attempt.request,
@@ -5021,8 +5098,18 @@ def submit_app_episode_result(
             attempt.request,
             f"blinded identity reattachment failed: {exc}",
         )
+        if _repairable_submission_reason(outcome.rejection_reason or ""):
+            return _record_repair_required(
+                run_dir,
+                state,
+                episode,
+                attempt,
+                outcome.rejection_reason or "result preparation failed",
+                payload,
+            )
         attempt.commit_outcome = outcome
         attempt.status = "rejected"
+        attempt.submitted_at = _iso(submitted_at)
         state.active_episode_id = None
         state.active_attempt_id = None
         state.controller_action = "await_operator_decision"
@@ -5043,6 +5130,21 @@ def submit_app_episode_result(
         telemetry=buffered_events,  # type: ignore[arg-type]
         epistemic_context=epistemic_context,
     )
+    if (
+        not outcome.accepted
+        and _repairable_submission_reason(outcome.rejection_reason or "")
+    ):
+        return _record_repair_required(
+            run_dir,
+            state,
+            episode,
+            attempt,
+            outcome.rejection_reason or "result preparation failed",
+            payload,
+        )
+    attempt.submitted_at = _iso(submitted_at)
+    attempt.status = "completed_uncommitted"
+    _write_json_atomic(result_path, payload)
     attempt.commit_outcome = outcome
     if outcome.accepted:
         state.replace_graph(graph)
@@ -5265,6 +5367,228 @@ def cancel_app_episode(
     )
 
 
+def _contains_backend_authority_forgery(payload: Mapping[str, Any]) -> bool:
+    """Detect fields whose presence is an authority violation, not a typo."""
+
+    output = payload.get("structured_output")
+
+    def authority_visit(value: Any) -> bool:
+        if isinstance(value, Mapping):
+            for key, child in value.items():
+                if key == "source_type" and child in {"backend_derived", "human_confirmed"}:
+                    return True
+                if authority_visit(child):
+                    return True
+        elif isinstance(value, list):
+            return any(authority_visit(item) for item in value)
+        return False
+
+    if authority_visit(payload.get("role_isolation_attestation")) or authority_visit(output):
+        return True
+    if not isinstance(output, Mapping):
+        return False
+    if payload.get("role") == "executor":
+        for node in output.get("nodes", []):
+            if not isinstance(node, Mapping):
+                continue
+            if CONTROLLER_OWNED_FIELDS.intersection(node):
+                return True
+            if node.get("status", "frontier") != "frontier":
+                return True
+            if node.get("node_type") == "synthesis":
+                return True
+    elif payload.get("role") == "judge":
+        for observation in output.get("observations", []):
+            if isinstance(observation, Mapping) and (
+                (CONTROLLER_OWNED_FIELDS - {"score"}).intersection(observation)
+            ):
+                return True
+    elif payload.get("role") == "relation":
+        for observation in output.get("observations", []):
+            if isinstance(observation, Mapping) and CONTROLLER_OWNED_FIELDS.intersection(
+                observation
+            ):
+                return True
+    return False
+
+
+def _contains_repository_reference(value: Any) -> bool:
+    if isinstance(value, str):
+        return value.startswith("repository:")
+    if isinstance(value, Mapping):
+        return any(_contains_repository_reference(item) for item in value.values())
+    if isinstance(value, list):
+        return any(_contains_repository_reference(item) for item in value)
+    return False
+
+
+def _repairable_submission_reason(reason: str) -> bool:
+    return reason.startswith("episode result schema validation failed:") or any(
+        marker in reason
+        for marker in (
+            "output hash mismatch",
+            "episode result hash validation failed",
+            "unknown local epistemic reference",
+            "unknown epistemic reference",
+            "unsafe epistemic artifact reference",
+            "external_artifact_backed epistemic records require",
+            "learning: references are not part",
+        )
+    )
+
+
+def _record_repair_required(
+    run_dir: str | Path,
+    state: AppRunState,
+    episode: EpisodeLifecycleRecord,
+    attempt: EpisodeAttemptRecord,
+    reason: str,
+    payload: Any,
+) -> SubmitEpisodeOutcome:
+    if state.active_episode_id != episode.episode_id or state.active_attempt_id != attempt.attempt_id:
+        raise ValueError("repair may only target the active attempt")
+    if attempt.status not in {"granted", "in_progress", "completed_uncommitted"}:
+        raise ValueError("repair may only target an active attempt lifecycle")
+    if _contains_repository_reference(payload):
+        reason = (
+            "repository: references are not accepted by the epistemic ledger; "
+            "use a safe artifact: reference, an explicit external: reference, "
+            "or remove the nonessential contribution"
+        )
+    attempt.repair_count += 1
+    attempt.repair_diagnostics.append(reason)
+    outcome = _rejection_outcome(state, attempt.request, reason)
+    exhausted = attempt.repair_count > 2
+    if exhausted:
+        attempt.status = "rejected"
+        attempt.submitted_at = _iso()
+        attempt.failure_reason = reason
+        attempt.commit_outcome = outcome
+        state.active_episode_id = None
+        state.active_attempt_id = None
+        state.controller_action = "await_operator_decision"
+    else:
+        state.controller_action = "episode_required"
+    _queue_event(
+        state,
+        "episode_repair_exhausted" if exhausted else "episode_repair_required",
+        run_id=state.run_id,
+        episode_id=episode.episode_id,
+        attempt_id=attempt.attempt_id,
+        role=episode.role,
+        status="rejected" if exhausted else "repair_required",
+        input_graph_revision=attempt.request.input_graph_revision,
+        accepted_node_count=0,
+        rejection_reason=reason,
+        repair_count=attempt.repair_count,
+        usage_source="unavailable",
+    )
+    repair_path = _attempt_artifact_dir(run_dir, attempt.request) / (
+        f"repair_{attempt.repair_count:02d}.json"
+    )
+    _write_json_atomic(repair_path, {"diagnostic": reason, "payload": payload})
+    _save_state(run_dir, state)
+    try:
+        _write_attempt_artifacts(run_dir, attempt)
+    except Exception:
+        pass
+    return SubmitEpisodeOutcome(
+        run_id=state.run_id,
+        episode_id=episode.episode_id,
+        attempt_id=attempt.attempt_id,
+        commit_outcome=outcome,
+        next_controller_action=state.controller_action,
+        repair_required=not exhausted,
+        repair_exhausted=exhausted,
+        repair_count=attempt.repair_count,
+    )
+
+
+def record_app_episode_repair_required(
+    run_dir: str | Path,
+    episode_id: str,
+    attempt_id: str,
+    reason: str,
+    *,
+    payload: Any = None,
+    execution_context: DriverExecutionContext | None = None,
+) -> SubmitEpisodeOutcome:
+    """Record one bounded format repair when transport JSON cannot be parsed."""
+
+    state = load_app_run(run_dir)
+    _authorize_mutation(state, execution_context)
+    _ensure_nonterminal(state, "record an episode repair")
+    episode = _find_episode(state, episode_id)
+    attempt = _find_attempt(episode, attempt_id)
+    return _record_repair_required(run_dir, state, episode, attempt, reason, payload)
+
+
+def cancel_app_run(
+    run_dir: str | Path,
+    reason: str,
+    *,
+    requested_by: Literal["user", "main_agent"] = "main_agent",
+    execution_context: DriverExecutionContext | None = None,
+) -> AppRunState:
+    """Terminate a run while preserving its graph and complete audit history."""
+
+    if not reason.strip():
+        raise ValueError("cancel-run requires a non-empty reason")
+    state = load_app_run(run_dir)
+    _authorize_mutation(state, execution_context)
+    if state.controller_action == "run_cancelled":
+        return state
+    _ensure_nonterminal(state, "cancel the run")
+    active = _active_attempt(state)
+    if active is not None:
+        episode, attempt = active
+        attempt.status = "cancelled"
+        attempt.failure_reason = reason
+        _release_relation_grants(state, attempt.request)
+        _queue_event(
+            state,
+            "episode_cancelled",
+            run_id=state.run_id,
+            episode_id=episode.episode_id,
+            attempt_id=attempt.attempt_id,
+            role=episode.role,
+            status="cancelled",
+            input_graph_revision=attempt.request.input_graph_revision,
+            rejection_reason=reason,
+            usage_source="unavailable",
+        )
+    state.active_episode_id = None
+    state.active_attempt_id = None
+    state.pending_terminal_action = None
+    state.pending_terminal_reason = None
+    state.pending_terminal_source = None
+    state.pending_terminal_gate_evaluated = False
+    state.provisional_synthesis_selection = None
+    state.synthesis_readiness = None
+    state.relation_readiness_status = "not_evaluated"
+    cancelled_at = _iso()
+    state.run_cancellation = RunCancellationRecord(
+        reason=reason,
+        requested_by=requested_by,
+        graph_revision=state.graph_revision,
+        cancelled_at=cancelled_at,
+    )
+    state.controller_action = "run_cancelled"
+    _queue_event(
+        state,
+        "run_cancelled",
+        run_id=state.run_id,
+        status="cancelled",
+        input_graph_revision=state.graph_revision,
+        graph_revision=state.graph_revision,
+        rejection_reason=reason,
+        requested_by=requested_by,
+        usage_source="unavailable",
+    )
+    _save_state(run_dir, state)
+    return state
+
+
 def retry_app_episode(
     run_dir: str | Path,
     episode_id: str,
@@ -5273,23 +5597,27 @@ def retry_app_episode(
     wall_clock_seconds: int | None = None,
     execution_context: DriverExecutionContext | None = None,
 ) -> TransitionOutcome:
-    """Supersede the latest non-committed attempt and issue a fresh attempt ID."""
+    """Retry one explicitly terminal, non-committed attempt."""
 
     state = load_app_run(run_dir)
     _authorize_mutation(state, execution_context)
     _ensure_nonterminal(state, "retry an episode")
     active = _active_attempt(state)
     if active is not None:
-        active_episode, active_attempt = active
-        if active_episode.episode_id != episode_id:
-            raise ValueError("another episode has an active attempt")
+        raise ValueError(
+            "an active attempt cannot be retried; use fail-attempt or "
+            "cancel-attempt first"
+        )
     episode = _find_episode(state, episode_id)
     if episode.committed_attempt_id is not None:
         raise ValueError("a committed episode cannot be retried")
     previous = episode.attempts[-1]
     previous_status = previous.status
-    if previous_status == "committed":
-        raise ValueError("a committed attempt cannot be retried")
+    if previous_status not in {"rejected", "failed", "cancelled", "expired"}:
+        raise ValueError(
+            "retry requires a rejected, failed, cancelled, or expired attempt; "
+            f"status={previous_status}"
+        )
     if previous.attempt_number > previous.request.runtime_limits.max_retries:
         # A failed retry request must not invalidate work which is still
         # legitimately active and submittable.  A non-active rejected
@@ -5597,6 +5925,49 @@ def rotate_app_execution_capability(
         raise ValueError("capability rotation applies only to hook-enforced runs")
     state.execution_contract.capability_hash = _capability_hash(next_capability)
     object.__setattr__(state, "_driver_capability_proof", next_capability)
+    _save_state(run_dir, state)
+    return state
+
+
+def rebind_app_execution_contract(
+    run_dir: str | Path,
+    execution_context: DriverExecutionContext,
+    *,
+    next_session_id: str,
+    next_manifest_identity_hash: str,
+    next_capability: str,
+    driver_protocol_version: str,
+) -> AppRunState:
+    """Transfer one nonterminal enforced run to a replacement Codex session."""
+
+    if not next_session_id:
+        raise ValueError("next enforcement session_id is required")
+    if len(next_capability) < 32:
+        raise ValueError("next capability must contain at least 32 characters")
+    if len(next_manifest_identity_hash) != 64:
+        raise ValueError("next manifest identity hash must be sha256")
+    state = load_app_run(run_dir)
+    _authorize_mutation(state, execution_context)
+    _ensure_nonterminal(state, "resume an enforced run in another session")
+    if state.execution_contract.mode != "hook_enforced_v1":
+        raise ValueError("session transfer applies only to hook-enforced runs")
+    previous_session_id = state.execution_contract.enforcement_session_id
+    state.execution_contract.enforcement_session_id = next_session_id
+    state.execution_contract.manifest_identity_hash = next_manifest_identity_hash
+    state.execution_contract.capability_hash = _capability_hash(next_capability)
+    state.execution_contract.driver_protocol_version = driver_protocol_version
+    object.__setattr__(state, "_driver_capability_proof", next_capability)
+    _queue_event(
+        state,
+        "driver_session_rebound",
+        run_id=state.run_id,
+        status="resumed",
+        previous_session_id=previous_session_id,
+        next_session_id=next_session_id,
+        input_graph_revision=state.graph_revision,
+        graph_revision=state.graph_revision,
+        usage_source="unavailable",
+    )
     _save_state(run_dir, state)
     return state
 

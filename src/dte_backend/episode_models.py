@@ -307,6 +307,19 @@ class EpisodeRequest(DTEBaseModel):
     runtime_limits: RuntimeLimits = Field(default_factory=RuntimeLimits)
     tool_policy: ToolPolicy | None = None
     transport_hints: dict[str, Any] | None = None
+    allowed_epistemic_reference_prefixes: list[str] = Field(
+        default_factory=lambda: [
+            "node-claim:",
+            "local-statement:",
+            "epistemic:",
+            "relation:",
+            "merge:",
+            "episode-result:",
+            "artifact:",
+            "external:",
+            "run:",
+        ]
+    )
     parent_node_id: str | None = None
     parent_node_revision: int | None = Field(default=None, ge=0)
     max_returned_children: int | None = Field(default=None, ge=0, le=50)

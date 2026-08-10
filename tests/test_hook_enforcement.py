@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import subprocess
@@ -8,7 +9,12 @@ from pathlib import Path
 import pytest
 
 import dte_backend.hook_driver as hook_driver
-from dte_backend.app_driver import create_app_run, load_app_run, next_app_episode
+from dte_backend.app_driver import (
+    create_app_run,
+    load_app_run,
+    next_app_episode,
+    submit_app_episode_result,
+)
 from dte_backend.episode_models import (
     EpisodeRequest,
     EpisodeResult,
@@ -17,7 +23,13 @@ from dte_backend.episode_models import (
     RuntimeDiagnostics,
     compute_output_hash,
 )
-from dte_backend.hook_driver import HookDriverReceipt, HookSessionManifest
+from dte_backend.hook_driver import (
+    HookDriverReceipt,
+    HookRequestChunk,
+    HookRequestReference,
+    HookSessionManifest,
+    HookStatusProjection,
+)
 from dte_backend.epistemic_models import (
     EpistemicContributionBundle,
     EpistemicStatementContribution,
@@ -80,17 +92,46 @@ def driver_env(tmp_path: Path, *, capability: str, session="session-a", turn="tu
     return env
 
 
-def run_driver(tmp_path: Path, *arguments: str, capability: str | None = None):
+def run_driver(
+    tmp_path: Path,
+    *arguments: str,
+    capability: str | None = None,
+    session: str = "session-a",
+    turn: str = "turn-a",
+):
     return subprocess.run(
         [sys.executable, "-m", "dte_backend", "hook-driver", *arguments],
         capture_output=True,
-        text=True,
+        encoding="utf-8",
         env=driver_env(
             tmp_path,
-            capability=capability if capability is not None else capability_value(tmp_path),
+            capability=(
+                capability
+                if capability is not None
+                else capability_value(tmp_path, session)
+            ),
+            session=session,
+            turn=turn,
         ),
         cwd=ROOT,
     )
+
+
+def read_request(
+    tmp_path: Path,
+    reference: HookRequestReference,
+) -> EpisodeRequest:
+    content: list[str] = []
+    for chunk_index in range(reference.chunk_count):
+        projected = run_driver(
+            tmp_path,
+            "request",
+            "--chunk-index",
+            str(chunk_index),
+        )
+        assert projected.returncode == 0, projected.stdout + projected.stderr
+        content.append(HookRequestChunk.model_validate_json(projected.stdout).content)
+    return EpisodeRequest.model_validate_json("".join(content))
 
 
 def write_inputs(tmp_path: Path) -> tuple[Path, Path]:
@@ -115,6 +156,38 @@ def write_inputs(tmp_path: Path) -> tuple[Path, Path]:
         encoding="utf-8",
     )
     return spec_path, nodes_path
+
+
+def judge_result(request: EpisodeRequest) -> EpisodeResult:
+    output = JudgeEpisodeOutput(
+        observations=[
+            JudgeObservation(
+                node_id=node_id,
+                score=0.8,
+                reasoning="bounded Judge observation",
+                risks=[],
+            )
+            for node_id in request.selected_node_revisions
+        ]
+    )
+    return EpisodeResult(
+        episode_id=request.episode_id,
+        attempt_id=request.attempt_id,
+        run_id=request.run_id,
+        role="judge",
+        input_graph_revision=request.input_graph_revision,
+        selected_node_revisions=request.selected_node_revisions,
+        status="completed",
+        structured_output=output,
+        runtime_diagnostics=RuntimeDiagnostics(
+            adapter_name="codex-app-main-agent",
+            transport_name="current-app-runtime",
+            profile="native-autonomous",
+            usage_source="unavailable",
+        ),
+        output_hash=compute_output_hash(output, request.output_schema_version),
+        schema_version=request.output_schema_version,
+    )
 
 
 def test_explicit_invocation_activates_but_meta_discussion_does_not(tmp_path):
@@ -190,7 +263,8 @@ def test_pretool_allows_research_denies_direct_control_and_rewrites_driver(tmp_p
     rewritten = json.loads(run_hook(tmp_path, driver).stdout)
     updated = rewritten["hookSpecificOutput"]["updatedInput"]["command"]
     assert "DTE_HOOK_CAPABILITY" in updated
-    assert updated.endswith("python -m dte_backend hook-driver status")
+    assert "dte_hook_driver_entry.py" in updated
+    assert updated.endswith("hook-driver status")
 
     console_driver = {
         **base,
@@ -199,7 +273,8 @@ def test_pretool_allows_research_denies_direct_control_and_rewrites_driver(tmp_p
     console_rewritten = json.loads(run_hook(tmp_path, console_driver).stdout)
     console_updated = console_rewritten["hookSpecificOutput"]["updatedInput"]["command"]
     assert "DTE_HOOK_CAPABILITY" in console_updated
-    assert console_updated.endswith("dte-backend hook-driver status")
+    assert "dte_hook_driver_entry.py" in console_updated
+    assert console_updated.endswith("hook-driver status")
 
     quoted_driver = {
         **base,
@@ -210,9 +285,8 @@ def test_pretool_allows_research_denies_direct_control_and_rewrites_driver(tmp_p
     quoted_rewritten = json.loads(run_hook(tmp_path, quoted_driver).stdout)
     quoted_updated = quoted_rewritten["hookSpecificOutput"]["updatedInput"]["command"]
     assert "DTE_HOOK_CAPABILITY" in quoted_updated
-    assert quoted_updated.endswith(
-        f"& '{sys.executable}' -m dte_backend hook-driver status"
-    )
+    assert "dte_hook_driver_entry.py" in quoted_updated
+    assert quoted_updated.endswith("hook-driver status")
 
     if os.name == "nt":
         cmd_driver = {
@@ -365,6 +439,10 @@ def test_driver_init_step_receipts_and_backend_antibypass(tmp_path):
     assert manifest.phase == "awaiting_controller"
     state = load_app_run(manifest.run_dir)
     assert state.execution_contract.mode == "hook_enforced_v1"
+    assert state.execution_contract.skill_bundle_hash is not None
+    assert state.execution_contract.hook_content_hash == hashlib.sha256(
+        HOOK.read_bytes()
+    ).hexdigest()
     with pytest.raises(PermissionError, match="hook-driver"):
         next_app_episode(manifest.run_dir)
 
@@ -380,7 +458,41 @@ def test_driver_init_step_receipts_and_backend_antibypass(tmp_path):
     step_receipt = HookDriverReceipt.model_validate_json(step.stdout)
     assert step_receipt.success
     assert step_receipt.controller_action == "episode_required"
-    assert step_receipt.payload["outcome"]["request"]["role"] == "judge"
+    request_ref = HookRequestReference.model_validate(step_receipt.payload["request_ref"])
+    assert request_ref.role == "judge"
+    assert "outcome" not in step_receipt.payload
+    assert len(step.stdout.encode("utf-8")) < 4096
+
+    chunks = []
+    for chunk_index in range(request_ref.chunk_count):
+        chunk_result = run_driver(
+            tmp_path,
+            "request",
+            "--chunk-index",
+            str(chunk_index),
+        )
+        assert chunk_result.returncode == 0, chunk_result.stdout + chunk_result.stderr
+        chunk = HookRequestChunk.model_validate_json(chunk_result.stdout)
+        assert chunk.request_hash == request_ref.request_hash
+        assert chunk.chunk_index == chunk_index
+        assert len(chunk.content.encode("utf-8")) <= 8192
+        chunks.append(chunk.content)
+    canonical_request = "".join(chunks).encode("utf-8")
+    assert len(canonical_request) == request_ref.canonical_size_bytes
+    assert hashlib.sha256(canonical_request).hexdigest() == request_ref.request_hash
+
+    before_repeat = HookSessionManifest.model_validate_json(
+        manifest_file(tmp_path).read_text(encoding="utf-8")
+    )
+    capability_before_repeat = capability_value(tmp_path)
+    repeat = run_driver(tmp_path, "step")
+    assert repeat.returncode == 0, repeat.stdout + repeat.stderr
+    assert HookRequestReference.model_validate_json(repeat.stdout) == request_ref
+    after_repeat = HookSessionManifest.model_validate_json(
+        manifest_file(tmp_path).read_text(encoding="utf-8")
+    )
+    assert after_repeat.receipt_sequence == before_repeat.receipt_sequence
+    assert capability_value(tmp_path) == capability_before_repeat
 
     post = {
         "session_id": "session-a",
@@ -443,6 +555,366 @@ def test_stop_blocks_early_and_session_start_restores_after_compact(tmp_path):
     assert "phase=awaiting_init" in context
     assert "unique_next_action=hook-driver init" in context
 
+    repeated = {**stop, "stop_hook_active": True}
+    paused = run_hook(tmp_path, repeated)
+    assert paused.returncode == 0
+    assert paused.stdout == ""
+    manifest = HookSessionManifest.model_validate_json(
+        manifest_file(tmp_path).read_text(encoding="utf-8")
+    )
+    assert manifest.phase == "awaiting_init"
+    assert manifest.failure_reason is None
+    assert manifest.paused is True
+
+    resumed_prompt = explicit_payload(tmp_path, turn="turn-b")
+    resumed = json.loads(run_hook(tmp_path, resumed_prompt).stdout)
+    assert "DTE session resumed" in resumed["hookSpecificOutput"]["additionalContext"]
+    manifest = HookSessionManifest.model_validate_json(
+        manifest_file(tmp_path).read_text(encoding="utf-8")
+    )
+    assert manifest.paused is False
+    assert manifest.active_root_turn_id == "turn-b"
+
+
+def test_large_unicode_request_is_chunked_without_rotating_state(tmp_path):
+    assert run_hook(tmp_path, explicit_payload(tmp_path)).returncode == 0
+    spec_path, nodes_path = write_inputs(tmp_path)
+    nodes = json.loads(nodes_path.read_text(encoding="utf-8"))
+    nodes[0]["claim"] = ("边界证据🙂" * 18000) + " end"
+    nodes_path.write_text(json.dumps(nodes, ensure_ascii=False), encoding="utf-8")
+    initialized = run_driver(
+        tmp_path,
+        "init",
+        "--spec",
+        str(spec_path),
+        "--nodes",
+        str(nodes_path),
+    )
+    assert initialized.returncode == 0, initialized.stdout + initialized.stderr
+
+    step = run_driver(tmp_path, "step")
+    receipt = HookDriverReceipt.model_validate_json(step.stdout)
+    reference = HookRequestReference.model_validate(receipt.payload["request_ref"])
+    assert reference.canonical_size_bytes >= 128 * 1024
+    assert len(step.stdout.encode("utf-8")) < 4096
+    before = HookSessionManifest.model_validate_json(
+        manifest_file(tmp_path).read_text(encoding="utf-8")
+    )
+    capability = capability_value(tmp_path)
+
+    content = []
+    for index in range(reference.chunk_count):
+        projected = run_driver(tmp_path, "request", "--chunk-index", str(index))
+        chunk = HookRequestChunk.model_validate_json(projected.stdout)
+        content.append(chunk.content)
+    canonical = "".join(content).encode("utf-8")
+    assert hashlib.sha256(canonical).hexdigest() == reference.request_hash
+    assert len(canonical) == reference.canonical_size_bytes
+
+    after = HookSessionManifest.model_validate_json(
+        manifest_file(tmp_path).read_text(encoding="utf-8")
+    )
+    assert after.receipt_sequence == before.receipt_sequence
+    assert capability_value(tmp_path) == capability
+
+    first_status = HookStatusProjection.model_validate_json(
+        run_driver(tmp_path, "status").stdout
+    )
+    second_status = HookStatusProjection.model_validate_json(
+        run_driver(tmp_path, "status").stdout
+    )
+    assert first_status == second_status
+    status_after = HookSessionManifest.model_validate_json(
+        manifest_file(tmp_path).read_text(encoding="utf-8")
+    )
+    assert status_after.receipt_sequence == before.receipt_sequence
+    assert capability_value(tmp_path) == capability
+
+    first_chunk = HookRequestChunk.model_validate_json(
+        run_driver(tmp_path, "request", "--chunk-index", "0").stdout
+    )
+    post = {
+        "session_id": "session-a",
+        "turn_id": "turn-a",
+        "cwd": str(tmp_path / "workspace"),
+        "hook_event_name": "PostToolUse",
+        "permission_mode": "default",
+        "tool_name": "Bash",
+        "tool_use_id": "request-chunk",
+        "tool_input": {
+            "command": (
+                f"python '{ROOT / 'scripts' / 'dte_hook_driver_entry.py'}' "
+                "hook-driver request --chunk-index 0"
+            )
+        },
+        "tool_response": (
+            "Chunk ID: probe\nWall time: 0.1 seconds\nProcess exited with code 0\n"
+            "Original token count: 20\nOutput:\n" + first_chunk.model_dump_json()
+        ),
+    }
+    verified = json.loads(run_hook(tmp_path, post).stdout)
+    assert "Verified DTE request chunk" in verified["hookSpecificOutput"][
+        "additionalContext"
+    ]
+    tampered = first_chunk.model_copy(update={"content": first_chunk.content + "x"})
+    post["tool_response"] = tampered.model_dump_json()
+    blocked = json.loads(run_hook(tmp_path, post).stdout)
+    assert blocked["decision"] == "block"
+    assert "verification failed" in blocked["reason"]
+
+
+def test_identical_invocation_can_resume_in_a_new_session(tmp_path):
+    assert run_hook(tmp_path, explicit_payload(tmp_path)).returncode == 0
+    spec_path, nodes_path = write_inputs(tmp_path)
+    initialized = run_driver(
+        tmp_path,
+        "init",
+        "--spec",
+        str(spec_path),
+        "--nodes",
+        str(nodes_path),
+    )
+    assert initialized.returncode == 0, initialized.stdout + initialized.stderr
+    stepped = run_driver(tmp_path, "step")
+    assert stepped.returncode == 0, stepped.stdout + stepped.stderr
+    original = HookSessionManifest.model_validate_json(
+        manifest_file(tmp_path).read_text(encoding="utf-8")
+    )
+    original_capability = capability_value(tmp_path)
+    assert original.run_id and original.run_dir
+    assert original.current_episode_id and original.current_attempt_id
+
+    assert run_hook(
+        tmp_path,
+        explicit_payload(tmp_path, session="session-b", turn="turn-b"),
+    ).returncode == 0
+    available = run_driver(
+        tmp_path,
+        "init",
+        "--spec",
+        str(spec_path),
+        "--nodes",
+        str(nodes_path),
+        session="session-b",
+        turn="turn-b",
+    )
+    assert available.returncode == 0, available.stdout + available.stderr
+    available_receipt = HookDriverReceipt.model_validate_json(available.stdout)
+    assert available_receipt.controller_action == "resume_available"
+    assert available_receipt.payload["run_id"] == original.run_id
+
+    resumed = run_driver(
+        tmp_path,
+        "resume",
+        "--run-id",
+        original.run_id,
+        session="session-b",
+        turn="turn-b",
+    )
+    assert resumed.returncode == 0, resumed.stdout + resumed.stderr
+    resumed_receipt = HookDriverReceipt.model_validate_json(resumed.stdout)
+    assert resumed_receipt.operation == "resume"
+    replacement = HookSessionManifest.model_validate_json(
+        manifest_file(tmp_path, "session-b").read_text(encoding="utf-8")
+    )
+    assert replacement.run_id == original.run_id
+    assert replacement.current_episode_id == original.current_episode_id
+    assert replacement.current_attempt_id == original.current_attempt_id
+    state = load_app_run(replacement.run_dir)
+    assert state.execution_contract.enforcement_session_id == "session-b"
+
+    transferred = HookSessionManifest.model_validate_json(
+        manifest_file(tmp_path).read_text(encoding="utf-8")
+    )
+    assert transferred.phase == "transferred"
+    stale = run_driver(
+        tmp_path,
+        "step",
+        capability=original_capability,
+        session="session-a",
+        turn="turn-a",
+    )
+    assert stale.returncode == 1
+    assert not HookDriverReceipt.model_validate_json(stale.stdout).success
+
+    reference = HookRequestReference.model_validate_json(
+        run_driver(
+            tmp_path,
+            "step",
+            session="session-b",
+            turn="turn-b",
+        ).stdout
+    )
+    chunk = run_driver(
+        tmp_path,
+        "request",
+        "--chunk-index",
+        "0",
+        session="session-b",
+        turn="turn-b",
+    )
+    assert chunk.returncode == 0
+    assert HookRequestChunk.model_validate_json(chunk.stdout).request_hash == reference.request_hash
+
+
+def test_hook_repairs_retry_and_cancel_run_are_explicit(tmp_path):
+    assert run_hook(tmp_path, explicit_payload(tmp_path)).returncode == 0
+    spec_path, nodes_path = write_inputs(tmp_path)
+    initialized = run_driver(
+        tmp_path,
+        "init",
+        "--spec",
+        str(spec_path),
+        "--nodes",
+        str(nodes_path),
+    )
+    assert initialized.returncode == 0
+    grant = HookDriverReceipt.model_validate_json(run_driver(tmp_path, "step").stdout)
+    request = read_request(
+        tmp_path,
+        HookRequestReference.model_validate(grant.payload["request_ref"]),
+    )
+    original_state = load_app_run(
+        HookSessionManifest.model_validate_json(
+            manifest_file(tmp_path).read_text(encoding="utf-8")
+        ).run_dir
+    )
+    original_graph = (
+        original_state.graph_revision,
+        original_state.nodes,
+        original_state.epistemic_ledger,
+    )
+    invalid = judge_result(request).model_dump(mode="json")
+    invalid["output_hash"] = "0" * 64
+    result_path = tmp_path / "repair-result.json"
+    result_path.write_text(json.dumps(invalid), encoding="utf-8")
+
+    for repair_count in (1, 2):
+        repaired = run_driver(tmp_path, "submit", "--result", str(result_path))
+        assert repaired.returncode == 0, repaired.stdout + repaired.stderr
+        receipt = HookDriverReceipt.model_validate_json(repaired.stdout)
+        assert receipt.payload["repair_required"] is True
+        assert receipt.payload["outcome"]["repair_count"] == repair_count
+        manifest = HookSessionManifest.model_validate_json(
+            manifest_file(tmp_path).read_text(encoding="utf-8")
+        )
+        assert manifest.phase == "episode_required"
+        assert manifest.current_attempt_id == request.attempt_id
+
+    exhausted = run_driver(tmp_path, "submit", "--result", str(result_path))
+    exhausted_receipt = HookDriverReceipt.model_validate_json(exhausted.stdout)
+    assert exhausted_receipt.payload["repair_exhausted"] is True
+    manifest = HookSessionManifest.model_validate_json(
+        manifest_file(tmp_path).read_text(encoding="utf-8")
+    )
+    state = load_app_run(manifest.run_dir)
+    assert manifest.phase == "awaiting_operator"
+    assert (state.graph_revision, state.nodes, state.epistemic_ledger) == original_graph
+
+    retried = run_driver(tmp_path, "control", "--action", "retry")
+    assert retried.returncode == 0, retried.stdout + retried.stderr
+    retried_receipt = HookDriverReceipt.model_validate_json(retried.stdout)
+    assert "request" not in retried_receipt.payload["outcome"]
+    assert retried_receipt.payload["request_ref"]["attempt_id"] != request.attempt_id
+    assert len(retried.stdout.encode("utf-8")) < 4096
+    retried_manifest = HookSessionManifest.model_validate_json(
+        manifest_file(tmp_path).read_text(encoding="utf-8")
+    )
+    assert retried_manifest.current_episode_id == request.episode_id
+    assert retried_manifest.current_attempt_id != request.attempt_id
+
+    cancelled = run_driver(
+        tmp_path,
+        "control",
+        "--action",
+        "cancel-run",
+        "--reason",
+        "operator ended this run",
+        "--requested-by",
+        "user",
+    )
+    assert cancelled.returncode == 0, cancelled.stdout + cancelled.stderr
+    cancelled_manifest = HookSessionManifest.model_validate_json(
+        manifest_file(tmp_path).read_text(encoding="utf-8")
+    )
+    assert cancelled_manifest.phase == "cancelled"
+    assert load_app_run(cancelled_manifest.run_dir).controller_action == "run_cancelled"
+
+    assert run_hook(
+        tmp_path,
+        explicit_payload(tmp_path, session="session-b", turn="turn-b"),
+    ).returncode == 0
+    terminal = run_driver(
+        tmp_path,
+        "init",
+        "--spec",
+        str(spec_path),
+        "--nodes",
+        str(nodes_path),
+        session="session-b",
+        turn="turn-b",
+    )
+    terminal_receipt = HookDriverReceipt.model_validate_json(terminal.stdout)
+    assert terminal_receipt.payload["terminal_invocation"] is True
+    assert terminal_receipt.payload["terminal_action"] == "run_cancelled"
+
+
+def test_incomplete_repair_transaction_recovers_without_consuming_another_repair(
+    tmp_path,
+    monkeypatch,
+):
+    assert run_hook(tmp_path, explicit_payload(tmp_path)).returncode == 0
+    spec_path, nodes_path = write_inputs(tmp_path)
+    assert run_driver(
+        tmp_path,
+        "init",
+        "--spec",
+        str(spec_path),
+        "--nodes",
+        str(nodes_path),
+    ).returncode == 0
+    grant = HookDriverReceipt.model_validate_json(run_driver(tmp_path, "step").stdout)
+    request = read_request(
+        tmp_path,
+        HookRequestReference.model_validate(grant.payload["request_ref"]),
+    )
+    monkeypatch.setenv("DTE_HOOK_STATE_ROOT", str(tmp_path / "hook-state"))
+    manifest = hook_driver.load_manifest("session-a")
+    assert manifest is not None and manifest.run_dir
+    capability = capability_value(tmp_path)
+    before_sequence = manifest.receipt_sequence
+    before_hash = hook_driver.state_identity_hash(manifest)
+    hook_driver._begin_operation_intent(
+        manifest,
+        operation="submit",
+        before_hash=before_hash,
+        current_capability=capability,
+    )
+    invalid = judge_result(request).model_dump(mode="json")
+    invalid["output_hash"] = "0" * 64
+    backend_outcome = submit_app_episode_result(
+        manifest.run_dir,
+        invalid,
+        execution_context=hook_driver._execution_context(manifest, capability),
+    )
+    assert backend_outcome.repair_required
+
+    recovered = hook_driver.load_manifest("session-a")
+    assert recovered is not None
+    assert recovered.phase == "episode_required"
+    assert recovered.current_attempt_id == request.attempt_id
+    assert recovered.receipt_sequence == before_sequence + 1
+    assert capability_value(tmp_path) != capability
+    state = load_app_run(recovered.run_dir)
+    attempt = next(
+        attempt
+        for episode in state.episodes
+        if episode.episode_id == request.episode_id
+        for attempt in episode.attempts
+        if attempt.attempt_id == request.attempt_id
+    )
+    assert attempt.repair_count == 1
+
 
 def test_terminal_handoff_is_generated_before_stop_allows_report(tmp_path):
     assert run_hook(tmp_path, explicit_payload(tmp_path)).returncode == 0
@@ -463,7 +935,10 @@ def test_terminal_handoff_is_generated_before_stop_allows_report(tmp_path):
     assert initialized.returncode == 0, initialized.stdout + initialized.stderr
     grant = run_driver(tmp_path, "step")
     grant_receipt = HookDriverReceipt.model_validate_json(grant.stdout)
-    request = EpisodeRequest.model_validate(grant_receipt.payload["outcome"]["request"])
+    request = read_request(
+        tmp_path,
+        HookRequestReference.model_validate(grant_receipt.payload["request_ref"]),
+    )
     output = JudgeEpisodeOutput(
         observations=[
             JudgeObservation(
@@ -615,10 +1090,13 @@ def test_explicit_replay_records_source_lineage_and_uses_a_distinct_key(tmp_path
     )
     assert source_manifest.run_id is not None
     source_grant = run_driver(tmp_path, "step")
-    source_request = EpisodeRequest.model_validate(
-        HookDriverReceipt.model_validate_json(source_grant.stdout).payload[
-            "outcome"
-        ]["request"]
+    source_request = read_request(
+        tmp_path,
+        HookRequestReference.model_validate(
+            HookDriverReceipt.model_validate_json(source_grant.stdout).payload[
+                "request_ref"
+            ]
+        ),
     )
     source_output = JudgeEpisodeOutput(
         observations=[
@@ -862,7 +1340,10 @@ def test_committed_submit_recovers_pre_receipt_intent_without_duplicate(
     assert initialized.returncode == 0, initialized.stdout + initialized.stderr
     granted = run_driver(tmp_path, "step")
     grant_receipt = HookDriverReceipt.model_validate_json(granted.stdout)
-    request = EpisodeRequest.model_validate(grant_receipt.payload["outcome"]["request"])
+    request = read_request(
+        tmp_path,
+        HookRequestReference.model_validate(grant_receipt.payload["request_ref"]),
+    )
     output = JudgeEpisodeOutput(
         observations=[
             JudgeObservation(

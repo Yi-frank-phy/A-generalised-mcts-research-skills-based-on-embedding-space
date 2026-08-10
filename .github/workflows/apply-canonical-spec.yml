@@ -1,0 +1,142 @@
+name: Apply Canonical DTE Spec
+
+on:
+  push:
+    branches:
+      - fix/canonical-dte-math
+    paths:
+      - ".github/canonical-spec-trigger"
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: fix/canonical-dte-math
+      - name: Apply exact specification replacements
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("SPEC.md")
+          text = path.read_text(encoding="utf-8")
+
+          replacements = [
+              (
+                  '''## 2. UCB objective
+
+Default UCB remains value/uncertainty driven:
+
+```text
+U_i = V_i + c * tau * uncertainty_i
+```
+
+where:
+
+- `V_i` is an observable Judge estimate of research potential;
+- `tau` is normalized temperature;
+- `uncertainty_i` comes from embedding-space density/KDE or another explicitly configured novelty estimate.
+
+Cost is not part of UCB by default. Compute and quota limits are enforced outside the objective through run policy, episode policy, and hard caps.
+
+Judge value is not a correctness proof. It estimates whether a branch is coherent, informative, tractable, and worth further investigation under incomplete evidence.
+''',
+                  '''## 2. UCB objective
+
+The canonical local upper-confidence primitive is:
+
+```text
+U_i = V_i + SD_i
+```
+
+where:
+
+- `V_i` is an observable Judge estimate of research potential;
+- `SD_i` is a standard-deviation/standard-error-like uncertainty estimate for branch `i`;
+- the current `uncertainty_i` field is the provisional estimator supplied as `SD_i`.
+
+Global temperature does not multiply the local uncertainty term. Legacy `tau` and `c_explore` inputs may remain temporarily parseable for compatibility, but they do not change canonical UCB.
+
+Cost is not part of UCB by default. Compute and quota limits are enforced outside the objective through run policy, episode policy, and hard caps.
+
+Judge value is not a correctness proof. It estimates whether a branch is coherent, informative, tractable, and worth further investigation under incomplete evidence.
+'''
+              ),
+              (
+                  '''DTE's entropy controller requires a continuous embedding geometry:
+
+```text
+x_i = E(v_i)
+rho_i = KDE(x_i)
+S_t = -mean(log rho_i)
+```
+''',
+                  '''The current compatibility controller still obtains a batch-relative diversity proxy from embedding geometry:
+
+```text
+x_i = E(v_i)
+rho_i = KDE(x_i)
+H_t = -mean(log rho_i)
+```
+
+For a live frontier of size `N_t`, global controller temperature is separate from UCB:
+
+```text
+tau_t = H_t / log(N_t)   if N_t > 1 else 0
+T_t = T_max * tau_t
+```
+
+The present self-including, per-batch KDE quantity is semantically quarantined: it is a batch-relative kernel surprisal proxy, not a validated thermodynamic entropy and not proof of epistemic convergence. It remains the temporary `H_t` input only until a better research-state observable is justified.
+
+Cross-iteration `delta H` is plateau/continuation telemetry only. It does not define `U_i`, `tau_t`, or `T_t`.
+'''
+              ),
+              (
+                  '''Given allocation values `A_i`, temperature `T`, and a per-iteration allocation mass `C`:
+
+```text
+p_i = exp(A_i / T) / sum_j exp(A_j / T)
+q_i = C * p_i
+```
+''',
+                  '''Given canonical UCB values `U_i`, global temperature `T`, and a per-iteration allocation mass `C`:
+
+```text
+p_i = exp(U_i / T) / sum_j exp(U_j / T)
+q_i = C * p_i
+```
+
+At `T = 0`, this is interpreted by its zero-temperature limit: probability mass is supported only on the maximal-`U` branch or tied maximal branches. A tiny positive denominator may be used internally for numerical stability, but controller telemetry must not expose an artificial positive temperature floor.
+'''
+              ),
+              (
+                  '''By default `A_i = U_i`, so entropy and uncertainty affect actual expansion rather than merely display ranking.
+
+Entropy controls temperature and emits a replayable plateau signal.''',
+                  '''Boltzmann allocation uses `U_i`, so local uncertainty affects actual expansion rather than merely display ranking. Global temperature controls how concentrated that allocation is across the already-computed UCB values.
+
+The current diversity proxy controls temperature and its cross-iteration delta emits a replayable plateau signal.'''
+              ),
+          ]
+
+          for old, new in replacements:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"expected exactly one SPEC target, found {count}: {old[:80]!r}")
+              text = text.replace(old, new, 1)
+
+          path.write_text(text, encoding="utf-8")
+          PY
+          git diff --check
+          ! git grep -n 'U_i = V_i + c \* tau \* uncertainty_i' -- SPEC.md
+      - name: Commit patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add SPEC.md
+          git commit -m "docs: restore canonical DTE controller mathematics"
+          git push origin HEAD:fix/canonical-dte-math

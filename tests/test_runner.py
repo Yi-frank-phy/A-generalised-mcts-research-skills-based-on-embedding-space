@@ -1,3 +1,5 @@
+import math
+
 from dte_backend.app_driver import (
     app_run_status,
     create_app_run,
@@ -32,6 +34,26 @@ def test_run_frontier_search_minimal_loop():
     assert len(result.nodes) >= 2
     assert "DTE Prototype Report" in result.report
     assert any(node.status == "closed" for node in result.nodes)
+
+
+def test_runner_temperature_uses_current_frontier_diversity():
+    spec = DTERunSpec(
+        problem="temperature mapping",
+        goal="trace canonical controller state",
+        budget=BudgetSpec(max_iterations=1, allocation_mass_per_iteration=2),
+    )
+    nodes = [
+        SearchNode(node_id="a", claim="route A", confidence=0.6),
+        SearchNode(node_id="b", claim="route B", confidence=0.5),
+    ]
+
+    result = run_frontier_search(spec, nodes)
+
+    entropy_state = result.traces[0].entropy_state
+    assert entropy_state is not None
+    assert entropy_state.normalized_temperature == pytest.approx(
+        entropy_state.spatial_entropy / math.log(2)
+    )
 
 
 def test_run_seeds_when_no_nodes():

@@ -34,7 +34,7 @@
     {
       "path": "prompts/judge_oracle.md",
       "size": 1734,
-      "sha256": "3f047f32541a7bdfab37596074ea9e71c2c50b3ce1fd1409856e9846fa7a2f"
+      "sha256": "3f047f32541a7bdfab37596074ea9e71c2c2c50b3ce1fd1409856e9846fa7a2f"
     },
     {
       "path": "prompts/relation_oracle.md",

@@ -109,7 +109,7 @@
     {
       "path": "src/dte_backend/app_driver.py",
       "size": 258862,
-      "sha256": "67d8000f2db5eb1509495f1577f2615c0637c6923262c5eed07c5d710519aff2"
+      "sha256": "487c12e3ce9bbd21f91b930a32514cae4ddfa5a462bf87549c0377cd4e7a43b7"
     },
     {
       "path": "src/dte_backend/artifacts.py",
@@ -148,8 +148,8 @@
     },
     {
       "path": "src/dte_backend/entropy.py",
-      "size": 2771,
-      "sha256": "1401ec2c6967c932da1f01e8617b3eedb97c9519fec1ebc09c8cc893a64d976b"
+      "size": 3737,
+      "sha256": "f903189b294bfd2f50c49a812c791f37410d6966c54fe82eb11af851bca3b51c"
     },
     {
       "path": "src/dte_backend/episode_adapter.py",
@@ -223,8 +223,8 @@
     },
     {
       "path": "src/dte_backend/math_engine.py",
-      "size": 5548,
-      "sha256": "5b16bea770499662fa90b4570f8a5628d353bad70443e9b1adb355f064c19a93"
+      "size": 5928,
+      "sha256": "c8811c158369a9393002c995cdce711a714322ae2ad24ee287e078a15120c642"
     },
     {
       "path": "src/dte_backend/merge.py",
@@ -293,8 +293,8 @@
     },
     {
       "path": "src/dte_backend/runner.py",
-      "size": 15560,
-      "sha256": "6edf7ee80f289e031e79d2d3901b6499437c7faaa8e3a8781480f6685190855e"
+      "size": 15498,
+      "sha256": "92e064ca103e86062c5fdea6b0e5b8a80cac673a13ba0eb80a25a408d780eda6"
     },
     {
       "path": "src/dte_backend/strict_runner.py",
@@ -327,5 +327,5 @@
       "sha256": "b7c578325f60737a6feda3660fd6c53b4d15782a3c931cf2a5e6718591ce4092"
     }
   ],
-  "bundle_sha256": "72475447ac9ee342a2b3e8627c5f3fd17a218b3adb8b83b6e1a3ad013d3d13c5"
+  "bundle_sha256": "d534e0c00abaff7758d6bec45e7c8cff7ac8b840397ea0de1b574e6c91bb8bb9"
 }

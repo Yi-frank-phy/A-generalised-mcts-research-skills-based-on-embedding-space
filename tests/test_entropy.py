@@ -26,6 +26,7 @@ def test_temperature_comes_from_current_entropy_and_frontier_size():
 def test_entropy_plateau_requires_configured_confirmations():
     first = evaluate_entropy_state(
         spatial_entropy=1.0,
+        frontier_size=4,
         previous_entropy=1.01,
         iteration=2,
         min_iterations=2,
@@ -38,6 +39,7 @@ def test_entropy_plateau_requires_configured_confirmations():
 
     second = evaluate_entropy_state(
         spatial_entropy=1.0,
+        frontier_size=4,
         previous_entropy=1.0,
         iteration=3,
         min_iterations=2,

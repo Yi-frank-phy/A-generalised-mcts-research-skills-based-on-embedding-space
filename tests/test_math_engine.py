@@ -7,8 +7,10 @@ from dte_backend.math_engine import (
 from dte_backend.models import SearchNode
 
 
-def test_ucb_default_not_cost_aware():
-    assert calculate_ucb(score=0.5, uncertainty=0.2, tau=1.0, c_explore=1.0) == 0.7
+def test_ucb_is_exact_value_plus_sd_and_ignores_temperature_controls():
+    assert calculate_ucb(score=0.6, uncertainty=0.25) == 0.85
+    assert calculate_ucb(score=0.6, uncertainty=0.25, tau=0.0, c_explore=0.0) == 0.85
+    assert calculate_ucb(score=0.6, uncertainty=0.25, tau=99.0, c_explore=99.0) == 0.85
 
 
 def test_boltzmann_allocation_nonempty_budget():

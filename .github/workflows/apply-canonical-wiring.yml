@@ -1,0 +1,68 @@
+name: Apply Canonical DTE Wiring
+
+on:
+  push:
+    branches:
+      - fix/canonical-dte-math
+    paths:
+      - ".github/canonical-wiring-trigger"
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: fix/canonical-dte-math
+      - name: Apply exact controller wiring replacements
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              target = Path(path)
+              text = target.read_text(encoding="utf-8")
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected exactly one target, found {count}: {old!r}")
+              target.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+          replace_once(
+              "src/dte_backend/runner.py",
+              """        entropy_state = evaluate_entropy_state(\n            spatial_entropy=kde_state.spatial_entropy,\n            previous_entropy=previous_entropy,\n""",
+              """        entropy_state = evaluate_entropy_state(\n            spatial_entropy=kde_state.spatial_entropy,\n            frontier_size=len(frontier),\n            previous_entropy=previous_entropy,\n""",
+          )
+          replace_once(
+              "src/dte_backend/runner.py",
+              """            tau=max(entropy_state.normalized_temperature, 0.05),\n            c_explore=1.0,\n            temperature=max(entropy_state.effective_temperature, 0.05),\n""",
+              """            temperature=entropy_state.effective_temperature,\n""",
+          )
+          replace_once(
+              "src/dte_backend/app_driver.py",
+              """    entropy_state = evaluate_entropy_state(\n        spatial_entropy=latest.spatial_entropy,\n        previous_entropy=previous_entropy,\n""",
+              """    entropy_state = evaluate_entropy_state(\n        spatial_entropy=latest.spatial_entropy,\n        frontier_size=len(latest.frontier_node_ids),\n        previous_entropy=previous_entropy,\n""",
+          )
+          replace_once(
+              "src/dte_backend/app_driver.py",
+              """    entropy_state = evaluate_entropy_state(\n        spatial_entropy=kde_state.spatial_entropy,\n        previous_entropy=state.previous_spatial_entropy,\n""",
+              """    entropy_state = evaluate_entropy_state(\n        spatial_entropy=kde_state.spatial_entropy,\n        frontier_size=len(next_frontier),\n        previous_entropy=state.previous_spatial_entropy,\n""",
+          )
+          replace_once(
+              "src/dte_backend/app_driver.py",
+              """        tau=max(entropy_state.normalized_temperature, 0.05),\n        c_explore=1.0,\n        temperature=max(entropy_state.effective_temperature, 0.05),\n""",
+              """        temperature=entropy_state.effective_temperature,\n""",
+          )
+          PY
+          git diff --check
+          ! git grep -n 'max(entropy_state.normalized_temperature, 0.05)' -- src/dte_backend/runner.py src/dte_backend/app_driver.py
+          ! git grep -n 'max(entropy_state.effective_temperature, 0.05)' -- src/dte_backend/runner.py src/dte_backend/app_driver.py
+      - name: Commit patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/dte_backend/runner.py src/dte_backend/app_driver.py
+          git commit -m "fix: wire canonical DTE temperature allocation"
+          git push origin HEAD:fix/canonical-dte-math

@@ -17,6 +17,11 @@ jobs:
       - uses: actions/checkout@v6
         with:
           ref: fix/canonical-dte-math
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install backend dependencies
+        run: python -m pip install -e .
       - name: Generate canonical manifests
         run: |
           python scripts/generate_bundle_manifest.py > /dev/null

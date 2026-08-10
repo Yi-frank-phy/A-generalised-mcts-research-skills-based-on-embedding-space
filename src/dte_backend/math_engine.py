@@ -63,15 +63,19 @@ def boltzmann_allocation(
         raise ValueError("scores and node_ids must have equal length")
 
     values = np.asarray(scores, dtype=float)
-    # This tiny denominator is only a numerical representation of the T -> 0
-    # limiting distribution. Controller telemetry may still report T == 0.
-    safe_t = max(float(temperature), 1e-10)
-
-    # log-sum-exp for numerical stability
-    log_weights = values / safe_t
-    max_log_weight = float(np.max(log_weights))
-    weights = np.exp(log_weights - max_log_weight)
-    probs = weights / np.sum(weights)
+    if float(temperature) <= 0.0:
+        # Exact T -> 0 limit: only true maximizers have support. Do not use an
+        # epsilon temperature here; a merely near-maximal branch must receive
+        # zero probability in the canonical zero-temperature state.
+        max_value = float(np.max(values))
+        winners = values == max_value
+        probs = winners.astype(float) / float(np.sum(winners))
+    else:
+        # log-sum-exp for numerical stability at finite positive temperature
+        log_weights = values / float(temperature)
+        max_log_weight = float(np.max(log_weights))
+        weights = np.exp(log_weights - max_log_weight)
+        probs = weights / np.sum(weights)
 
     quotas = probs * allocation_mass_per_iteration
     return discretize_allocation(

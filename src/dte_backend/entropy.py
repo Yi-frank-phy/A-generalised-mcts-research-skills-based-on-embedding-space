@@ -1,20 +1,39 @@
-"""Entropy and temperature controller for DTE frontier search.
+"""Compatibility controller for the legacy DTE KDE proxy.
 
-Search should be controlled by the state of the frontier, not by a fixed
-iteration counter alone. Spatial entropy is computed from the same KDE state
-that provides uncertainty.
+The retained `spatial_entropy` fields refer to the historical batch-relative
+kernel surprisal proxy. They must not be interpreted as calibrated research
+entropy or compared across incompatible metric identities.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .kde import compute_kde_state
+from .kde import KDEMetricIdentity, LEGACY_KDE_METRIC_IDENTITY, compute_kde_state
+
+
+@dataclass(frozen=True)
+class MetricObservation:
+    """One metric value together with the exact identity that produced it."""
+
+    value: float
+    identity: KDEMetricIdentity = LEGACY_KDE_METRIC_IDENTITY
+
+
+def relative_metric_delta(
+    current: MetricObservation,
+    previous: MetricObservation | None,
+) -> float | None:
+    """Return a relative delta only for observations from one metric identity."""
+
+    if previous is None or current.identity != previous.identity:
+        return None
+    return abs(current.value - previous.value) / max(abs(previous.value), 1.0)
 
 
 @dataclass(frozen=True)
 class EntropyState:
-    """Search-phase observables for one DTE iteration."""
+    """Compatibility observables derived from the legacy KDE proxy."""
 
     spatial_entropy: float
     entropy_delta: float | None
@@ -37,7 +56,7 @@ class EntropyState:
 
 
 def spatial_entropy_from_embeddings(embeddings: list[list[float]]) -> float:
-    """Estimate dimensionless frontier spatial entropy from embeddings."""
+    """Return the legacy batch-relative kernel surprisal compatibility field."""
 
     return compute_kde_state(embeddings).spatial_entropy
 
@@ -52,7 +71,7 @@ def evaluate_entropy_state(
     plateau_confirmations: int = 1,
     t_max: float = 1.0,
 ) -> EntropyState:
-    """Convert entropy history into temperature and a non-authoritative plateau signal."""
+    """Retain the historical proxy controller as a non-authoritative signal."""
 
     if previous_entropy is None:
         return EntropyState(
@@ -65,7 +84,9 @@ def evaluate_entropy_state(
         )
 
     delta = abs(spatial_entropy - previous_entropy) / max(abs(previous_entropy), 1.0)
-    normalized_temperature = min(1.0, delta / max(entropy_change_threshold, 1e-12))
+    normalized_temperature = min(
+        1.0, delta / max(entropy_change_threshold, 1e-12)
+    )
     effective_temperature = float(t_max * normalized_temperature)
     current_is_plateau = delta < entropy_change_threshold
     consecutive_plateau_count = (

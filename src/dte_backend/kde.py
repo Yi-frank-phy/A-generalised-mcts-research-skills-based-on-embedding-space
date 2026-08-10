@@ -1,8 +1,8 @@
-"""KDE utilities for DTE frontier geometry.
+"""KDE utilities for legacy DTE frontier geometry.
 
-The old DTE backend treated embedding-space density as the physical state of the
-frontier. This module keeps that idea explicit and computes the pairwise distance
-matrix once per batch, then reuses it for density, entropy, and uncertainty.
+The current KDE calculation is retained for compatibility, but its aggregate
+quantity is only a batch-relative kernel surprisal proxy. It is not a calibrated
+research entropy or a cross-iteration convergence measure.
 """
 
 from __future__ import annotations
@@ -14,13 +14,41 @@ import numpy as np
 
 
 @dataclass(frozen=True)
+class KDEMetricIdentity:
+    """Versioned provenance for a batch-level geometry diagnostic."""
+
+    name: str
+    version: int
+    embedding_normalization: str
+    kernel: str
+    bandwidth_rule: str
+    self_kernel_included: bool
+
+
+LEGACY_KDE_METRIC_IDENTITY = KDEMetricIdentity(
+    name="batch_relative_kernel_surprisal",
+    version=1,
+    embedding_normalization="l2_per_vector",
+    kernel="gaussian",
+    bandwidth_rule="median_nonzero_pairwise_squared_distance_per_batch",
+    self_kernel_included=True,
+)
+
+
+@dataclass(frozen=True)
 class KDEState:
-    """Density observables for one frontier batch."""
+    """Legacy batch-relative density diagnostics for one frontier batch."""
 
     log_density: list[float]
     uncertainty: list[float]
     spatial_entropy: float
     bandwidth2: float
+
+    @property
+    def batch_relative_kernel_surprisal(self) -> float:
+        """Compatibility-safe name for the legacy aggregate KDE diagnostic."""
+
+        return self.spatial_entropy
 
 
 def _normalize(x: np.ndarray) -> np.ndarray:
@@ -28,7 +56,9 @@ def _normalize(x: np.ndarray) -> np.ndarray:
     return x / np.maximum(norms, 1e-12)
 
 
-def pairwise_squared_distance(embeddings: list[list[float]], normalize: bool = True) -> np.ndarray:
+def pairwise_squared_distance(
+    embeddings: list[list[float]], normalize: bool = True
+) -> np.ndarray:
     """Compute pairwise squared Euclidean distance for embedding vectors."""
 
     if not embeddings:
@@ -55,17 +85,26 @@ def estimate_bandwidth2(dist2: np.ndarray) -> float:
 
 def _logsumexp(values: np.ndarray, axis: int = 1) -> np.ndarray:
     max_v = np.max(values, axis=axis, keepdims=True)
-    return np.squeeze(max_v, axis=axis) + np.log(np.sum(np.exp(values - max_v), axis=axis))
+    return np.squeeze(max_v, axis=axis) + np.log(
+        np.sum(np.exp(values - max_v), axis=axis)
+    )
 
 
 def compute_kde_state(embeddings: list[list[float]]) -> KDEState:
-    """Compute density, novelty uncertainty, and entropy for a frontier batch."""
+    """Compute the retained batch-relative KDE diagnostics for one frontier."""
 
     n = len(embeddings)
     if n == 0:
-        return KDEState(log_density=[], uncertainty=[], spatial_entropy=0.0, bandwidth2=1.0)
+        return KDEState(
+            log_density=[], uncertainty=[], spatial_entropy=0.0, bandwidth2=1.0
+        )
     if n == 1:
-        return KDEState(log_density=[0.0], uncertainty=[1.0], spatial_entropy=0.0, bandwidth2=1.0)
+        return KDEState(
+            log_density=[0.0],
+            uncertainty=[1.0],
+            spatial_entropy=0.0,
+            bandwidth2=1.0,
+        )
 
     dist2 = pairwise_squared_distance(embeddings, normalize=True)
     bandwidth2 = estimate_bandwidth2(dist2)

@@ -63,9 +63,10 @@ Development on public `main` prioritizes real-run use, evaluation, compatibility
 maintenance, and bounded fixes. Do not ad-hoc redesign the production v1 controller
 or import an experimental formula merely because it is attractive or easy to test.
 Intentional next-generation redesign belongs in an explicitly experimental theory/
-prototype path and should migrate only after its mathematical semantics and evidence
-gates are strong enough. Passing tests establishes protocol behavior, not scientific
-correctness or research effectiveness.
+prototype path and should migrate only after its mathematical semantics are explicit
+and comparative outcome evidence or other predeclared evidence gates justify the
+migration. Passing tests establishes protocol behavior, not scientific correctness
+or research effectiveness.
 
 ## Repository layout
 

@@ -108,8 +108,8 @@
     },
     {
       "path": "src/dte_backend/app_driver.py",
-      "size": 258862,
-      "sha256": "487c12e3ce9bbd21f91b930a32514cae4ddfa5a462bf87549c0377cd4e7a43b7"
+      "size": 259262,
+      "sha256": "21e3e70a7529436ad505cebee98fa5e009d94e9d46b597f3ef0691a80485ca14"
     },
     {
       "path": "src/dte_backend/artifacts.py",
@@ -148,8 +148,8 @@
     },
     {
       "path": "src/dte_backend/entropy.py",
-      "size": 3737,
-      "sha256": "f903189b294bfd2f50c49a812c791f37410d6966c54fe82eb11af851bca3b51c"
+      "size": 7330,
+      "sha256": "c41e946f5dd397b547ee6d8bc29c762240020f8fe9b509a1aa63c074a45efdbe"
     },
     {
       "path": "src/dte_backend/episode_adapter.py",
@@ -218,8 +218,8 @@
     },
     {
       "path": "src/dte_backend/kde.py",
-      "size": 2922,
-      "sha256": "fac535b93f34ed7d985bcf0e27a6c16887fb82182a7336b9e8b3a948842ddc92"
+      "size": 2839,
+      "sha256": "6c956715fa9df43ac63757ef3becf8b4add272f54a8e82f9ef0eb4cf0d63f038"
     },
     {
       "path": "src/dte_backend/math_engine.py",
@@ -293,8 +293,8 @@
     },
     {
       "path": "src/dte_backend/runner.py",
-      "size": 15498,
-      "sha256": "92e064ca103e86062c5fdea6b0e5b8a80cac673a13ba0eb80a25a408d780eda6"
+      "size": 15836,
+      "sha256": "4b7848d711b9ab656b377f580d3e757c5b0c92e2b482ca70ec2c16683db0ae78"
     },
     {
       "path": "src/dte_backend/strict_runner.py",
@@ -327,5 +327,5 @@
       "sha256": "b7c578325f60737a6feda3660fd6c53b4d15782a3c931cf2a5e6718591ce4092"
     }
   ],
-  "bundle_sha256": "15c182c69b594fd5f5306fb1d7c284ffcfb2e4303cf2efe413853923c333172a"
+  "bundle_sha256": "5f84f07428739fb8d0c98f24a381619337c8c6cd1bcd2e47932e8f28adc300c6"
 }

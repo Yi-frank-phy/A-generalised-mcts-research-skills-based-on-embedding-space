@@ -2,7 +2,8 @@
 
 The old DTE backend treated embedding-space density as the physical state of the
 frontier. This module keeps that idea explicit and computes the pairwise distance
-matrix once per batch, then reuses it for density, entropy, and uncertainty.
+matrix once per batch, then reuses it for soft density, bounded entropy, and
+absolute local uncertainty.
 """
 
 from __future__ import annotations
@@ -43,14 +44,14 @@ def pairwise_squared_distance(embeddings: list[list[float]], normalize: bool = T
 
 
 def estimate_bandwidth2(dist2: np.ndarray) -> float:
-    """Estimate Gaussian kernel bandwidth from nonzero pairwise distances."""
+    """Return h^2 for the legacy adaptive scale h = median(pair distance)/sqrt(2)."""
 
     if dist2.size == 0:
         return 1.0
     nonzero = dist2[dist2 > 1e-12]
     if nonzero.size == 0:
         return 1.0
-    return max(float(np.median(nonzero)), 1e-8)
+    return max(float(np.median(nonzero)) / 2.0, 1e-8)
 
 
 def _logsumexp(values: np.ndarray, axis: int = 1) -> np.ndarray:
@@ -59,7 +60,7 @@ def _logsumexp(values: np.ndarray, axis: int = 1) -> np.ndarray:
 
 
 def compute_kde_state(embeddings: list[list[float]]) -> KDEState:
-    """Compute density, novelty uncertainty, and entropy for a frontier batch."""
+    """Compute soft density, absolute local uncertainty, and bounded entropy."""
 
     n = len(embeddings)
     if n == 0:
@@ -73,13 +74,9 @@ def compute_kde_state(embeddings: list[list[float]]) -> KDEState:
     log_density_np = _logsumexp(log_kernel, axis=1) - math.log(n)
     spatial_entropy = float(-np.mean(log_density_np))
 
-    neg_density = -log_density_np
-    min_v = float(np.min(neg_density))
-    max_v = float(np.max(neg_density))
-    if max_v - min_v < 1e-12:
-        uncertainty = np.full_like(neg_density, 0.5, dtype=float)
-    else:
-        uncertainty = (neg_density - min_v) / (max_v - min_v)
+    density = np.exp(log_density_np)
+    effective_local_count = np.maximum(float(n) * density, 1.0)
+    uncertainty = 1.0 / np.sqrt(effective_local_count)
 
     return KDEState(
         log_density=[float(v) for v in log_density_np],

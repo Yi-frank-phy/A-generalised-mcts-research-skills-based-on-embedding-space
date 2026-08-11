@@ -22,7 +22,7 @@ from .entropy import EntropyState, evaluate_entropy_state
 from .expansion import expand_frontier
 from .human import HumanQuestion, maybe_create_human_question
 from .judge import batch_judge
-from .math_engine import allocate_frontier
+from .math_engine import allocate_frontier, calculate_ucb
 from .merge import apply_equivalent_merges
 from .models import AllocationResult, DTERunSpec, ForcedSynthesisRecord, MergeProposal, SearchNode, SynthesisControlRequest
 from .novelty import estimate_frontier_kde_state
@@ -206,9 +206,18 @@ def run_frontier_search(
         for node, uncertainty in zip(frontier, kde_state.uncertainty):
             node.uncertainty = uncertainty
 
+        current_ucb_scores = [
+            calculate_ucb(
+                float(node.score if node.score is not None else node.confidence),
+                float(node.uncertainty if node.uncertainty is not None else 0.0),
+            )
+            for node in frontier
+        ]
+
         entropy_state = evaluate_entropy_state(
             spatial_entropy=kde_state.spatial_entropy,
             frontier_size=len(frontier),
+            ucb_scores=current_ucb_scores,
             previous_entropy=previous_entropy,
             iteration=iteration,
             min_iterations=spec.budget.min_iterations_before_synthesis,

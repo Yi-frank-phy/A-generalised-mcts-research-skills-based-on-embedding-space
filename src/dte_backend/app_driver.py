@@ -55,7 +55,7 @@ from .episode_models import (
     compute_output_hash,
 )
 from .file_cache import FileDTECache
-from .math_engine import allocate_frontier
+from .math_engine import allocate_frontier, calculate_ucb
 from .merge import (
     resolve_merge_aliases,
     validate_merge_application_relation_provenance,
@@ -447,6 +447,7 @@ def _validate_terminal_intent_provenance(
     entropy_state = evaluate_entropy_state(
         spatial_entropy=latest.spatial_entropy,
         frontier_size=len(latest.frontier_node_ids),
+        ucb_scores=[latest.ucb_scores[node_id] for node_id in latest.frontier_node_ids],
         previous_entropy=previous_entropy,
         iteration=latest.iteration,
         min_iterations=state.spec.budget.min_iterations_before_synthesis,
@@ -3316,6 +3317,14 @@ def _progress_controller(
         node.density = math.exp(log_density)
         node.uncertainty = uncertainty
 
+    current_ucb_scores = [
+        calculate_ucb(
+            float(node.score if node.score is not None else node.confidence),
+            float(node.uncertainty if node.uncertainty is not None else 0.0),
+        )
+        for node in next_frontier
+    ]
+
     iteration = state.controller_iteration + 1
     previous_plateau_count = (
         state.controller_iteration_records[-1].consecutive_plateau_count
@@ -3325,6 +3334,7 @@ def _progress_controller(
     entropy_state = evaluate_entropy_state(
         spatial_entropy=kde_state.spatial_entropy,
         frontier_size=len(next_frontier),
+        ucb_scores=current_ucb_scores,
         previous_entropy=state.previous_spatial_entropy,
         iteration=iteration,
         min_iterations=state.spec.budget.min_iterations_before_synthesis,

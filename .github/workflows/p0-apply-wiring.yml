@@ -21,6 +21,7 @@ jobs:
         shell: python
         run: |
           from pathlib import Path
+          import re
 
           app = Path("src/dte_backend/app_driver.py")
           text = app.read_text(encoding="utf-8")
@@ -30,20 +31,31 @@ jobs:
           assert text.count(old) == 1, text.count(old)
           text = text.replace(old, new, 1)
 
-          old = """            node.density = math.exp(log_density)\n            node.uncertainty = uncertainty\n\n        iteration = state.controller_iteration + 1\n"""
-          new = """            node.density = math.exp(log_density)\n            node.uncertainty = uncertainty\n\n        current_ucb_scores = [\n            calculate_ucb(\n                float(node.score if node.score is not None else node.confidence),\n                float(node.uncertainty if node.uncertainty is not None else 0.0),\n            )\n            for node in next_frontier\n        ]\n\n        iteration = state.controller_iteration + 1\n"""
+          old = """        node.density = math.exp(log_density)\n        node.uncertainty = uncertainty\n\n    iteration = state.controller_iteration + 1\n"""
+          new = """        node.density = math.exp(log_density)\n        node.uncertainty = uncertainty\n\n    current_ucb_scores = [\n        calculate_ucb(\n            float(node.score if node.score is not None else node.confidence),\n            float(node.uncertainty if node.uncertainty is not None else 0.0),\n        )\n        for node in next_frontier\n    ]\n\n    iteration = state.controller_iteration + 1\n"""
           assert text.count(old) == 1, text.count(old)
           text = text.replace(old, new, 1)
 
-          old = """            spatial_entropy=kde_state.spatial_entropy,\n            frontier_size=len(next_frontier),\n            previous_entropy=state.previous_spatial_entropy,\n"""
-          new = """            spatial_entropy=kde_state.spatial_entropy,\n            frontier_size=len(next_frontier),\n            ucb_scores=current_ucb_scores,\n            previous_entropy=state.previous_spatial_entropy,\n"""
+          old = """        spatial_entropy=kde_state.spatial_entropy,\n        frontier_size=len(next_frontier),\n        previous_entropy=state.previous_spatial_entropy,\n"""
+          new = """        spatial_entropy=kde_state.spatial_entropy,\n        frontier_size=len(next_frontier),\n        ucb_scores=current_ucb_scores,\n        previous_entropy=state.previous_spatial_entropy,\n"""
           assert text.count(old) == 1, text.count(old)
           text = text.replace(old, new, 1)
 
-          old = """        spatial_entropy=latest.spatial_entropy,\n        frontier_size=len(latest.frontier_node_ids),\n        previous_entropy=previous_entropy,\n"""
-          new = """        spatial_entropy=latest.spatial_entropy,\n        frontier_size=len(latest.frontier_node_ids),\n        ucb_scores=[latest.ucb_scores[node_id] for node_id in latest.frontier_node_ids],\n        previous_entropy=previous_entropy,\n"""
-          assert text.count(old) == 1, text.count(old)
-          text = text.replace(old, new, 1)
+          replay_pattern = re.compile(
+              r"(\n\s*spatial_entropy=latest\.spatial_entropy,\n"
+              r"\s*frontier_size=len\(latest\.frontier_node_ids\),\n)"
+              r"(\s*previous_entropy=previous_entropy,)"
+          )
+          text, count = replay_pattern.subn(
+              lambda match: (
+                  match.group(1)
+                  + "        ucb_scores=[latest.ucb_scores[node_id] for node_id in latest.frontier_node_ids],\n"
+                  + match.group(2)
+              ),
+              text,
+              count=1,
+          )
+          assert count == 1, count
           app.write_text(text, encoding="utf-8")
 
           runner = Path("src/dte_backend/runner.py")

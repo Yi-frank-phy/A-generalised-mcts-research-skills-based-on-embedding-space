@@ -1,6 +1,6 @@
 # Evolving Frontier Research Skill
 
-> **Public alpha note:** this is a local Codex/agent skill backend, not a hosted service. The research workflow is frozen; continue by hardening workflow edges and oracle integrations, not redesigning the system.
+> **Public alpha note:** this is a local Codex/agent skill backend, not a hosted service. Public `main` is the stable v1 compatibility baseline; the research architecture itself is no longer treated as permanently frozen. A separate next-generation controller is under theory audit and has not been migrated into this runtime.
 
 **Evolving Frontier Research Skill** packages a fixed frontier-search research protocol for Codex-style agents. It turns open-ended mathematical, physical, academic, or conceptual research into a controlled loop of structured hypotheses, external judgment, geometric exploration, bounded expansion, relation checks, and final synthesis.
 
@@ -18,15 +18,23 @@ Judge scores → entropy/novelty → UCB → Boltzmann expansion
 DTE-selected synthesis checkpoint → validated report
 ```
 
-This repository is intentionally **not** a new general agent architecture. It is a packaging layer around a fixed research workflow:
+This repository is intentionally **not** a new general agent architecture. It is a packaging layer around the current public v1 research workflow:
 
 - Role separation is preserved as anti-bias isolation.
 - The math controller remains mandatory for research runs.
 - Subagents can execute local episodes but cannot directly produce final conclusions.
 - Skills and hooks enforce structured outputs and phase boundaries.
-- UCB remains value/uncertainty driven; cost is handled by hard budgets and run profiles, not by changing the UCB objective by default.
+- UCB remains value/uncertainty driven in the public compatibility controller; cost is handled by hard budgets and run profiles, not by changing the UCB objective by default.
 
 The internal Python package still uses `dte_backend` for backward compatibility. Public-facing docs use the clearer name **Evolving Frontier Research Skill**.
+
+### Research architecture status
+
+Public `main` should be read as the **stable v1 baseline**, not as the latest word on DTE theory. The current public runtime still uses the Judge → geometry/controller → Executor architecture and the recovered legacy geometry/controller mathematics.
+
+A separate next-generation prototype is actively studying prospective structural thoughts, temporal evidence, feedback-preserving one-action allocation, frozen temporal geometry, and a stricter separation between empirical variability, ignorance priors, scheduler breadth, and stopping evidence. Those ideas remain under theory/evidence review and are intentionally not mixed into public v1 yet.
+
+See [`docs/NEXT_GENERATION_RESEARCH_STATUS.md`](docs/NEXT_GENERATION_RESEARCH_STATUS.md) for the current boundary between the public baseline and experimental research.
 
 ## Status
 
@@ -51,13 +59,12 @@ python -m dte_backend strict-run \
 
 ### V1 stability policy
 
-Development now prioritizes real-run use, evaluation, compatibility,
-maintenance, and fixes. Do not pre-emptively add a native final Synthesis
-episode, verifier or human-approval gate, dormant-node state, or more complex
-reward/convergence/reliability/control metrics. Reconsider one of these only
-after a reproducible real-run failure, comparative outcome evidence, or a
-concrete protocol requirement demonstrates that the current v1 mechanisms are
-insufficient. Passing tests establishes protocol behavior, not scientific
+Development on public `main` prioritizes real-run use, evaluation, compatibility,
+maintenance, and bounded fixes. Do not ad-hoc redesign the production v1 controller
+or import an experimental formula merely because it is attractive or easy to test.
+Intentional next-generation redesign belongs in an explicitly experimental theory/
+prototype path and should migrate only after its mathematical semantics and evidence
+gates are strong enough. Passing tests establishes protocol behavior, not scientific
 correctness or research effectiveness.
 
 ## Repository layout
@@ -224,4 +231,4 @@ Apache-2.0. See [`LICENSE`](./LICENSE).
 
 ## Design stance
 
-Freeze the research workflow. Package it as a skill-backed research backend. The user should provide task parameters, not rewrite the architecture for each run.
+Keep public `main` stable and reproducible. Treat it as the v1 baseline for evaluation and maintenance, not as a permanent freeze on DTE research. Experimental architecture changes should remain explicitly separated until their theory and evidence justify a deliberate migration.

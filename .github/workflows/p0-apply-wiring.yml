@@ -1,0 +1,72 @@
+name: P0 Apply Wiring
+
+on:
+  push:
+    branches:
+      - fix/p0-adaptive-kde-scale
+    paths:
+      - .github/workflows/p0-apply-wiring.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: fix/p0-adaptive-kde-scale
+      - name: Apply exact wiring replacements
+        shell: python
+        run: |
+          from pathlib import Path
+
+          app = Path("src/dte_backend/app_driver.py")
+          text = app.read_text(encoding="utf-8")
+
+          old = "from .math_engine import allocate_frontier"
+          new = "from .math_engine import allocate_frontier, calculate_ucb"
+          assert text.count(old) == 1, text.count(old)
+          text = text.replace(old, new, 1)
+
+          old = """            node.density = math.exp(log_density)\n            node.uncertainty = uncertainty\n\n        iteration = state.controller_iteration + 1\n"""
+          new = """            node.density = math.exp(log_density)\n            node.uncertainty = uncertainty\n\n        current_ucb_scores = [\n            calculate_ucb(\n                float(node.score if node.score is not None else node.confidence),\n                float(node.uncertainty if node.uncertainty is not None else 0.0),\n            )\n            for node in next_frontier\n        ]\n\n        iteration = state.controller_iteration + 1\n"""
+          assert text.count(old) == 1, text.count(old)
+          text = text.replace(old, new, 1)
+
+          old = """            spatial_entropy=kde_state.spatial_entropy,\n            frontier_size=len(next_frontier),\n            previous_entropy=state.previous_spatial_entropy,\n"""
+          new = """            spatial_entropy=kde_state.spatial_entropy,\n            frontier_size=len(next_frontier),\n            ucb_scores=current_ucb_scores,\n            previous_entropy=state.previous_spatial_entropy,\n"""
+          assert text.count(old) == 1, text.count(old)
+          text = text.replace(old, new, 1)
+
+          old = """        spatial_entropy=latest.spatial_entropy,\n        frontier_size=len(latest.frontier_node_ids),\n        previous_entropy=previous_entropy,\n"""
+          new = """        spatial_entropy=latest.spatial_entropy,\n        frontier_size=len(latest.frontier_node_ids),\n        ucb_scores=[latest.ucb_scores[node_id] for node_id in latest.frontier_node_ids],\n        previous_entropy=previous_entropy,\n"""
+          assert text.count(old) == 1, text.count(old)
+          text = text.replace(old, new, 1)
+          app.write_text(text, encoding="utf-8")
+
+          runner = Path("src/dte_backend/runner.py")
+          text = runner.read_text(encoding="utf-8")
+          old = "from .math_engine import allocate_frontier"
+          new = "from .math_engine import allocate_frontier, calculate_ucb"
+          assert text.count(old) == 1, text.count(old)
+          text = text.replace(old, new, 1)
+
+          old = """        for node, uncertainty in zip(frontier, kde_state.uncertainty):\n            node.uncertainty = uncertainty\n\n        entropy_state = evaluate_entropy_state(\n"""
+          new = """        for node, uncertainty in zip(frontier, kde_state.uncertainty):\n            node.uncertainty = uncertainty\n\n        current_ucb_scores = [\n            calculate_ucb(\n                float(node.score if node.score is not None else node.confidence),\n                float(node.uncertainty if node.uncertainty is not None else 0.0),\n            )\n            for node in frontier\n        ]\n\n        entropy_state = evaluate_entropy_state(\n"""
+          assert text.count(old) == 1, text.count(old)
+          text = text.replace(old, new, 1)
+
+          old = """            spatial_entropy=kde_state.spatial_entropy,\n            frontier_size=len(frontier),\n            previous_entropy=previous_entropy,\n"""
+          new = """            spatial_entropy=kde_state.spatial_entropy,\n            frontier_size=len(frontier),\n            ucb_scores=current_ucb_scores,\n            previous_entropy=previous_entropy,\n"""
+          assert text.count(old) == 1, text.count(old)
+          text = text.replace(old, new, 1)
+          runner.write_text(text, encoding="utf-8")
+      - name: Commit wiring
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/dte_backend/app_driver.py src/dte_backend/runner.py
+          git commit -m "fix: wire entropy-matched temperature into controllers"
+          git push origin HEAD:fix/p0-adaptive-kde-scale

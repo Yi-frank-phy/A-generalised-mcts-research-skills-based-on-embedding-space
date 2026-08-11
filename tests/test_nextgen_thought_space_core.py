@@ -3,7 +3,7 @@ import math
 import numpy as np
 import pytest
 
-from dte_backend.thought_space import (
+from dte_nextgen.thought_space import (
     CANONICALIZATION_VERSION,
     FrozenThoughtMetric,
     MetricIdentity,

@@ -41,7 +41,7 @@ K_h(d_{\rm med})=
 \exp\!\left(-\frac{d_{\rm med}^2}{2h^2}\right)=e^{-1}.
 \]
 
-The current production implementation `bandwidth2 = median(d^2)` makes the typical overlap `e^{-1/2}` and is therefore a factor-of-two scale regression.
+The pre-P0 production implementation `bandwidth2 = median(d^2)` made the typical overlap `e^{-1/2}` and was therefore a factor-of-two scale regression.
 
 ## 2. Soft-discrete density and entropy
 
@@ -155,3 +155,11 @@ It does **not** yet:
 - change the existing global hard node budget.
 
 Those remain separate research/design changes.
+
+## 7. Verification evidence
+
+The recovery was implemented test-first on PR #40. Characterization tests first demonstrated the pre-P0 regressions: the KDE scale test expected half the median squared pair distance while production returned the full median, and the absolute-SD test expected finite nonzero uncertainty for every branch while production min-max normalized the batch to endpoint values.
+
+A separate controller characterization then required temperature to scale with the current UCB spectrum while reproducing the same target Boltzmann entropy. Production initially could not satisfy this contract because the entropy controller did not accept UCB scores at all.
+
+After restoring the formulas and wiring both the App controller, replay validation, and legacy runner to the current UCB spectrum, the production bundle manifest was regenerated and verified. The branch then passed the full repository regression suite with **643 passed** on Python 3.12 before the final production-state commit `41953f2` was pushed.

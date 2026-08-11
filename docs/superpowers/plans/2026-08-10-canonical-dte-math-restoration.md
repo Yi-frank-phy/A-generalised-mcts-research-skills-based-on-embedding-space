@@ -1,5 +1,8 @@
 # Canonical DTE Mathematics Restoration Implementation Plan
 
+> **SUPERSEDED FOR GEOMETRY/CONTROLLER MATH (2026-08-11):** Use `docs/superpowers/specs/2026-08-11-p0-geometry-controller-recovery.md`. This file is retained only as historical implementation archaeology; its `H/log(N) -> T` law is not authoritative.
+
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Restore the canonical DTE controller chain `SD -> U=V+SD`, `H -> tau=H/log N -> T`, and `(U,T) -> Boltzmann allocation` without redesigning the current provisional KDE observables.

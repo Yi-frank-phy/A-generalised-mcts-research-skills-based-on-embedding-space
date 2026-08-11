@@ -45,24 +45,64 @@ Judge value is not a correctness proof. It estimates whether a branch is coheren
 
 ## 3. Geometry and embedding dimension
 
-The current compatibility controller still obtains a batch-relative diversity proxy from embedding geometry:
+The current production-compatible controller uses normalized embedding geometry as a kernel-smoothed continuation of the original finite-state entropy construction. For normalized embeddings `z_i`, let
 
 ```text
-x_i = E(v_i)
-rho_i = KDE(x_i)
-H_t = -mean(log rho_i)
+d_ij^2 = ||z_i - z_j||^2
+h^2 = median_{i<j}(d_ij^2) / 2
+K_ij = exp(-d_ij^2 / (2 h^2))
+rho_i = (1/N) * sum_j K_ij
+H_geom = -(1/N) * sum_i log(rho_i)
 ```
 
-For a live frontier of size `N_t`, global controller temperature is separate from UCB:
+The adaptive scale makes a typical pair have kernel overlap `exp(-1)`. Because the self-kernel is one,
 
 ```text
-tau_t = H_t / log(N_t)   if N_t > 1 else 0
-T_t = T_max * tau_t
+1/N <= rho_i <= 1
+0 <= H_geom <= log(N)
 ```
 
-The present self-including, per-batch KDE quantity is semantically quarantined: it is a batch-relative kernel surprisal proxy, not a validated thermodynamic entropy and not proof of epistemic convergence. It remains the temporary `H_t` input only until a better research-state observable is justified.
+`H_geom` is a bounded soft-discrete entropy. It is not the coordinate-dependent differential entropy of a normalized `D`-dimensional Gaussian KDE, and no Gaussian density-normalization factor belongs in it.
 
-Cross-iteration `delta H` is plateau/continuation telemetry only. It does not define `U_i`, `tau_t`, or `T_t`.
+Current-frontier absolute local evidence and uncertainty are
+
+```text
+n_eff,i = N * rho_i
+SD_i = 1 / sqrt(n_eff,i)
+```
+
+so the geometry layer does not min-max normalize uncertainty within each batch. Per-batch min-max normalization would erase the absolute evidence scale by forcing the densest branch to uncertainty zero and the sparsest branch to one.
+
+The public compatibility controller still uses the observable Judge score as provisional `V_i`, and canonical UCB remains
+
+```text
+U_i = V_i + SD_i
+```
+
+For the current UCB spectrum define
+
+```text
+p_i(T) = exp(U_i / T) / sum_j exp(U_j / T)
+H_B(T) = -sum_i p_i(T) log p_i(T)
+```
+
+For non-degenerate UCB values, `H_B(T)` is monotone increasing in `T`. The current controller hypothesis therefore determines the effective allocation temperature by solving
+
+```text
+H_B(T_t) = H_geom(t)
+```
+
+for the current frontier. Temperature must therefore depend on both the geometry entropy target and the current UCB scale. The old formula
+
+```text
+T = T_max * H_geom / log(N)
+```
+
+is superseded and must not control allocation.
+
+The persisted field `normalized_temperature` remains for compatibility and replay telemetry; its value is the normalized geometry-entropy coordinate `H_geom/log(N)` when `N>1`, not `T/T_max` and not the effective Boltzmann temperature.
+
+Cross-iteration `delta H` is plateau/continuation telemetry only. It does not define `U_i` or the current effective temperature.
 
 For real runs, geometry should use the highest-quality configured embedding profile by default. `embedding_dimension` currently defaults to `3072`; lower dimensions are debug/fallback profiles. Hash embeddings are only for offline tests and CI.
 
@@ -146,7 +186,7 @@ Python's built-in bankers rounding is not the normative rule. Half values below 
 
 Boltzmann allocation uses `U_i`, so local uncertainty affects actual expansion rather than merely display ranking. Global temperature controls how concentrated that allocation is across the already-computed UCB values.
 
-The current diversity proxy controls temperature and its cross-iteration delta emits a replayable plateau signal. It has no
+The current soft-discrete geometry entropy sets the target Boltzmann allocation entropy, while its cross-iteration delta emits a replayable plateau signal. It has no
 direct Synthesis authority under `bounded_node_yield_v1`. A confirmed plateau
 or a single canonical frontier triggers a continuation gate. Continuation is
 granted only when committed facts show a narrow material-yield signal, a

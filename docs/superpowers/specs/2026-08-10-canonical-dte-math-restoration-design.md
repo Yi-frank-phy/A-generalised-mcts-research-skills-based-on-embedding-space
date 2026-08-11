@@ -1,5 +1,8 @@
 # Canonical DTE mathematics restoration design
 
+> **SUPERSEDED FOR GEOMETRY/CONTROLLER MATH (2026-08-11):** Use `docs/superpowers/specs/2026-08-11-p0-geometry-controller-recovery.md`. This file is retained only as historical implementation archaeology; its `H/log(N) -> T` law is not authoritative.
+
+
 ## Status
 
 Approved design for restoring the DTE controller's mathematical layer before further research on method→understanding observables.

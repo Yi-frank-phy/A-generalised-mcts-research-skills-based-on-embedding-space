@@ -163,3 +163,5 @@ The recovery was implemented test-first on PR #40. Characterization tests first 
 A separate controller characterization then required temperature to scale with the current UCB spectrum while reproducing the same target Boltzmann entropy. Production initially could not satisfy this contract because the entropy controller did not accept UCB scores at all.
 
 After restoring the formulas and wiring both the App controller, replay validation, and legacy runner to the current UCB spectrum, the production bundle manifest was regenerated and verified. The branch then passed the full repository regression suite with **643 passed** on Python 3.12 before the final production-state commit `41953f2` was pushed.
+
+The normal PR bundle job subsequently exposed one packaging-only mirror mismatch: `deploy/managed-template/bundle-manifest.json` still contained the pre-P0 manifest even though the authoritative root manifest verified correctly. The managed-template copy was then replaced byte-for-byte with the verified root manifest; no production algorithm or root bundle hash changed.

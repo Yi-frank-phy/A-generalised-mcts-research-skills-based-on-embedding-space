@@ -16,7 +16,13 @@ from .prospective import (
     embed_prospective_thoughts,
     prospective_thought_batch_schema,
 )
-from .return_metric import null_adjusted_geometric_return, rbf_mmd2
+from .return_metric import (
+    frontier_after_replacement,
+    geometric_frontier_displacement,
+    null_adjusted_geometric_return,
+    rbf_mmd2,
+    replacement_frontier_return,
+)
 from .transition import (
     METHOD_EPISTEMIC_TRANSITION_VERSION,
     MethodEpistemicTransition,
@@ -43,5 +49,8 @@ __all__ = [
     "FrozenThoughtMetric",
     "FrozenTransitionMetric",
     "rbf_mmd2",
+    "frontier_after_replacement",
+    "geometric_frontier_displacement",
+    "replacement_frontier_return",
     "null_adjusted_geometric_return",
 ]

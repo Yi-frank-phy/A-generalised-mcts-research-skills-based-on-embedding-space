@@ -1,9 +1,17 @@
+"""Compatibility helpers for proposing pre-execution interventions.
+
+A ``ProspectiveThought`` is an intervention proposal only. It is not the
+canonical DTE search microstate and must not be used as the geometry consumed
+by the transition UCB, entropy, or frontier-displacement controller.
+"""
+
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 import numpy as np
 
 CANONICALIZATION_VERSION = "prospective-thought-v1"
+PROSPECTIVE_THOUGHT_ROLE = "intervention_proposal_only"
 
 
 def _normalize_field(text: str) -> str:
@@ -66,6 +74,7 @@ def embed_prospective_thoughts(
     thoughts: Sequence[ProspectiveThought],
     embed_fn: Callable[[str], Sequence[float]],
 ) -> np.ndarray:
+    """Compatibility embedder for proposal experiments, not transition state."""
     if not thoughts:
         return np.empty((0, 0), dtype=float)
 

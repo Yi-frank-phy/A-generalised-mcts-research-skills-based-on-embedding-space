@@ -119,6 +119,28 @@ The public tests verify, among other things:
 
 This layer is **not wired into the authoritative controller**. `C_0(c)` is signed, while `rho_i` requires a nonnegative overlap. No mapping from the signed calibrated angular relation to the required occupancy overlap has been frozen yet.
 
+## Null-mass constraint on any future occupancy overlap
+
+The geometry audit now imposes a hard large-frontier calibration condition on any candidate overlap `K_ij` used inside `rho_i`.
+
+With `K_ii=1`, `K_ij>=0`, and unrelated-pair mean overlap
+
+```text
+mu_N = E_null[K_ij],  j != i
+```
+
+we have exactly
+
+```text
+E[N * rho_i] = 1 + (N - 1) * mu_N.
+```
+
+Therefore unrelated background mass stays bounded only if `mu_N = O(1/N)`, and the strict isolated-direction limit requires `mu_N = o(1/N)`. Dense positive similarities with an order-one null floor cannot be valid additive occupancy kernels even if they are useful relation or neighbor-ranking measures.
+
+This immediately rejects naive mappings such as `[C_0]_+` and `(1+C_0)/2` as occupancy overlaps: under the calibrated angular null their positive background mass remains order-one. It also means hubness corrections such as Mutual Proximity or local scaling still need a separate occupancy sparsification/null-control step before they could replace the RBF baseline.
+
+The full derivation and acceptance tests are recorded in `docs/geometry-null-mass-audit.md`.
+
 ## Executable public mirror
 
 The isolated next-generation implementation lives under `src/dte_nextgen/**` and does not alter stable `src/dte_backend/**`.
@@ -151,7 +173,7 @@ The old real-trajectory protocol must not be run. A new v2 preregistration is re
 
 ## Open but nonblocking
 
-1. derive and validate the nonnegative occupancy overlap corresponding to the calibrated angular relation, then decide whether it replaces the RBF baseline;
+1. derive and validate a nonnegative occupancy construction that satisfies the null-mass acceptance constraints, then decide whether it replaces the RBF baseline;
 2. derive a principled `Phi(H_geom,N)` / scheduler-breadth closure;
 3. calibrate stopping thresholds, persistence, repeated-testing treatment, temporal statistics, and semantic frontier coverage in transition-pair space;
 4. handle history non-stationarity for `V` and proposal reuse.

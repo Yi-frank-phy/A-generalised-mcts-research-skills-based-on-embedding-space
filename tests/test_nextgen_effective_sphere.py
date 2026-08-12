@@ -38,9 +38,9 @@ def test_summary_exposes_shift_that_an_isotropic_sphere_cannot_explain():
     summary = summarize_effective_sphere_null(cosines)
 
     assert summary["mean_cosine"] > 0.10
-    assert summary["absolute_mean_in_null_sd"] > 5.0
+    assert summary["mean_z_score"] > 5.0
 
 
 def test_invalid_cosines_are_rejected():
-    with pytest.raises(ValueError, match="\[-1, 1\]"):
+    with pytest.raises(ValueError, match=r"\[-1, 1\]"):
         fit_effective_dimension(np.array([0.0, 1.2]))

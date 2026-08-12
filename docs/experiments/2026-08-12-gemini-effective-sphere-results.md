@@ -1,5 +1,7 @@
 # Gemini effective-sphere angular experiment — 2026-08-12
 
+> **SUPERSEDED AS THE TARGET-MODEL EXPERIMENT.** This probe used `gemini-embedding-001`. Google’s current stable model is `gemini-embedding-2`, whose embedding space is explicitly incompatible with `gemini-embedding-001`. Keep the numbers below only as evidence that model-specific angular background calibration matters. Do not use them to calibrate DTE. A replacement experiment must use `gemini-embedding-2` and the model-independent background-calibration design.
+
 ## Status
 
 Geometry-only experiment. **Do not wire the tested quantile transform into controller occupancy, SD, entropy, UCB, temperature, MMD return, or production v1.**
@@ -88,17 +90,18 @@ Therefore the CDF/quantile map is useful as a **null-tail significance / rank co
 
 ## Current conclusion
 
-Supported:
+Supported for this superseded `gemini-embedding-001` probe only:
 
-1. raw Gemini cosine must not be interpreted with nominal high-dimensional sphere geometry;
-2. frozen/background mean subtraction before L2 normalization is strongly motivated by this experiment;
-3. after such centering, a low effective-dimensional sphere is a plausible null approximation worth further testing;
-4. `F_d(c)` / tail probability is useful for asking how surprising a pair is relative to unrelated directions.
+1. raw embedding cosine must not automatically be interpreted with nominal high-dimensional sphere geometry;
+2. frozen/background calibration is strongly motivated;
+3. a low effective-dimensional sphere can be a useful null diagnostic after centering;
+4. a background CDF / tail probability can quantify how surprising a pair is relative to unrelated directions.
 
-Rejected for now:
+Rejected:
 
-1. nominal `d=3072` sphere calibration;
-2. `S_d(c)=2F_d(c)-1` as the similarity fed directly into existing entropy/SD/MMD/controller math;
-3. any claim that the geometry problem is closed.
+1. using this `gemini-embedding-001` fit to calibrate the current DTE target model;
+2. nominal `d=3072` sphere calibration;
+3. `S_d(c)=2F_d(c)-1` as the similarity fed directly into existing entropy/SD/MMD/controller math;
+4. any claim that the geometry problem is closed.
 
-The next theory question is narrower: use the effective-sphere/null-tail information to correct *whether two points count as occupying the same direction* without replacing the continuous cosine scale everywhere. Any proposed occupancy construction must still satisfy the existing null-mass requirement and preserve the discrete limits of the entropy/SD formulas.
+Replacement direction: calibrate each embedding model against its own frozen unrelated-pair background, map that background into one versioned canonical controller scale, and rerun on `gemini-embedding-2` before controller integration.

@@ -4,6 +4,7 @@ Prospective thoughts remain compatibility/proposal helpers. The authoritative
 next-generation search coordinate is a completed method--epistemic transition.
 """
 
+from .controller import frontier_standard_deviations, score_transition_frontier
 from .entropy import adaptive_bandwidth, configurational_entropy, normalized_kernel_density
 from .metric import FrozenThoughtMetric, MetricIdentity
 from .prospective import (
@@ -34,6 +35,8 @@ __all__ = [
     "adaptive_bandwidth",
     "normalized_kernel_density",
     "configurational_entropy",
+    "frontier_standard_deviations",
+    "score_transition_frontier",
     "MetricIdentity",
     "FrozenThoughtMetric",
     "rbf_mmd2",

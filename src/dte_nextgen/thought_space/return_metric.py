@@ -32,6 +32,55 @@ def rbf_mmd2(x: np.ndarray, y: np.ndarray, bandwidth: float) -> float:
     return float(max(0.0, value))
 
 
+def frontier_after_replacement(
+    before: np.ndarray,
+    parent_index: int,
+    child_embedding: np.ndarray,
+) -> np.ndarray:
+    """Replace one executed active parent with its completed child transition.
+
+    Executed parents are retained only in the tree/history. They are no longer
+    members of the active continuation frontier, so the frontier update is a
+    replacement rather than an append.
+    """
+    before_cloud = _as_cloud(before)
+    child = np.asarray(child_embedding, dtype=float)
+    if child.ndim != 1 or len(child) != before_cloud.shape[1]:
+        raise ValueError("child_embedding must match the frontier embedding dimension")
+    if parent_index < 0 or parent_index >= len(before_cloud):
+        raise IndexError("parent_index must identify an existing active frontier node")
+
+    after = before_cloud.copy()
+    after[parent_index] = child
+    return after
+
+
+def geometric_frontier_displacement(
+    before: np.ndarray,
+    after: np.ndarray,
+    bandwidth: float,
+) -> float:
+    """Normalized whole-frontier displacement used as the realized value return.
+
+    RBF MMD^2 is bounded by 2, so division by 2 keeps the realized propulsion
+    signal on the same natural [0, 1] scale as geometric SD. Small embedding or
+    wording jitter naturally yields a small value; no null subtraction is part
+    of the authoritative controller definition.
+    """
+    return float(rbf_mmd2(before, after, bandwidth) / 2.0)
+
+
+def replacement_frontier_return(
+    before: np.ndarray,
+    parent_index: int,
+    child_embedding: np.ndarray,
+    bandwidth: float,
+) -> float:
+    """Direct propulsion return for one parent -> child frontier replacement."""
+    after = frontier_after_replacement(before, parent_index, child_embedding)
+    return geometric_frontier_displacement(before, after, bandwidth)
+
+
 def null_adjusted_geometric_return(
     before: np.ndarray,
     after: np.ndarray,
@@ -39,7 +88,7 @@ def null_adjusted_geometric_return(
     null_b: np.ndarray,
     bandwidth: float,
 ) -> float:
-    """Experimental movement proxy above same-state sampling drift, scaled to [0,1]."""
+    """Legacy/optional analysis helper; not the authoritative DTE value return."""
     observed = rbf_mmd2(before, after, bandwidth)
     null_drift = rbf_mmd2(null_a, null_b, bandwidth)
     return float(max(0.0, observed - null_drift) / 2.0)

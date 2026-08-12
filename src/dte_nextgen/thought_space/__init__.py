@@ -4,6 +4,12 @@ Prospective thoughts remain compatibility/proposal helpers. The authoritative
 next-generation search coordinate is a completed method--epistemic transition.
 """
 
+from .angular import (
+    FrozenEmpiricalAngularCalibration,
+    l2_normalize_rows,
+    off_diagonal_cosines,
+    pairwise_cosine_matrix,
+)
 from .controller import frontier_standard_deviations, score_transition_frontier
 from .entropy import adaptive_bandwidth, configurational_entropy, normalized_kernel_density
 from .metric import FrozenThoughtMetric, FrozenTransitionMetric, MetricIdentity
@@ -40,6 +46,10 @@ __all__ = [
     "METHOD_EPISTEMIC_TRANSITION_VERSION",
     "MethodEpistemicTransition",
     "embed_method_epistemic_transitions",
+    "FrozenEmpiricalAngularCalibration",
+    "l2_normalize_rows",
+    "pairwise_cosine_matrix",
+    "off_diagonal_cosines",
     "adaptive_bandwidth",
     "normalized_kernel_density",
     "configurational_entropy",

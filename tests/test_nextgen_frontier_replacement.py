@@ -3,7 +3,7 @@ import numpy as np
 from dte_nextgen.thought_space.return_metric import (
     frontier_after_replacement,
     replacement_frontier_return,
-    null_adjusted_geometric_return,
+    rbf_mmd2,
 )
 
 
@@ -27,31 +27,40 @@ def test_frontier_replacement_does_not_mutate_before_cloud() -> None:
     assert np.array_equal(before, original)
 
 
-def test_replacement_return_is_generic_null_adjusted_mmd_on_replaced_frontier() -> None:
+def test_replacement_return_is_direct_normalized_mmd_displacement() -> None:
     before = np.asarray([[0.0], [1.0], [2.0]])
     child = np.asarray([4.0])
-    null_a = np.asarray([[0.0], [1.0], [2.0]])
-    null_b = np.asarray([[0.0], [1.1], [2.0]])
     bandwidth = 0.7
 
     after = frontier_after_replacement(before, parent_index=1, child_embedding=child)
-    expected = null_adjusted_geometric_return(
-        before,
-        after,
-        null_a,
-        null_b,
-        bandwidth,
-    )
+    expected = rbf_mmd2(before, after, bandwidth) / 2.0
     actual = replacement_frontier_return(
         before,
         parent_index=1,
         child_embedding=child,
-        null_a=null_a,
-        null_b=null_b,
         bandwidth=bandwidth,
     )
 
     assert np.isclose(actual, expected)
+    assert 0.0 <= actual <= 1.0
+
+
+def test_small_frontier_jitter_naturally_has_small_value() -> None:
+    before = np.asarray([[0.0], [1.0], [2.0]])
+    small_jitter = replacement_frontier_return(
+        before,
+        parent_index=1,
+        child_embedding=np.asarray([1.01]),
+        bandwidth=0.7,
+    )
+    large_move = replacement_frontier_return(
+        before,
+        parent_index=1,
+        child_embedding=np.asarray([4.0]),
+        bandwidth=0.7,
+    )
+
+    assert small_jitter < large_move
 
 
 def test_replacement_requires_one_existing_active_parent() -> None:

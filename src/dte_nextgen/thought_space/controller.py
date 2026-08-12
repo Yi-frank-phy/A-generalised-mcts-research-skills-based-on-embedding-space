@@ -37,9 +37,10 @@ def score_transition_frontier(
     """Score completed transition directions using live geometry only.
 
     ``propulsion_values`` are externally supplied estimates of expected
-    null-adjusted whole-frontier displacement.  This function deliberately does
-    not infer V from historical rewards: it only combines the supplied V with
-    geometric SD through ``U = V + SD`` and reports the shared geometry entropy.
+    normalized direct whole-frontier displacement.  This function deliberately
+    does not infer V from historical rewards: it only combines the supplied V
+    with geometric SD through ``U = V + SD`` and reports the shared geometry
+    entropy.  No null-subtraction term is part of this controller contract.
     """
     points = _validate_frontier(embeddings)
     values = np.asarray(propulsion_values, dtype=float)

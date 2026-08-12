@@ -13,6 +13,11 @@ from dte_nextgen.thought_space import (
     null_adjusted_geometric_return,
     rbf_mmd2,
 )
+from dte_nextgen.thought_space.transition import (
+    METHOD_EPISTEMIC_TRANSITION_VERSION,
+    MethodEpistemicTransition,
+    embed_method_epistemic_transitions,
+)
 
 
 def test_prospective_thought_canonicalization_is_stable() -> None:
@@ -26,6 +31,58 @@ def test_prospective_thought_canonicalization_is_stable() -> None:
         "POSSIBLE_STRUCTURE:\nmaybe a cycle\n\n"
         "DISCRIMINATING_TEST:\ncompute the boundary"
     )
+
+
+def test_q_is_context_only_and_not_embedded() -> None:
+    first = MethodEpistemicTransition(
+        retrospective_method="rewrite in the shared group",
+        epistemic_change_kind="new_understanding",
+        epistemic_change="necessity and sufficiency are the same group constraint",
+        context_q="why does the condition run backwards?",
+    )
+    second = MethodEpistemicTransition(
+        retrospective_method=first.retrospective_method,
+        epistemic_change_kind=first.epistemic_change_kind,
+        epistemic_change=first.epistemic_change,
+        context_q="a completely different source problem",
+    )
+    assert METHOD_EPISTEMIC_TRANSITION_VERSION == "method-epistemic-transition-v1"
+    assert first.canonical_text() == second.canonical_text()
+    assert "why does the condition" not in first.canonical_text()
+    assert "different source problem" not in second.canonical_text()
+
+
+def test_transition_pair_canonicalization_and_embedding_are_stable() -> None:
+    transition = MethodEpistemicTransition(
+        retrospective_method="  compare   commuting receivers ",
+        epistemic_change_kind="sharper_unknown",
+        epistemic_change="  geometric asymmetry still gives operational equivalence ",
+        context_q="context only",
+    )
+    assert transition.canonical_text() == (
+        "METHOD_EPISTEMIC_TRANSITION_V1\n"
+        "RETROSPECTIVE_METHOD:\ncompare commuting receivers\n\n"
+        "EPISTEMIC_CHANGE_KIND:\nsharper_unknown\n\n"
+        "EPISTEMIC_CHANGE:\ngeometric asymmetry still gives operational equivalence"
+    )
+    seen: list[str] = []
+
+    def embed_fn(text: str) -> list[float]:
+        seen.append(text)
+        return [1.0, 2.0]
+
+    embedded = embed_method_epistemic_transitions([transition], embed_fn)
+    assert embedded.shape == (1, 2)
+    assert seen == [transition.canonical_text()]
+
+
+def test_transition_pair_rejects_unknown_change_kind() -> None:
+    with pytest.raises(ValueError, match="epistemic_change_kind"):
+        MethodEpistemicTransition(
+            retrospective_method="method",
+            epistemic_change_kind="generic_novelty",
+            epistemic_change="something changed",
+        )
 
 
 def test_adaptive_soft_count_entropy_is_bounded() -> None:

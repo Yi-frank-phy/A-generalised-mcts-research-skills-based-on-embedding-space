@@ -110,7 +110,7 @@ N\rho_i\to1,\qquad SD_i\to1,\qquad H_{\rm geom}\to\log N
 
 for unrelated directions. This satisfies the existing strict null-mass asymptotics without an embedding-specific bandwidth.
 
-On the present finite-CDF experiment, for `N=12` the unresolved same-direction tail implies only a conservative lower bound around `K >= 0.747`, while every tested related-but-not-identical pair is at or below about `K = 0.416` in both models. This is encouraging but should not be over-read because the same-direction tail is censored by the small background sample.
+On the present finite-CDF experiment, for `N=12` the mid-rank value assigned to all right-censored same-direction pairs gives `K ≈ 0.747`, while every tested related-but-not-identical pair is at or below about `K = 0.416` in both models. The `0.747` value is **not** a statistical lower bound on the true same-direction overlap; the positive tail is unresolved by this small background sample. The observed separation is encouraging only as a finite-sample diagnostic.
 
 ## Current conclusion
 

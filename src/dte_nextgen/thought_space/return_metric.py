@@ -32,6 +32,29 @@ def rbf_mmd2(x: np.ndarray, y: np.ndarray, bandwidth: float) -> float:
     return float(max(0.0, value))
 
 
+def frontier_after_replacement(
+    before: np.ndarray,
+    parent_index: int,
+    child_embedding: np.ndarray,
+) -> np.ndarray:
+    """Replace one executed active parent with its completed child transition.
+
+    Executed parents are retained only in the tree/history. They are no longer
+    members of the active continuation frontier, so the frontier update is a
+    replacement rather than an append.
+    """
+    before_cloud = _as_cloud(before)
+    child = np.asarray(child_embedding, dtype=float)
+    if child.ndim != 1 or len(child) != before_cloud.shape[1]:
+        raise ValueError("child_embedding must match the frontier embedding dimension")
+    if parent_index < 0 or parent_index >= len(before_cloud):
+        raise IndexError("parent_index must identify an existing active frontier node")
+
+    after = before_cloud.copy()
+    after[parent_index] = child
+    return after
+
+
 def null_adjusted_geometric_return(
     before: np.ndarray,
     after: np.ndarray,
@@ -43,3 +66,26 @@ def null_adjusted_geometric_return(
     observed = rbf_mmd2(before, after, bandwidth)
     null_drift = rbf_mmd2(null_a, null_b, bandwidth)
     return float(max(0.0, observed - null_drift) / 2.0)
+
+
+def replacement_frontier_return(
+    before: np.ndarray,
+    parent_index: int,
+    child_embedding: np.ndarray,
+    null_a: np.ndarray,
+    null_b: np.ndarray,
+    bandwidth: float,
+) -> float:
+    """Return for one active-parent -> completed-child frontier replacement.
+
+    The matched-null clouds are explicit inputs. This function freezes the
+    frontier lifecycle only; it does not choose a null sampling protocol.
+    """
+    after = frontier_after_replacement(before, parent_index, child_embedding)
+    return null_adjusted_geometric_return(
+        before,
+        after,
+        null_a,
+        null_b,
+        bandwidth,
+    )

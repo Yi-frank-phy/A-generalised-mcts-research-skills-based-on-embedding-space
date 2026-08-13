@@ -1,190 +1,126 @@
 # Next-generation DTE research status
 
-> **Status note only.** This document is not an implementation specification and does not change the public v1 controller.
+> **Authoritative next-generation status as of 2026-08-13.** This document applies only to the isolated `src/dte_nextgen/**` research line. It does not change production `src/dte_backend/**` v1 controller authority.
 
-The public `main` branch remains the stable compatibility baseline for the current Judge -> controller -> Executor workflow. The next-generation research line is mirrored separately so that executable TDD can advance without silently changing `src/dte_backend/**`.
+## Public production boundary
 
-## What remains true in public v1
+The public production Skill backend remains `src/dte_backend/**`. Its role authority, persistence, budgets, hook-enforced lifecycle, Relation/provenance machinery, and current production controller are unchanged by this next-generation migration.
 
-- DTE is the only outer controller.
-- Model-produced role outputs are bounded and validated before state mutation.
-- The current compatibility controller retains its existing Judge-derived value, geometry-derived exploration, Boltzmann allocation, hard budget caps, Relation/provenance machinery, and App-native lifecycle.
-- Passing CI establishes protocol behaviour, not research effectiveness.
-- `src/dte_backend/**` remains the production Skill-bundle identity and is intentionally untouched by the isolated next-generation prototype.
+The public next-generation implementation lives under `src/dte_nextgen/**` so controller research can be executable and CI-tested without silently changing production behaviour. Production migration remains evidence-gated.
 
-## Current next-generation authority
+## Search coordinate and frontier lifecycle
 
-The authoritative next-generation microscopic search coordinate is a completed retrospective **method ↔ epistemic-change transition**.
-
-A completed research move may retain source context/tension `Q`, method/intervention description `m`, and epistemic change `ΔU`, but the canonical embedded coordinate is exactly
+The authoritative microscopic search coordinate is a completed retrospective method--epistemic-change transition:
 
 ```text
-(m, ΔU)
+(method, epistemic change)
 ```
 
-`Q` is context only and never enters canonical embedding text.
+Source question/tension `Q` is context only and never enters canonical scoring text.
 
-`ΔU` supports three canonical change kinds:
+The active frontier contains completed transitions that have not yet been continued. Normal continuation is replacement: the executed parent leaves the active frontier and remains in history/provenance; the completed child occupies that slot.
 
-- `new_understanding`;
-- `sharper_unknown`;
-- `no_material_change`.
+## Proper-volume controller
 
-Prospective thoughts remain pre-execution intervention proposals only. They are not the authoritative KDE/UCB/entropy/MMD search-space coordinate.
-
-## Closed frontier lifecycle
-
-The active frontier contains completed transition nodes that have **not yet been continued**.
-
-For a normal one-parent -> one-child continuation:
+Raw embedding angle or sparse-graph geodesic radius is only a coordinate separation. On one frozen reference atlas, node `i` defines cumulative crossed proper research-space volume
 
 ```text
-Z- = (..., z_i, ...)
+D_i(r) = integral over 0 < d_g(i,x) <= r of dOmega(x)
 ```
 
-becomes
+with finite-sample quadrature over atlas cells. `D_i(r)` is not normalized by each node's local accessible total and is not interpreted as a literal count of ontological microstates.
+
+For an executed parent -> completed child,
 
 ```text
-Z_i+ = (..., z_i', ...)
+R_i = D_i(d_g(parent, child))
 ```
 
-The used parent leaves the active frontier permanently and remains only in full tree/history provenance. The completed child replaces that frontier slot. Normal continuation is replacement, never append.
+and `V_i` is the historical expected realized proper-volume return.
 
-This keeps archive mass out of the live geometric observable.
+Live current-frontier occupancy uses the same source-centred volume coordinate:
 
-## Closed controller semantics
+```text
+D_ij = D_i(d_g(i,j))
+rho_i = mean_j exp(-D_ij / volume_bandwidth)
+S_i = -log(rho_i)
+```
 
-For the current active transition frontier `Z={z_1,...,z_N}`, the runnable baseline computes a nonnegative overlap field `rho_i` and uses
+`volume_bandwidth` is a finite-sample estimator bandwidth on the frozen atlas. It is not a physical state size, pull count, novelty prior, or cost term.
+
+For each node, entropy matching produces a radial Boltzmann distribution over the frozen atlas. Push that mass through the same reward variable
+
+```text
+A_ia = D_i(r_ia)
+```
+
+and use the ordinary standard deviation of `A_i` as controller uncertainty:
+
+```text
+U_i = V_i + SD[A_i]
+```
+
+Geometric `T_i log 2` is retained only as a radial diagnostic. It is not added directly to `V_i`.
+
+## Metric-measure realization
+
+The finite-sample geometry intentionally uses ordinary CS machinery rather than differential geometry:
+
+1. L2-normalize reference embeddings;
+2. angular edge length `arccos(cosine)`;
+3. symmetric k-nearest-neighbour union graph;
+4. shortest-path geodesic distance;
+5. nearest-reference anchoring for live/query embeddings.
+
+No tangent vectors, metric tensor, inverse metric, Jacobian, explicit manifold dimension, or value-gradient field is required.
+
+Default quadrature assigns equal weight to frozen reference cells. A caller may explicitly provide positive `reference_density` values as experimental numerical quadrature correction. Automatic reference-KDE correction and any live-frontier calibration of that correction are not authoritative controller behaviour.
+
+## Stateful execution loop
+
+`ProperVolumeTransitionSession` is the authoritative stateful next-generation loop. One session freezes its reference atlas, geodesic matrix, common atlas volume gauge, optional quadrature correction, and `volume_bandwidth`.
+
+Before realized evidence exists, `V_i=0`. Once run-local realized returns exist, live-node `V_i` is a local kernel regression over that history using proper-volume separation. Historical evidence affects `V` only; current-frontier entropy/Boltzmann geometry remains the sole source of UCB uncertainty.
+
+Each iteration is:
+
+```text
+history -> V -> current-frontier SD -> U -> select
+-> external continuation -> realized proper-volume return
+-> record retired parent -> replace slot with completed child -> rescore
+```
+
+Already-numeric return history from a different frozen atlas must not be silently imported. Cross-run reuse should retain raw transition evidence and remeasure it on the new atlas.
+
+## Legacy/falsification baselines
+
+The older next-generation RBF realization
 
 ```text
 SD_i = 1 / sqrt(N * rho_i)
-U_i = V_i + SD_i
-H_geom = -mean(log rho_i)
 ```
 
-The intended semantics are now explicit:
+and one-replacement `MMD^2/2` return remain callable in their existing modules for compatibility and falsification. They are no longer the authoritative proper-volume controller semantics.
 
-- `SD` is directional underoccupation / inertia from the **current live frontier geometry**;
-- repeated nearby live transition nodes reduce `SD` automatically;
-- no return variance, second moments, historical-evidence KDE, effective-pull counter, novelty prior, or manual reheating belongs in this primitive;
-- `V_i` is expected normalized displacement of the **whole active transition frontier** when direction `i` is continued.
+The earlier prospective-thought geometry, direct `V + T log 2`, node-local `[0,1]` volume normalization, literal state-count/Omega0 interpretation, and automatic density-correction proposals are superseded.
 
-One realized propulsion return is the direct replacement-frontier displacement
+## Public implementation and tests
 
-```text
-r_i = MMD^2(Z-, Z_i+) / 2
-```
+The proper-volume path is isolated under `src/dte_nextgen/thought_space/**` with dedicated public tests for:
 
-using the frozen transition metric. The `/2` only normalizes biased RBF-MMD² from `[0,2]` to `[0,1]`.
+- absolute/non-node-normalized cumulative proper volume;
+- reward SD on the same proper-volume variable as realized return;
+- angular sparse-graph geodesic and nearest-reference anchoring;
+- duplicate versus isolated live occupancy;
+- end-to-end `U=V+SD` scoring on a frozen equal-weight reference atlas;
+- stateful select -> execute -> record -> replacement -> rescore behaviour;
+- proper-volume-local historical value regression;
+- rejection of unscoped pre-numeric cross-atlas history.
 
-No matched-null subtraction is part of the authoritative controller. `null_adjusted_geometric_return(...)` remains legacy/optional analysis only.
+Passing CI establishes implementation contracts and compatibility only. It does not establish research effectiveness.
 
-## Geometry realization under audit
+## Remaining experiment gate
 
-The **occupancy semantics** of `rho_i`, the resulting directional-inertia interpretation of `SD_i`, and the microstate-Shannon interpretation of `H_geom` are current controller baselines. The exact overlap function/resolution that should instantiate those semantics is still under theoretical audit.
+The next scientific question is empirical: under equal model/token budget, does the metric-measure/statistical-physics controller materially outperform simpler alternatives such as raw distance, the legacy MMD/RBF controller, no-geometry tree search, best-of-N, and sequential reflection?
 
-The current runnable implementation uses RBF overlap with
-
-```text
-h(Z) = median_pair_distance(Z) / sqrt(2)
-```
-
-This is a useful high-dimensional numerical scale normalization: a median pair has Gaussian overlap of order `exp(-1)`. It is **not** a derivation of the semantic resolution required by microstate occupancy.
-
-In particular, an approximately equidistant frontier can make most off-diagonal overlaps stay near `e^-1` independently of frontier size, so the effective breadth can saturate instead of scaling like the number of genuinely distinct directions. The RBF median-bandwidth realization therefore remains runnable but must be treated as a calibration heuristic under audit.
-
-## Experimental frozen angular calibration
-
-The isolated next-generation package also exposes an experimental geometry layer:
-
-```text
-src/dte_nextgen/thought_space/angular.py
-```
-
-For nonzero embeddings it first removes magnitude by rowwise L2 normalization and evaluates pairwise cosine. A frozen empirical background random-pair cosine distribution `F_0` then defines the signed calibrated angular coordinate
-
-```text
-C_0(c) = 2 F_0(c) - 1
-```
-
-The reference distribution is frozen externally rather than fit from the current frontier, so the live frontier cannot redefine its own angular resolution each round.
-
-The public tests verify, among other things:
-
-- invariance to positive row rescaling after L2 normalization;
-- exact simple cosine geometry;
-- empirical recovery of ordinary cosine under a synthetic 3D-uniform reference;
-- expansion of narrow high-dimensional-like cosine concentration;
-- frozen background ordering and input validation.
-
-This layer is **not wired into the authoritative controller**. `C_0(c)` is signed, while `rho_i` requires a nonnegative overlap. No mapping from the signed calibrated angular relation to the required occupancy overlap has been frozen yet.
-
-## Null-mass constraint on any future occupancy overlap
-
-The geometry audit now imposes a hard large-frontier calibration condition on any candidate overlap `K_ij` used inside `rho_i`.
-
-With `K_ii=1`, `K_ij>=0`, and unrelated-pair mean overlap
-
-```text
-mu_N = E_null[K_ij],  j != i
-```
-
-we have exactly
-
-```text
-E[N * rho_i] = 1 + (N - 1) * mu_N.
-```
-
-Therefore unrelated background mass stays bounded only if `mu_N = O(1/N)`, and the strict isolated-direction limit requires `mu_N = o(1/N)`. Dense positive similarities with an order-one null floor cannot be valid additive occupancy kernels even if they are useful relation or neighbor-ranking measures.
-
-This immediately rejects naive mappings such as `[C_0]_+` and `(1+C_0)/2` as occupancy overlaps: under the calibrated angular null their positive background mass remains order-one. It also means hubness corrections such as Mutual Proximity or local scaling still need a separate occupancy sparsification/null-control step before they could replace the RBF baseline.
-
-The full derivation and acceptance tests are recorded in `docs/geometry-null-mass-audit.md`.
-
-## Executable public mirror
-
-The isolated next-generation implementation lives under `src/dte_nextgen/**` and does not alter stable `src/dte_backend/**`.
-
-Its public TDD coverage locks:
-
-1. canonical `(m,ΔU)` transition serialization and `Q` exclusion;
-2. prospective-thought authority quarantine;
-3. current-live-frontier `SD=1/sqrt(N rho)` and entropy use of the same `rho`;
-4. completed-transition scoring and one-action scheduling;
-5. frozen transition metric identity;
-6. used-parent retirement and replacement-only frontier construction;
-7. direct replacement return equal to `MMD²/2`;
-8. small replacement jitter scoring below a large frontier move;
-9. the isolated frozen angular-calibration contract.
-
-The transition-pair core and angular calibration were merged from Draft PR #42 after public CI run #253 passed Ubuntu Python 3.10-3.14, Windows Python 3.12/3.14, backend-wheel verification, and repository Skill-bundle verification.
-
-## Superseded experimental assumptions
-
-The following should no longer be treated as current next-generation theory authority:
-
-- prospective-thought embeddings as the microscopic search coordinate;
-- historical-density / return-variance / effective-pull interpretations of `SD`;
-- appending executed children while keeping used parents in the active frontier;
-- null-adjusted MMD as authoritative `V` return;
-- the old prospective-thought + null-adjusted 12-pair preregistration.
-
-The old real-trajectory protocol must not be run. A new v2 preregistration is required before labelled trajectory returns are inspected.
-
-## Open but nonblocking
-
-1. derive and validate a nonnegative occupancy construction that satisfies the null-mass acceptance constraints, then decide whether it replaces the RBF baseline;
-2. derive a principled `Phi(H_geom,N)` / scheduler-breadth closure;
-3. calibrate stopping thresholds, persistence, repeated-testing treatment, temporal statistics, and semantic frontier coverage in transition-pair space;
-4. handle history non-stationarity for `V` and proposal reuse.
-
-## Experiment-gated
-
-5. test whether direct whole-active-frontier displacement in `(m,ΔU)` space actually predicts productive research strongly enough for the controller to exploit;
-6. freeze a new v2 preregistration and only then run matched real trajectories.
-
-## Migration policy
-
-Public `main` should remain a stable, testable compatibility baseline while next-generation work stays isolated in `dte_nextgen` until the relevant theory and evidence gates are satisfied.
-
-A next-generation component may migrate toward production only when its mathematical/statistical meaning is explicit, its architectural boundary is stable, and any effectiveness claim that requires empirical evidence has survived a predeclared test. Synthetic/unit tests establish implementation contracts; they do not by themselves establish research effectiveness.
+Synthetic/unit tests may test invariants and robustness to atlas refinement or sampling perturbations. Real-trajectory effectiveness claims still require a predeclared matched comparison. If geometry/statistical physics does not produce material benefit, it should be simplified or removed rather than protected as theory.

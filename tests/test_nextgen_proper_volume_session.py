@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from dte_nextgen.thought_space.controller import score_proper_volume_embeddings
+from dte_nextgen.thought_space.metric_measure_controller import score_proper_volume_embeddings
 from dte_nextgen.thought_space.history import TransitionHistory
 from dte_nextgen.thought_space.session import ProperVolumeTransitionSession
 from dte_nextgen.thought_space.transition import MethodEpistemicTransition

@@ -35,12 +35,12 @@ class BudgetSpec(DTEBaseModel):
         "bounded_node_yield_v1",
     ] = "bounded_node_yield_v1"
     t_max: float = Field(default=1.0, gt=0.0, le=10.0)
+    controller_graph_k: int = Field(default=2, ge=1, le=32)
+    volume_bandwidth: float = Field(default=1.0, gt=0.0)
 
     @model_validator(mode="before")
     @classmethod
     def migrate_legacy_allocation_mass(cls, data: Any) -> Any:
-        """Accept the old budget name only as a deprecated input alias."""
-
         if not isinstance(data, Mapping):
             return data
         values = dict(data)
@@ -73,11 +73,7 @@ class CoverageObligation(DTEBaseModel):
 
 
 class DTERunSpec(DTEBaseModel):
-    """Top-level run specification.
-
-    This is the source of truth. Free-form Markdown or prompt text cannot
-    override this object after validation.
-    """
+    """Top-level run specification."""
 
     problem: str = Field(min_length=1)
     goal: str = Field(min_length=1)
@@ -128,6 +124,17 @@ class SearchNode(DTEBaseModel):
     coverage_ids: list[str] = Field(default_factory=list)
     confidence: float = Field(default=0.5, ge=0.0, le=1.0)
 
+    # New-line canonical completed-transition state. Optional at the persistence
+    # model boundary for legacy artifact readability; the new controller fails
+    # closed whenever an active node lacks a complete triple.
+    retrospective_method: str | None = None
+    epistemic_change_kind: Literal[
+        "new_understanding",
+        "sharper_unknown",
+        "no_material_change",
+    ] | None = None
+    epistemic_change: str | None = None
+
     local_embedding: list[float] | None = None
     judge_reasoning: str | None = None
     judge_risks: list[str] = Field(default_factory=list)
@@ -143,8 +150,6 @@ class SearchNode(DTEBaseModel):
 
 
 class AllocationResult(DTEBaseModel):
-    """Expansion budget assignment for a frontier batch."""
-
     node_id: str
     score: float
     uncertainty: float
@@ -153,8 +158,6 @@ class AllocationResult(DTEBaseModel):
 
 
 class ExpansionRequest(DTEBaseModel):
-    """Request passed from DTE Expansion to an external executor adapter."""
-
     parent: SearchNode
     child_count: int = Field(ge=1, le=50, validation_alias=AliasChoices("child_count", "count"))
     iteration: int = Field(ge=1)
@@ -162,8 +165,6 @@ class ExpansionRequest(DTEBaseModel):
 
 
 class MergeProposal(DTEBaseModel):
-    """Structured merge proposal for graph-search compression."""
-
     merge_type: Literal["equivalent_merge", "complementary_merge", "conflict_merge"]
     source_node_ids: list[str] = Field(min_length=2)
     target_node_id: str | None = None
@@ -173,8 +174,6 @@ class MergeProposal(DTEBaseModel):
 
 
 class SynthesisControlRequest(DTEBaseModel):
-    """Validated operator request to stop after the current safe task."""
-
     action: Literal["force_synthesis_after_current_task"]
     requested_by: Literal["user", "main_agent"]
     reason: str = Field(min_length=1)
@@ -191,8 +190,6 @@ class SynthesisControlRequest(DTEBaseModel):
 
 
 class ForcedSynthesisRecord(DTEBaseModel):
-    """Recorded audit metadata for an authorized synthesis request."""
-
     stop_reason: Literal["user_interrupted_for_synthesis", "main_agent_requested_synthesis"]
     requested_by: Literal["user", "main_agent"]
     reason: str

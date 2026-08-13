@@ -1,6 +1,6 @@
 # Evolving Frontier Research Skill
 
-> **Public alpha note:** this is a local Codex/agent skill backend, not a hosted service. Public `main` is the stable v1 compatibility baseline; the research architecture itself is no longer treated as permanently frozen. A separate next-generation controller is under theory audit and has not been migrated into this runtime.
+> **Public alpha note:** this is a local Codex/agent skill backend, not a hosted service. Public `main` remains the stable v1 compatibility baseline. The current next-generation research line is mirrored separately under `src/dte_nextgen/**`; it is public and testable, but it has not been promoted into the production `dte_backend` runtime.
 
 **Evolving Frontier Research Skill** packages a fixed frontier-search research protocol for Codex-style agents. It turns open-ended mathematical, physical, academic, or conceptual research into a controlled loop of structured hypotheses, external judgment, geometric exploration, bounded expansion, relation checks, and final synthesis.
 
@@ -30,11 +30,13 @@ The internal Python package still uses `dte_backend` for backward compatibility.
 
 ### Research architecture status
 
-Public `main` should be read as the **stable v1 baseline**, not as the latest word on DTE theory. The current public runtime still uses the Judge → geometry/controller → Executor architecture and the recovered legacy geometry/controller mathematics.
+Public `main` should be read as the **stable v1 baseline**, not as the latest word on DTE theory. The production runtime still uses the Judge → geometry/controller → Executor architecture and its compatibility mathematics.
 
-A separate next-generation prototype is actively studying prospective structural thoughts, temporal evidence, feedback-preserving one-action allocation, frozen temporal geometry, and a stricter separation between empirical variability, ignorance priors, scheduler breadth, and stopping evidence. Those ideas remain under theory/evidence review and are intentionally not mixed into public v1 yet.
+The isolated next-generation mirror now uses retrospective **method ↔ epistemic-change transitions** as the authoritative search coordinate: canonical embedding is `(m, ΔU)`, while `Q` is context only. The active frontier contains unused completed transitions; continuing a direction retires the used parent and replaces it with the completed child. Current nextgen allocation keeps `U = V + SD`, with `SD = 1/sqrt(N rho)` interpreted as live-frontier directional underoccupation and `V` as expected whole-frontier displacement. Realized return is direct replacement-frontier `MMD²/2`, with no matched-null subtraction.
 
-See [`docs/NEXT_GENERATION_RESEARCH_STATUS.md`](docs/NEXT_GENERATION_RESEARCH_STATUS.md) for the current boundary between the public baseline and experimental research.
+The exact occupancy geometry remains under audit. The current RBF median-bandwidth realization is runnable but not theoretically calibrated. A frozen empirical angular calibration is available experimentally, and any future additive occupancy overlap must satisfy the null-mass scaling constraint documented in `docs/geometry-null-mass-audit.md`; dense order-one background similarities cannot simply be summed into `rho`.
+
+See [`docs/NEXT_GENERATION_RESEARCH_STATUS.md`](docs/NEXT_GENERATION_RESEARCH_STATUS.md) for the current public/private theory boundary and [`docs/geometry-null-mass-audit.md`](docs/geometry-null-mass-audit.md) for the current geometry acceptance constraint.
 
 ## Status
 
@@ -76,11 +78,13 @@ SKILL.md              slash-command skill contract
 PRD.md                product requirements
 SPEC.md               technical specification
 ARCHITECTURE.md       architecture decision record
-src/dte_backend/      Python backend implementation
+src/dte_backend/      stable production Python backend
+src/dte_nextgen/      isolated experimental next-generation mirror
 schemas/              JSON schemas
 hooks/                validation hook examples
 examples/             example run specs and node outputs
 tests/                tests
+docs/                 research status, audits, and implementation notes
 ```
 
 ## Minimal local check

@@ -20,6 +20,17 @@ class FrozenReferenceAtlas:
     identity: str
 
 
+def _connected_geodesic(embeddings: np.ndarray, requested_k: int) -> tuple[int, np.ndarray]:
+    start = min(max(1, int(requested_k)), len(embeddings) - 1)
+    last_error: ValueError | None = None
+    for k in range(start, len(embeddings)):
+        try:
+            return k, all_pairs_geodesic_distances(embeddings, k=k)
+        except ValueError as exc:
+            last_error = exc
+    raise ValueError("reference atlas could not form a connected angular graph") from last_error
+
+
 def freeze_reference_atlas(
     nodes: Sequence[SearchNode],
     *,
@@ -32,8 +43,7 @@ def freeze_reference_atlas(
     for node in nodes:
         require_completed_transition(node)
     embeddings = embed_transition_nodes(nodes, provider)
-    k = min(max(1, int(graph_k)), len(nodes) - 1)
-    geodesic = all_pairs_geodesic_distances(embeddings, k=k)
+    k, geodesic = _connected_geodesic(embeddings, graph_k)
     density = np.ones(len(nodes), dtype=float) if reference_density is None else np.asarray(reference_density, dtype=float)
     if density.shape != (len(nodes),) or not np.isfinite(density).all() or np.any(density <= 0.0):
         raise ValueError("reference_density must be positive with one value per atlas cell")

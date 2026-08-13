@@ -165,6 +165,13 @@ class ExecutorParentContext(DTEBaseModel):
     parent_ids: list[str] = Field(default_factory=list)
     coverage_ids: list[str] = Field(default_factory=list)
     confidence: float = Field(default=0.5, ge=0.0, le=1.0)
+    retrospective_method: str = Field(min_length=1)
+    epistemic_change_kind: Literal[
+        "new_understanding",
+        "sharper_unknown",
+        "no_material_change",
+    ]
+    epistemic_change: str = Field(min_length=1)
 
 
 class ExecutorEpisodePayload(DTEBaseModel):
@@ -186,6 +193,13 @@ class ExecutorNodeCandidate(DTEBaseModel):
     parent_ids: list[str] = Field(default_factory=list)
     coverage_ids: list[str] = Field(default_factory=list)
     confidence: float = Field(default=0.5, ge=0.0, le=1.0)
+    retrospective_method: str = Field(min_length=1)
+    epistemic_change_kind: Literal[
+        "new_understanding",
+        "sharper_unknown",
+        "no_material_change",
+    ]
+    epistemic_change: str = Field(min_length=1)
     status: Literal["frontier"] = "frontier"
 
 

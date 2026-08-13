@@ -7,15 +7,16 @@ state defined by docs/PHYSICS.md.
 
 from __future__ import annotations
 from typing import TypeAlias
-import numpy as np
 
 from .cache import DTECache
 from .embedding import EmbeddingProvider, HashEmbeddingProvider
 from .models import SearchNode
-from .new_controller import FrontierControllerState, freeze_reference_atlas, score_frontier
-from .transition_state import require_completed_transition
+from .new_controller import FrozenReferenceAtlas, FrontierControllerState, freeze_reference_atlas, score_frontier
+from .reference_atlas import combined_reference_nodes
+from .transition_state import canonical_transition_text, require_completed_transition
 
 KDEState: TypeAlias = FrontierControllerState
+_ATLAS_CACHE: dict[tuple[object, ...], FrozenReferenceAtlas] = {}
 
 
 def _provider(provider: EmbeddingProvider | None, expected_dimension: int | None) -> EmbeddingProvider:
@@ -32,10 +33,31 @@ def _provider(provider: EmbeddingProvider | None, expected_dimension: int | None
 def _reference_roots(nodes: list[SearchNode]) -> list[SearchNode]:
     roots = [node for node in nodes if not node.parent_ids]
     if len(roots) < 2:
-        raise ValueError("new controller requires at least two frozen root transitions")
+        raise ValueError("new controller requires at least two initial completed transitions")
     for node in roots:
         require_completed_transition(node)
     return roots
+
+
+def _frozen_atlas(
+    roots: list[SearchNode],
+    provider: EmbeddingProvider,
+    graph_k: int,
+) -> FrozenReferenceAtlas:
+    key = (
+        provider.name,
+        str(getattr(provider, "model", provider.name)),
+        provider.dim,
+        int(graph_k),
+        tuple(canonical_transition_text(node) for node in roots),
+    )
+    cached = _ATLAS_CACHE.get(key)
+    if cached is not None:
+        return cached
+    atlas_nodes = combined_reference_nodes(roots)
+    atlas = freeze_reference_atlas(atlas_nodes, provider=provider, graph_k=graph_k)
+    _ATLAS_CACHE[key] = atlas
+    return atlas
 
 
 def estimate_frontier_kde_state(
@@ -47,15 +69,14 @@ def estimate_frontier_kde_state(
     graph_k: int = 2,
     volume_bandwidth: float = 1.0,
 ) -> tuple[list[SearchNode], FrontierControllerState]:
-    """Score the live completed-transition frontier on one frozen root atlas."""
+    """Score live completed transitions on a frozen method-space atlas."""
 
-    del cache  # transition embeddings are canonical controller state, not claim-cache state
+    del cache
     frontier = [node for node in nodes if node.status == "frontier"]
     if not frontier:
         raise ValueError("new controller requires a non-empty active frontier")
     resolved_provider = _provider(provider, expected_dimension)
-    roots = _reference_roots(nodes)
-    atlas = freeze_reference_atlas(roots, provider=resolved_provider, graph_k=graph_k)
+    atlas = _frozen_atlas(_reference_roots(nodes), resolved_provider, graph_k)
     state = score_frontier(
         graph_nodes=nodes,
         live_nodes=frontier,

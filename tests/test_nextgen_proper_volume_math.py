@@ -6,7 +6,7 @@ from dte_nextgen.thought_space.geometry import (
     reference_radii_for_queries,
 )
 from dte_nextgen.thought_space.occupancy import estimate_live_occupancy
-from dte_nextgen.thought_space.proper_volume import (
+from dte_nextgen.thought_space.volume_measure import (
     intrinsic_cell_volumes,
     intrinsic_proper_volume_at_radius,
     volume_reward_statistics,

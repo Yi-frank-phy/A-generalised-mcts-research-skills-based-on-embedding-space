@@ -2,14 +2,16 @@
 
 **Evolving Frontier Research Skill (DTE)** is a local research-agent backend for structured frontier search over difficult mathematical, physical, academic, and conceptual problems.
 
-The repository maintains **two independent release lines**:
+## Branches
 
-| Branch | Status | Controller |
+This repository has one active mainline and one preserved legacy line:
+
+| Branch | Role | Controller |
 |---|---|---|
-| [`new`](https://github.com/Yi-frank-phy/A-generalised-mcts-research-skills-based-on-embedding-space/tree/new) | **Recommended / current** | completed-transition embedding + frozen-atlas proper-volume metric-measure controller |
-| [`old`](https://github.com/Yi-frank-phy/A-generalised-mcts-research-skills-based-on-embedding-space/tree/old) | Compatibility / reproducibility | direct node/semantic embedding + RBF-KDE compatibility controller |
+| [`new`](https://github.com/Yi-frank-phy/A-generalised-mcts-research-skills-based-on-embedding-space/tree/new) | **Primary mainline / recommended** | completed-transition embedding + frozen-atlas proper-volume metric-measure controller |
+| [`old`](https://github.com/Yi-frank-phy/A-generalised-mcts-research-skills-based-on-embedding-space/tree/old) | Legacy compatibility / reproducibility | direct node/semantic embedding + RBF-KDE compatibility controller |
 
-`new` and `old` are separate release lines. `old` is preserved so previous runs and controller behavior remain reproducible; new development should target `new` unless compatibility with the old controller is required.
+**`new` is the forward development line.** Future fixes, documentation work, controller changes, and releases should land on `new`. `old` is retained so previous runs and v1 controller behavior remain reproducible; it is not a peer development line.
 
 ## What `new` changes
 
@@ -33,11 +35,11 @@ Judge scores remain research observations and are not controller value. The auth
 
 This project is **public alpha**. The backend, persistence contracts, packaging, CI matrix, smoke workflow, and App/headless protocol are intended to be runnable and reproducible. Passing tests establishes implementation behavior; it does **not** establish scientific correctness or prove that DTE improves research outcomes.
 
-Current package/release version: `2.0.0`.
+Current mainline package/release version: `2.0.0`.
 
 ## Install
 
-Clone the recommended release line:
+Use the `new` mainline:
 
 ```bash
 git clone --branch new --single-branch https://github.com/Yi-frank-phy/A-generalised-mcts-research-skills-based-on-embedding-space.git
@@ -45,7 +47,7 @@ cd A-generalised-mcts-research-skills-based-on-embedding-space
 python -m pip install -e .[dev]
 ```
 
-For the compatibility controller, replace `new` with `old`.
+For legacy v1 compatibility, replace `new` with `old`.
 
 ## Verify the checkout
 
@@ -92,11 +94,14 @@ tests/                   regression and release-contract tests
 
 ## Release policy
 
-- Release current DTE from `new`.
-- Keep `old` available for compatibility and reproducibility.
+- **All future normal releases are cut from `new`.**
+- `new` is the active development and maintenance branch.
+- `old` is retained only for v1 compatibility, reproducibility, and narrowly scoped maintenance.
 - Do not silently move old controller mathematics into `new` or vice versa.
 - A theory-affecting change on `new` must update the mathematical authority and its lock/tests explicitly.
-- Tags/releases should point to the exact branch commit being released.
+- Tags/releases should point to the exact `new` commit being released.
+
+The next mainline release is **v2.0.0**.
 
 ## License
 

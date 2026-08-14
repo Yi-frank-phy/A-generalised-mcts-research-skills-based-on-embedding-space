@@ -84,4 +84,29 @@ jobs:
         run: |
           "$RUNNER_TEMP/dte-wheel-venv/bin/python" scripts/install_skill_bundle.py --source . --target "$RUNNER_TEMP/dte-installed-skill"
           "$RUNNER_TEMP/dte-wheel-venv/bin/python" "$RUNNER_TEMP/dte-installed-skill/scripts/dte_hook_driver_entry.py" hook-driver --help
+          python - <<'PY'
+          import hashlib
+          from pathlib import Path
+
+          root = Path.cwd()
+          required = [
+              root / "SKILL.md",
+              root / "hooks" / "dte_enforcement_hook.py",
+              root / "bundle-manifest.json",
+              root / "scripts" / "dte_hook_driver_entry.py",
+              root / "scripts" / "install_dte_hooks.py",
+              root / "deploy" / "managed-template" / "requirements.toml",
+              root / "deploy" / "managed-template" / "hooks" / "dte_enforcement_hook.py",
+              root / "deploy" / "managed-template" / "bundle-manifest.json",
+          ]
+          missing = [str(path.relative_to(root)) for path in required if not path.is_file()]
+          assert not missing, f"missing repository Skill files: {missing}"
+          source = required[1].read_bytes()
+          assert required[6].read_bytes() == source
+          assert required[2].read_bytes() == required[7].read_bytes()
+          digest = hashlib.sha256(source).hexdigest()
+          requirements = required[5].read_text(encoding="utf-8")
+          assert requirements.count(f"--dte-hook-content-sha256={digest}") == 10
+          assert requirements.count("--dte-skill-root=") == 10
+          PY
           "$RUNNER_TEMP/dte-wheel-venv/bin/python" scripts/install_dte_hooks.py --scope managed-template

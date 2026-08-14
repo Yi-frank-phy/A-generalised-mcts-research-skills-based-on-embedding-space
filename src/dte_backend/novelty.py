@@ -32,8 +32,8 @@ def _provider(provider: EmbeddingProvider | None, expected_dimension: int | None
 
 def _reference_roots(nodes: list[SearchNode]) -> list[SearchNode]:
     roots = [node for node in nodes if not node.parent_ids]
-    if len(roots) < 2:
-        raise ValueError("new controller requires at least two initial completed transitions")
+    if not roots:
+        raise ValueError("new controller requires at least one initial completed transition")
     for node in roots:
         require_completed_transition(node)
     return roots

@@ -1,239 +1,76 @@
-# Evolving Frontier Research Skill
+# Evolving Frontier Research Skill — `old` compatibility line
 
-> **Public alpha note:** this is a local Codex/agent skill backend, not a hosted service. Public `main` remains the stable v1 compatibility baseline. The current next-generation research line is mirrored separately under `src/dte_nextgen/**`; it is public and testable, but it has not been promoted into the production `dte_backend` runtime.
+This branch preserves the **old DTE controller** for compatibility, reproducibility, and comparison with the current release line.
 
-**Evolving Frontier Research Skill** packages a fixed frontier-search research protocol for Codex-style agents. It turns open-ended mathematical, physical, academic, or conceptual research into a controlled loop of structured hypotheses, external judgment, geometric exploration, bounded expansion, relation checks, and final synthesis.
+For new work, use the [`new`](https://github.com/Yi-frank-phy/A-generalised-mcts-research-skills-based-on-embedding-space/tree/new) branch.
 
-Core idea:
+## Branches
 
-```text
-User / validated RunSpec
-        ↓
-DTE backend (only outer controller)
-        ↓
-bounded role adapters → validated structured outputs
-        ↓
-Judge scores → entropy/novelty → UCB → Boltzmann expansion
-        ↓
-DTE-selected synthesis checkpoint → validated report
-```
+| Branch | Status | Controller |
+|---|---|---|
+| [`new`](https://github.com/Yi-frank-phy/A-generalised-mcts-research-skills-based-on-embedding-space/tree/new) | **Recommended / current** | completed-transition embedding + frozen-atlas proper-volume metric-measure controller |
+| `old` | Compatibility / reproducibility | direct node/semantic embedding + RBF-KDE compatibility controller |
 
-This repository is intentionally **not** a new general agent architecture. It is a packaging layer around the current public v1 research workflow:
-
-- Role separation is preserved as anti-bias isolation.
-- The math controller remains mandatory for research runs.
-- Subagents can execute local episodes but cannot directly produce final conclusions.
-- Skills and hooks enforce structured outputs and phase boundaries.
-- UCB remains value/uncertainty driven in the public compatibility controller; cost is handled by hard budgets and run profiles, not by changing the UCB objective by default.
-
-The internal Python package still uses `dte_backend` for backward compatibility. Public-facing docs use the clearer name **Evolving Frontier Research Skill**.
-
-### Research architecture status
-
-Public `main` should be read as the **stable v1 baseline**, not as the latest word on DTE theory. The production runtime still uses the Judge → geometry/controller → Executor architecture and its compatibility mathematics.
-
-The isolated next-generation mirror now uses retrospective **method ↔ epistemic-change transitions** as the authoritative search coordinate: canonical embedding is `(m, ΔU)`, while `Q` is context only. The active frontier contains unused completed transitions; continuing a direction retires the used parent and replaces it with the completed child. Current nextgen allocation keeps `U = V + SD`, with `SD = 1/sqrt(N rho)` interpreted as live-frontier directional underoccupation and `V` as expected whole-frontier displacement. Realized return is direct replacement-frontier `MMD²/2`, with no matched-null subtraction.
-
-The exact occupancy geometry remains under audit. The current RBF median-bandwidth realization is runnable but not theoretically calibrated. A frozen empirical angular calibration is available experimentally, and any future additive occupancy overlap must satisfy the null-mass scaling constraint documented in `docs/geometry-null-mass-audit.md`; dense order-one background similarities cannot simply be summed into `rho`.
-
-See [`docs/NEXT_GENERATION_RESEARCH_STATUS.md`](docs/NEXT_GENERATION_RESEARCH_STATUS.md) for the current public/private theory boundary and [`docs/geometry-null-mass-audit.md`](docs/geometry-null-mass-audit.md) for the current geometry acceptance constraint.
+`old` is intentionally retained as a separate release line. It should not silently absorb the `new` controller mathematics, and `new` should not silently restore old controller semantics.
 
 ## Status
 
-This is a **feature-complete v1 protocol in public alpha**. The protocol and
-backend state machine are ready for controlled evaluation, while the App-native
-path additionally requires a verified Hook installation and a successful live
-event-delivery probe after trust and restart. Comparative research effectiveness
-has not yet been established by real-run outcome data. The smoke path is fully
-local and should pass without external API keys. Headless real research requires
-a real Judge command, such as:
+This branch is **public alpha compatibility software**. It exists to reproduce the previous controller behavior and support older runs, comparisons, and maintenance fixes. Passing tests establishes implementation behavior; it does not establish scientific correctness or research effectiveness.
+
+Current package version: `0.2.0`.
+
+## Install
 
 ```bash
-python -m dte_backend strict-run \
-  --mode real \
-  --spec <run_spec.json> \
-  --out-dir artifacts/session \
-  --cache-path .dte_cache/cache.json \
-  --judge-command "python scripts/codex_judge_adapter.py"
+git clone --branch old --single-branch https://github.com/Yi-frank-phy/A-generalised-mcts-research-skills-based-on-embedding-space.git
+cd A-generalised-mcts-research-skills-based-on-embedding-space
+python -m pip install -e .[dev]
 ```
 
-`examples/mock_*_adapter.py` are smoke-test tools only. Hash embedding is a debug/dry-run fallback, not real geometry.
+## Verify the checkout
 
-### V1 stability policy
+```bash
+python scripts/generate_bundle_manifest.py --verify
+python -m pytest -q
+python scripts/smoke_workflow.py
+```
 
-Development on public `main` prioritizes real-run use, evaluation, compatibility,
-maintenance, and bounded fixes. Do not ad-hoc redesign the production v1 controller
-or import an experimental formula merely because it is attractive or easy to test.
-Intentional next-generation redesign belongs in an explicitly experimental theory/
-prototype path and should migrate only after its mathematical semantics are explicit
-and comparative outcome evidence or other predeclared evidence gates justify the
-migration. Passing tests establishes protocol behavior, not scientific correctness
-or research effectiveness.
+The smoke workflow may use mock adapters and is only a machinery check.
+
+## Use as a Skill
+
+`SKILL.md` is the primary runtime contract. The repository archive is the complete Skill distribution; the Python wheel contains the backend package.
+
+```bash
+python scripts/install_skill_bundle.py --source . --target <target-directory>
+python -m dte_backend hook-driver --help
+```
+
+## Compatibility controller
+
+The `old` line retains the earlier node/semantic-embedding controller and its RBF-KDE-style geometry/uncertainty behavior. It is kept so historical behavior remains inspectable and reproducible.
+
+If you want the current transition-based proper-volume controller, switch to `new` rather than modifying `old` in place.
 
 ## Repository layout
 
 ```text
-AGENTS.md             Codex/Kimi/OpenClaw operating instructions
-SKILL.md              slash-command skill contract
-PRD.md                product requirements
-SPEC.md               technical specification
-ARCHITECTURE.md       architecture decision record
-src/dte_backend/      stable production Python backend
-src/dte_nextgen/      isolated experimental next-generation mirror
-schemas/              JSON schemas
-hooks/                validation hook examples
-examples/             example run specs and node outputs
-tests/                tests
-docs/                 research status, audits, and implementation notes
+SKILL.md                 runtime Skill contract
+SPEC.md                  executable protocol contract
+src/dte_backend/         production compatibility backend
+schemas/                 machine-readable episode/state schemas
+hooks/                   App enforcement hooks
+scripts/                 install, manifest, smoke, and adapter utilities
+examples/                example run specifications and smoke adapters
+tests/                   regression tests
 ```
 
-## Minimal local check
+## Release policy
 
-```bash
-python -m pip install -e .[dev]
-pytest
-python scripts/smoke_workflow.py
-```
-
-The Python wheel is the backend artifact. The complete Codex Skill distribution
-is the repository/archive, which additionally contains `SKILL.md`, the lifecycle
-dispatcher, installer, and managed-deployment template. CI verifies these as two
-explicit artifacts rather than implying that the backend wheel contains the
-top-level Skill files.
-
-Smoke checks may use mock adapters. Real research can use the Codex Judge adapter:
-
-```bash
-python -m dte_backend strict-run \
-  --mode real \
-  --spec <run_spec.json> \
-  --out-dir artifacts/session \
-  --cache-path .dte_cache/cache.json \
-  --judge-command "python scripts/codex_judge_adapter.py"
-```
-
-`scripts/codex_judge_adapter.py` calls `codex exec` by default. Set `DTE_CODEX_JUDGE_COMMAND` only when you need to override the Codex command used by that adapter.
-
-`strict-run --mode real` remains the compatible headless/legacy entrypoint. In Codex App / Work, the normal native path is the persistent driver protocol below: the current App main agent requests and performs each bounded episode itself; the repository does not launch a second Codex process. In both paths the main agent is an authorized operator proxy under `OperatorPolicy`, not a second controller.
-
-`requested_by` identifies the actor for audit; `operator_policy` determines whether that actor is authorized. The JSON field does not authenticate the writer. The headless compatibility path trusts the root/operator execution context. The App-native path instead uses the versioned Hook execution contract and single-use driver capability.
-
-The real-mode controller and provider wiring are tested with a deterministic embedding-provider stub. Live Gemini API connectivity is intentionally not exercised because no production credential is available. This is not a merge blocker. CI still verifies the Gemini provider wiring, 3072-dimensional policy, cache namespace, and fail-closed behavior when neither supported API-key environment variable is present.
-
-## App-native Judge → controller → Executor vertical slice
-
-Ordinary unscored frontier nodes now progress through transport-neutral, versioned Judge and Executor boundaries driven by the current Codex App main agent:
-
-```text
-unscored frontier -> Judge EpisodeRequest -> current App native work
-    -> Judge EpisodeResult -> atomic backend commit
-    -> backend embedding/KDE/entropy/UCB/allocation
-    -> Executor EpisodeRequest -> current App native work
-    -> Executor EpisodeResult -> atomic backend commit
-```
-
-`commit_episode_result(...)` dispatches by the committed request role and validates the complete result before replacing graph state. Judge commits require exactly one observable score/reasoning observation per granted node and reject stale revisions, missing/extra/duplicate node IDs, invalid scores, or controller-owned pollution. Executor validation retains the existing over-grant, collision, ancestry, type/status, lifecycle, hash, and revision firewall. Every rejection leaves graph and node revisions unchanged.
-
-The production App-native command loop is:
-
-```bash
-python -m dte_backend hook-driver activate
-python -m dte_backend hook-driver init --spec <spec.json> --nodes <committed-nodes.json>
-python -m dte_backend hook-driver step
-# Read all chunks named by the compact request reference.
-python -m dte_backend hook-driver request --chunk-index 0
-# Current App main agent performs the returned request with native tools/subagents.
-python -m dte_backend hook-driver submit --result <result.json>
-# Repeat step / bounded App episode / submit until the backend becomes terminal.
-python -m dte_backend hook-driver handoff
-```
-
-Use `hook-driver control --action retry|fail-attempt|cancel-attempt|cancel-run|request-synthesis` for explicit
-operator transitions. The direct `create-run`, `next-episode`,
-`submit-episode-result`, `fail-episode`, `cancel-episode`, and `retry-episode`
-commands are development/direct-legacy interfaces and fail closed against a
-`hook_enforced_v1` run. Retries receive a new `attempt_id`, and cancelled,
-expired, failed, superseded, rejected, or already committed attempts cannot
-commit. Requests, results, and status records live under
-`<run-dir>/episodes/<episode-id>/<attempt-id>/`; writing a result file alone
-never mutates the graph.
-
-The existing subprocess Executor is preserved only as a legacy/headless fallback and regression baseline through `CommandAgentEpisodeAdapter`. `NativeStubEpisodeAdapter` is a deterministic test fixture. Neither is the normal Codex App path, and neither is described as Ultra integration. SDK/App Server transports are deferred by the normative App profile.
-
-Episode telemetry is append-only JSONL at `<run-dir>/episode_events.jsonl`. Because hidden App runtime usage and subagent topology are not available to repository code, App events record `usage_source=unavailable` and do not estimate tokens, quota, subagent count, or routing traces.
-
-The first observability read model turns the committed state and ledgers into a
-strict deterministic summary without changing the run:
-
-```bash
-python -m dte_backend observability-summary --run-dir <run-dir> --format json
-python -m dte_backend observability-summary --run-dir <run-dir> --format text
-python -m dte_backend observability-export --runs-root <runs-root> --format jsonl --output <export.jsonl>
-```
-
-It exposes episode and node funnels, full node lineage, allocation outcomes,
-Judge posterior proxies, Relation yield by reason, controller trajectory,
-rejection classes, and data-quality limitations. These are internal process
-observations, not scientific correctness or proof of architecture effectiveness.
-
-Explicit user or evaluator judgments can be bound to an existing run or
-decision through an independent append-only ledger:
-
-```bash
-python -m dte_backend record-feedback \
-  --run-dir <run-dir> \
-  --target-type run \
-  --metric architecture_effectiveness \
-  --score 0.8 \
-  --source user \
-  --comment "found a useful route"
-```
-
-Feedback never rewrites graph, Judge, allocation, stopping, or telemetry facts.
-
-Judge and Executor outputs may also contribute a small, bounded set of
-source-labelled epistemic statements, directed dependencies, and explicit path
-dispositions. Accepted records are committed atomically inside
-`AppRunState.epistemic_ledger`; `<run-dir>/epistemic/ledger.json` is only a
-derived mirror. Stable IDs bind run, episode, attempt, output hash, local ID, and
-record type. Relation conflicts/equivalence and merge provenance are projected
-from the existing Relation ledger rather than copied into a second truth store.
-
-At `ready_for_synthesis` or `run_complete`, the deterministic handoff is
-available as JSON or compact text:
-
-```bash
-python -m dte_backend epistemic-summary --run-dir <run-dir> --format json
-python -m dte_backend epistemic-summary --run-dir <run-dir> --format text
-```
-
-It traces provisional-selected node claims through explicit assumptions,
-support, challenge, conditionality, unresolved dependencies, artifacts,
-producing attempts, Relation disclosures, and merges. Search dispositions such
-as `not_selected` and `out_of_budget` remain separate from epistemic
-dispositions such as `challenged` and `contradicted`. Correlated-error fields are
-risk indicators only, never verification or a reliability score. Legacy runs
-without structured contributions produce an empty graph with explicit data
-quality limitations; free text is never mined for edges.
-
-The persisted `external_artifact_backed` source means reference provenance only;
-text output labels it `artifact_referenced`. DTE does not check the artifact,
-its assumptions, applicability, or scientific claim. The retired
-`epistemic/researcher_learning.jsonl` file is a deprecated external artifact
-ignored by current DTE; it is not read, migrated, exported, repaired, or
-modified. Explicit run evaluation remains available through `record-feedback`,
-which never becomes epistemic authority or controller input.
-
-App-path embedding vectors are cached in the run-scoped `<run-dir>/dte_cache.json` through the existing `FileDTECache` namespace contract (provider, model/snapshot, dimension, and embedding contract version). The cache is not graph state; a cache failure cannot partially commit controller fields or revisions. Terminal `ready_for_synthesis` / `run_complete` actions are sticky, and after already-allocated Executor grants are consumed the iteration cap is enforced before any new Judge grant.
-
-App-native Relation episodes now maintain a versioned semantic relation layer before a new Synthesis terminal action. The backend completely inventories selected-set exact duplicates and potential material conflicts (at most 28 pairs for the default eight-node provisional set) before readiness, grants bounded Relation episodes, and then may spend at most `max_relation_enrichment_pairs` successful nonblocking semantic classifications across the run (default 3). Known candidate/record identities are removed before enrichment truncation, so previously seen pairs cannot hide unseen pairs.
-
-Relation state persists under `<run-dir>/relations/` as `candidates.json`, `relation_ledger.json`, and `synthesis_readiness.json`. Relation remains equivalent/complementary/conflict/independent semantic classification, not scientific verification; discriminator proposals are persisted but not executed. Terminal `ready_for_synthesis` / `run_complete` remains sticky; legacy terminal runs are not reopened. Native Seed and final Synthesis episodes remain deferred, as does full production role closure. The headless Judge/Relation commands remain regression/legacy paths rather than the normal App runtime.
+- Current DTE releases should normally be cut from `new`.
+- Keep `old` available for compatibility and reproducibility.
+- Tags/releases must point to the exact branch commit being released.
 
 ## License
 
-Apache-2.0. See [`LICENSE`](./LICENSE).
-
-## Design stance
-
-Keep public `main` stable and reproducible. Treat it as the v1 baseline for evaluation and maintenance, not as a permanent freeze on DTE research. Experimental architecture changes should remain explicitly separated until their theory and evidence justify a deliberate migration.
+Apache-2.0. See [`LICENSE`](LICENSE).

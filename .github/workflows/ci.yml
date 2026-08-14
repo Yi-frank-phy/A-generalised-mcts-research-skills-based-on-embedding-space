@@ -3,7 +3,7 @@ name: CI
 on:
   push:
     branches:
-      - main
+      - old
   pull_request:
 
 permissions:
@@ -102,4 +102,3 @@ jobs:
           assert requirements.count("--dte-skill-root=") == 10
           PY
           "$RUNNER_TEMP/dte-wheel-venv/bin/python" scripts/install_dte_hooks.py --scope managed-template
-

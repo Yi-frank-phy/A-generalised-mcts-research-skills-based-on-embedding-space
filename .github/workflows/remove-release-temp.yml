@@ -1,0 +1,18 @@
+name: Remove temporary release branch
+
+on:
+  push:
+    branches:
+      - new
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Delete temporary branch
+        run: git push origin --delete new-release-tmp

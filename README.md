@@ -15,7 +15,7 @@ For new work, use the [`new`](https://github.com/Yi-frank-phy/A-generalised-mcts
 
 ## Status
 
-This branch is **public alpha compatibility software**. It exists to reproduce the previous controller behavior and support older runs, comparisons, and maintenance fixes. Passing tests establishes implementation behavior; it does not establish scientific correctness or research effectiveness.
+This branch preserves the **feature-complete v1** protocol as public-alpha compatibility software. It exists to reproduce the previous controller behavior and support older runs, comparisons, and maintenance fixes. Passing tests establishes implementation behavior; it does not establish scientific correctness or research effectiveness.
 
 Current package version: `0.2.0`.
 

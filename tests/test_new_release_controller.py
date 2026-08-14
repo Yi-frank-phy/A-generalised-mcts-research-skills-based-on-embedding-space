@@ -1,9 +1,11 @@
 import numpy as np
 import pytest
 
+from dte_backend.embedding import HashEmbeddingProvider
 from dte_backend.episode_models import ExecutorNodeCandidate
 from dte_backend.models import SearchNode
 from dte_backend.new_controller import freeze_reference_atlas, score_frontier
+from dte_backend.novelty import estimate_frontier_kde_state
 from dte_backend.transition_state import canonical_transition_text
 
 
@@ -69,6 +71,22 @@ def test_active_node_without_completed_transition_fails_closed() -> None:
 def test_executor_candidate_requires_completed_transition_fields() -> None:
     with pytest.raises(ValueError):
         ExecutorNodeCandidate(node_id="child", claim="child claim", parent_ids=["parent"])
+
+
+def test_single_initial_completed_transition_uses_packaged_reference_atlas() -> None:
+    initial = [node("a", "direct construction")]
+
+    frontier, state = estimate_frontier_kde_state(
+        initial,
+        provider=HashEmbeddingProvider(dim=8),
+        expected_dimension=8,
+        graph_k=1,
+        volume_bandwidth=1.0,
+    )
+
+    assert [item.node_id for item in frontier] == ["a"]
+    assert state.value_source == "proper_volume_history"
+    assert state.sd_source == "proper_volume_boltzmann_reward"
 
 
 def test_judge_score_is_not_controller_value_before_realized_history() -> None:

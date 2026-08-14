@@ -113,11 +113,17 @@ def main() -> None:
                     node_id="left",
                     claim="the condition is sufficient",
                     evidence=["shared premise"],
+                    retrospective_method="analyze sufficiency under the shared premise",
+                    epistemic_change_kind="new_understanding",
+                    epistemic_change="identified a candidate sufficient-condition route",
                 ),
                 SearchNode(
                     node_id="right",
                     claim="the condition is not sufficient",
                     evidence=["shared premise"],
+                    retrospective_method="analyze a boundary challenge under the shared premise",
+                    epistemic_change_kind="sharper_unknown",
+                    epistemic_change="isolated the boundary case where sufficiency remains disputed",
                 ),
             ],
             run_id="epistemic-smoke",
@@ -204,6 +210,9 @@ def main() -> None:
                     node_id=child_id,
                     claim="the condition works away from the boundary",
                     parent_ids=[executor.parent_node_id],
+                    retrospective_method="perform the bounded away-from-boundary calculation",
+                    epistemic_change_kind="new_understanding",
+                    epistemic_change="established bounded support away from the unresolved boundary",
                 )
             ],
             epistemic_contributions=EpistemicContributionBundle(

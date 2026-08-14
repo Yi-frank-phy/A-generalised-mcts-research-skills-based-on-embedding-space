@@ -50,14 +50,14 @@ from dte_backend.relation_models import (
 )
 
 
-def run_spec(*, enrichment=0, cap=2, iterations=1) -> DTERunSpec:
+def run_spec(*, enrichment=0, cap=2, iterations=1, allocation_mass=1) -> DTERunSpec:
     return DTERunSpec(
         problem="observe a bounded DTE run",
         goal="reconstruct decisions and later outcomes",
         constraints=["observability is read-only"],
         budget=BudgetSpec(
             max_iterations=iterations,
-            allocation_mass_per_iteration=1,
+            allocation_mass_per_iteration=allocation_mass,
             max_children_per_iteration=cap,
             max_relation_pairs_per_episode=cap,
             max_relation_enrichment_pairs=enrichment,
@@ -208,7 +208,7 @@ def drive_relation_run(
     run_dir = tmp_path / f"run-{relation_type}"
     create_app_run(
         run_dir,
-        run_spec(),
+        run_spec(allocation_mass=2),
         [
             completed_node(node_id="p0", claim="parent zero"),
             completed_node(node_id="p1", claim="parent one"),
@@ -217,23 +217,38 @@ def drive_relation_run(
     )
     judge = next_app_episode(run_dir).request
     submit_app_episode_result(run_dir, judge_result(judge))
-    child_ids = []
-    for index in range(2):
-        executor = next_app_episode(
-            run_dir, embedding_provider=HashEmbeddingProvider(dim=8)
-        ).request
-        assert executor.role == "executor"
-        child_id = f"child-{index}"
-        submit_app_episode_result(
-            run_dir,
-            executor_result(
-                executor,
-                child_id=child_id,
+    executor = next_app_episode(
+        run_dir, embedding_provider=HashEmbeddingProvider(dim=8)
+    ).request
+    assert executor.role == "executor"
+    child_ids = ["child-0", "child-1"]
+    output = ExecutorEpisodeOutput(
+        nodes=[
+            completed_candidate(
+                node_id=child_id,
                 claim=claims[index],
                 evidence=evidence[index],
-            ),
-        )
-        child_ids.append(child_id)
+                parent_ids=[executor.parent_node_id],
+            )
+            for index, child_id in enumerate(child_ids)
+        ]
+    )
+    submit_app_episode_result(
+        run_dir,
+        EpisodeResult(
+            episode_id=executor.episode_id,
+            attempt_id=executor.attempt_id,
+            run_id=executor.run_id,
+            role=executor.role,
+            input_graph_revision=executor.input_graph_revision,
+            selected_node_revisions=executor.selected_node_revisions,
+            status="completed",
+            structured_output=output,
+            runtime_diagnostics=diagnostics(),
+            output_hash=compute_output_hash(output, executor.output_schema_version),
+            schema_version=executor.output_schema_version,
+        ),
+    )
     final_judge = next_app_episode(run_dir).request
     assert final_judge.role == "judge"
     assert set(final_judge.selected_node_revisions) == set(child_ids)
@@ -320,7 +335,7 @@ def test_complete_lineage_allocation_judge_relation_and_trajectory(tmp_path):
     assert summary.node_funnel.merged_node_count == 1
     assert summary.node_funnel.committed_search_node_count == 4
     assert summary.node_funnel.remaining_search_node_slots == 16
-    assert summary.node_funnel.canonical_frontier_node_count == 1
+    assert summary.node_funnel.canonical_frontier_node_count == 2
     assert summary.node_funnel.canonical_live_node_count == 3
     assert summary.run.budget.max_committed_search_nodes == 20
     assert summary.run.budget.entropy_plateau_confirmations == 2
@@ -331,12 +346,14 @@ def test_complete_lineage_allocation_judge_relation_and_trajectory(tmp_path):
         if node.node_id.startswith("child-")
     }
     assert all(node.creation_episode_id and node.creation_attempt_id for node in children.values())
-    assert {tuple(node.parent_ids) for node in children.values()} == {("p0",), ("p1",)}
+    parent_sets = {tuple(node.parent_ids) for node in children.values()}
+    assert len(parent_sets) == 1
+    assert next(iter(parent_sets)) in {("p0",), ("p1",)}
     absorbed = next(node for node in children.values() if node.merged)
     assert absorbed.canonical_target in children
     assert all(node.judge_score == pytest.approx(0.8) for node in children.values())
-    assert len(summary.allocation_outcomes) == 2
-    assert all(item.actual_committed_children == 1 for item in summary.allocation_outcomes)
+    assert len(summary.allocation_outcomes) == 1
+    assert summary.allocation_outcomes[0].actual_committed_children == 2
     assert all(item.unused_granted_capacity == 0 for item in summary.allocation_outcomes)
     assert summary.judge_outcomes.interpretation.endswith("calibration_or_causation")
     assert summary.relation_outcomes.blocking_candidates_generated == 1
@@ -349,7 +366,7 @@ def test_complete_lineage_allocation_judge_relation_and_trajectory(tmp_path):
         if row.candidate_reason == "exact_duplicate"
     )
     assert exact.equivalent_yield == 1.0
-    assert summary.controller_trajectory[0].positive_budget_parent_count == 2
+    assert summary.controller_trajectory[0].positive_budget_parent_count == 1
     assert summary.controller_trajectory[0].children_committed == 2
     assert len(summary.continuation_gate_trajectory) == 1
     assert summary.continuation_gate_trajectory[0].decision == "continue"

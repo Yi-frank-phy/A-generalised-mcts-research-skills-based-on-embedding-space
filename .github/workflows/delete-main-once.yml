@@ -1,0 +1,32 @@
+name: Delete main once
+
+on:
+  push:
+    branches:
+      - cleanup-main-helper
+
+permissions:
+  contents: write
+
+jobs:
+  delete-main:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete obsolete main branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git init cleanup
+          cd cleanup
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git push origin --delete main
+
+      - name: Delete helper branch
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git init helper-cleanup
+          cd helper-cleanup
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git push origin --delete cleanup-main-helper || true

@@ -51,7 +51,19 @@ jobs:
           python -c "from pathlib import Path; data=Path('bundle-manifest.json').read_bytes(); target=Path('deploy/managed-template/bundle-manifest.json'); target.parent.mkdir(parents=True, exist_ok=True); target.write_bytes(data)"
           python scripts/generate_bundle_manifest.py --verify
       - name: Unit tests
-        run: python -m pytest -q
+        id: unit_tests
+        continue-on-error: true
+        run: python -m pytest -q --junitxml=pytest-results.xml
+      - name: Upload pytest diagnostics
+        if: always() && runner.os == 'Linux' && matrix.python-version == '3.12'
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-results-linux-py312
+          path: pytest-results.xml
+          if-no-files-found: error
+      - name: Preserve unit-test failure
+        if: steps.unit_tests.outcome == 'failure'
+        run: python -c "raise SystemExit(1)"
       - name: Smoke workflow
         if: runner.os == 'Linux' && matrix.python-version == '3.12'
         run: python scripts/smoke_workflow.py

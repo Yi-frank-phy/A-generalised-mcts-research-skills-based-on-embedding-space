@@ -1,3 +1,4 @@
+from tests.helpers import completed_node
 import json
 import subprocess
 import sys
@@ -10,7 +11,7 @@ from dte_backend.runner import run_frontier_search
 
 
 def test_validate_adapter_output_rejects_metric_prefill():
-    parent = SearchNode(node_id="p", claim="parent")
+    parent = completed_node(node_id="p", claim="parent")
     raw = json.dumps(
         {
             "nodes": [
@@ -39,7 +40,7 @@ def test_validate_adapter_output_rejects_metric_prefill():
     ],
 )
 def test_validate_adapter_output_rejects_controller_owned_field_presence(field, value):
-    parent = SearchNode(node_id="p", claim="parent")
+    parent = completed_node(node_id="p", claim="parent")
     raw = {"nodes": [{"node_id": "child", "claim": "child", "parent_ids": ["p"], field: value}]}
 
     with pytest.raises(ValueError, match=field):
@@ -47,7 +48,7 @@ def test_validate_adapter_output_rejects_controller_owned_field_presence(field, 
 
 
 def test_validate_adapter_output_still_accepts_legal_output():
-    parent = SearchNode(node_id="p", claim="parent")
+    parent = completed_node(node_id="p", claim="parent")
     raw = {"nodes": [{"node_id": "child", "claim": "child", "parent_ids": ["p"]}]}
 
     children = validate_adapter_output(parent, child_count=1, raw_output=raw)
@@ -77,13 +78,13 @@ def test_validate_adapter_output_still_accepts_legal_output():
     ],
 )
 def test_validate_adapter_output_rejects_identity_and_ancestry_violations(nodes, reason):
-    parent = SearchNode(node_id="p", claim="parent")
+    parent = completed_node(node_id="p", claim="parent")
     with pytest.raises(ValueError, match=reason):
         validate_adapter_output(parent, child_count=2, raw_output={"nodes": nodes})
 
 
 def test_mock_subprocess_adapter_boundary():
-    parent = SearchNode(node_id="p", claim="parent")
+    parent = completed_node(node_id="p", claim="parent")
     adapter = build_subprocess_adapter([sys.executable, "examples/mock_executor_adapter.py"])
     request = ExpansionRequest(parent=parent, child_count=2, iteration=1)
     children = adapter(request)
@@ -99,7 +100,7 @@ def test_runner_uses_external_executor_adapter():
         goal="g",
         budget=BudgetSpec(max_iterations=1, allocation_mass_per_iteration=1),
     )
-    nodes = [SearchNode(node_id="p", claim="parent", confidence=0.6)]
+    nodes = [completed_node(node_id="p", claim="parent", confidence=0.6)]
     adapter = build_subprocess_adapter([sys.executable, "examples/mock_executor_adapter.py"])
     result = run_frontier_search(spec, nodes, executor_adapter=adapter)
     assert any(node.node_id == "p" and node.status == "closed" for node in result.nodes)

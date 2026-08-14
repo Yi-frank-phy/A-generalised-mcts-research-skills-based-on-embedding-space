@@ -1,3 +1,4 @@
+from tests.helpers import completed_node, completed_candidate
 import json
 from datetime import timedelta
 
@@ -54,14 +55,14 @@ from dte_backend.relation_readiness import evaluate_synthesis_readiness
 from dte_backend.telemetry import EpisodeEventLog
 
 
-def spec(*, cap=3, pair_cap=3, max_iterations=1, enrichment_cap=0):
+def spec(*, cap=3, pair_cap=3, max_iterations=1, enrichment_cap=0, allocation_mass=1):
     return DTERunSpec(
         problem="relation readiness",
         goal="reach synthesis without duplicate or undisclosed material-conflict ambiguity",
         constraints=["Relation is observation-only"],
         budget=BudgetSpec(
             max_iterations=max_iterations,
-            allocation_mass_per_iteration=1,
+            allocation_mass_per_iteration=allocation_mass,
             max_children_per_iteration=cap,
             max_relation_pairs_per_episode=pair_cap,
             max_relation_enrichment_pairs=enrichment_cap,
@@ -154,8 +155,12 @@ def create_controller_checkpoint_run(run_dir, run_spec, nodes, *, run_id="relati
     class FixtureEmbeddingProvider:
         dim = run_spec.embedding_dimension
         name = "fixture"
+        model = "fixture-transition-v1"
 
         def embed_texts(self, texts):
+            # Relation fixtures may prescribe semantic node embeddings. The
+            # controller asks the same provider for completed-transition text,
+            # which intentionally falls back to the ordinary hash embedding.
             fallback = HashEmbeddingProvider(dim=self.dim).embed_texts(texts)
             return [
                 list(desired_embeddings.get(text, fallback[index]))
@@ -257,8 +262,8 @@ def state_snapshot(run_dir):
 def make_duplicate_gate_run(tmp_path, *, pair_cap=3, nodes=None):
     run_dir = tmp_path / "run"
     nodes = nodes or [
-        SearchNode(node_id="a", claim="Same claim", score=0.8, evidence=["source a"]),
-        SearchNode(node_id="b", claim=" same   CLAIM ", score=0.7, evidence=["source b"]),
+        completed_node(node_id="a", claim="Same claim", score=0.8, evidence=["source a"]),
+        completed_node(node_id="b", claim=" same   CLAIM ", score=0.7, evidence=["source b"]),
     ]
     create_controller_checkpoint_run(
         run_dir,
@@ -272,9 +277,9 @@ def make_duplicate_gate_run(tmp_path, *, pair_cap=3, nodes=None):
 
 def test_candidate_generation_is_canonical_stable_bounded_and_prioritized():
     nodes = [
-        SearchNode(node_id="b", claim="same", score=0.7),
-        SearchNode(node_id="a", claim=" SAME ", score=0.8),
-        SearchNode(node_id="far", claim="unrelated", score=0.1),
+        completed_node(node_id="b", claim="same", score=0.7),
+        completed_node(node_id="a", claim=" SAME ", score=0.8),
+        completed_node(node_id="far", claim="unrelated", score=0.1),
     ]
     revisions = {node.node_id: 0 for node in nodes}
     first = generate_relation_candidates(
@@ -300,9 +305,9 @@ def test_candidate_generation_is_canonical_stable_bounded_and_prioritized():
 
 def test_shared_evidence_requires_explicit_claim_divergence_to_block():
     nodes = [
-        SearchNode(node_id="a", claim="condition is sufficient", evidence=["paper-1"], score=0.8),
-        SearchNode(node_id="b", claim="condition is not sufficient", evidence=["paper-1"], score=0.79),
-        SearchNode(node_id="c", claim="remote branch", evidence=["other"], score=0.2),
+        completed_node(node_id="a", claim="condition is sufficient", evidence=["paper-1"], score=0.8),
+        completed_node(node_id="b", claim="condition is not sufficient", evidence=["paper-1"], score=0.79),
+        completed_node(node_id="c", claim="remote branch", evidence=["other"], score=0.2),
     ]
     candidates = generate_relation_candidates(
         nodes,
@@ -324,7 +329,7 @@ def test_shared_evidence_requires_explicit_claim_divergence_to_block():
 
 
 def test_candidate_generation_never_expands_to_global_all_pairs():
-    nodes = [SearchNode(node_id=f"n{i:03d}", claim="same", score=0.5) for i in range(100)]
+    nodes = [completed_node(node_id=f"n{i:03d}", claim="same", score=0.5) for i in range(100)]
     candidates = generate_relation_candidates(
         nodes,
         node_revisions={node.node_id: 0 for node in nodes},
@@ -338,9 +343,9 @@ def test_candidate_generation_never_expands_to_global_all_pairs():
 
 def test_selected_duplicate_obligation_is_not_hidden_by_nonselected_alias():
     nodes = [
-        SearchNode(node_id="a", claim="same", score=0.9),
-        SearchNode(node_id="b", claim="same", score=0.1),
-        SearchNode(node_id="c", claim="same", score=0.8),
+        completed_node(node_id="a", claim="same", score=0.9),
+        completed_node(node_id="b", claim="same", score=0.1),
+        completed_node(node_id="c", claim="same", score=0.8),
     ]
     candidates = generate_relation_candidates(
         nodes,
@@ -357,7 +362,7 @@ def test_selected_duplicate_obligation_is_not_hidden_by_nonselected_alias():
 
 
 def test_entropy_plateau_only_changes_candidate_reason_priority_not_relation_type():
-    nodes = [SearchNode(node_id="a", claim="A", score=0.8), SearchNode(node_id="b", claim="B", score=0.79)]
+    nodes = [completed_node(node_id="a", claim="A", score=0.8), completed_node(node_id="b", claim="B", score=0.79)]
     candidates = generate_relation_candidates(
         nodes,
         node_revisions={"a": 0, "b": 0},
@@ -370,7 +375,7 @@ def test_entropy_plateau_only_changes_candidate_reason_priority_not_relation_typ
 
 
 def test_relation_grant_is_strict_bounded_and_persistent(tmp_path):
-    nodes = [SearchNode(node_id=f"n{i}", claim="duplicate", score=0.9 - i * 0.01) for i in range(4)]
+    nodes = [completed_node(node_id=f"n{i}", claim="duplicate", score=0.9 - i * 0.01) for i in range(4)]
     run_dir = make_duplicate_gate_run(tmp_path, pair_cap=2, nodes=nodes)
     outcome = next_app_episode(run_dir)
     assert outcome.request.role == "relation"
@@ -409,7 +414,7 @@ def test_relation_request_and_result_schemas_are_strict(tmp_path):
 
 @pytest.mark.parametrize("case", ["missing", "extra", "duplicate", "reversed"])
 def test_relation_exact_grant_membership_is_atomic(tmp_path, case):
-    nodes = [SearchNode(node_id=f"n{i}", claim="duplicate", score=0.8) for i in range(3)]
+    nodes = [completed_node(node_id=f"n{i}", claim="duplicate", score=0.8) for i in range(3)]
     run_dir = make_duplicate_gate_run(tmp_path, pair_cap=2, nodes=nodes)
     request = next_app_episode(run_dir).request
     before = state_snapshot(run_dir)
@@ -550,8 +555,8 @@ def test_stale_relation_graph_revision_rejected_without_ledger_mutation(tmp_path
 
 def test_equivalent_commit_uses_backend_canonical_merge_and_preserves_provenance(tmp_path):
     nodes = [
-        SearchNode(node_id="a", claim="same", score=0.95, evidence=[]),
-        SearchNode(
+        completed_node(node_id="a", claim="same", score=0.95, evidence=[]),
+        completed_node(
             node_id="b",
             claim=" SAME ",
             score=0.6,
@@ -590,13 +595,13 @@ def test_equivalent_commit_uses_backend_canonical_merge_and_preserves_provenance
 
 def test_parent_child_equivalent_merge_removes_internal_parent_links(tmp_path):
     nodes = [
-        SearchNode(
+        completed_node(
             node_id="a",
             claim="same",
             score=0.9,
             evidence=["canonical information"],
         ),
-        SearchNode(
+        completed_node(
             node_id="b",
             claim=" SAME ",
             score=0.8,
@@ -621,9 +626,9 @@ def test_parent_child_equivalent_merge_removes_internal_parent_links(tmp_path):
 
 def test_chained_equivalent_merge_cleans_alias_projected_self_parent_atomically():
     nodes = [
-        SearchNode(node_id="a", claim="same"),
-        SearchNode(node_id="b", claim="same", rationale="first canonical"),
-        SearchNode(
+        completed_node(node_id="a", claim="same"),
+        completed_node(node_id="b", claim="same", rationale="first canonical"),
+        completed_node(
             node_id="c",
             claim="same",
             parent_ids=["a"],
@@ -678,10 +683,10 @@ def test_chained_equivalent_merge_cleans_alias_projected_self_parent_atomically(
 
 def test_chained_equivalent_merge_rejects_alias_projected_cycle_atomically():
     nodes = [
-        SearchNode(node_id="a", claim="same"),
-        SearchNode(node_id="b", claim="same", rationale="first canonical"),
-        SearchNode(node_id="c", claim="same", parent_ids=["x"], evidence=["more"]),
-        SearchNode(node_id="x", claim="bridge", parent_ids=["b"]),
+        completed_node(node_id="a", claim="same"),
+        completed_node(node_id="b", claim="same", rationale="first canonical"),
+        completed_node(node_id="c", claim="same", parent_ids=["x"], evidence=["more"]),
+        completed_node(node_id="x", claim="bridge", parent_ids=["b"]),
     ]
     revisions = {node.node_id: 0 for node in nodes}
     first = apply_relation_equivalent_merge(
@@ -724,13 +729,13 @@ def test_chained_equivalent_merge_rejects_alias_projected_cycle_atomically():
 @pytest.mark.parametrize("relation_type", ["complementary", "independent"])
 def test_nonmerge_relations_preserve_nodes_and_permit_readiness(tmp_path, relation_type):
     nodes = [
-        SearchNode(
+        completed_node(
             node_id="a",
             claim="route A",
             coverage_ids=["obligation:route"],
             score=0.8,
         ),
-        SearchNode(
+        completed_node(
             node_id="b",
             claim="route B",
             coverage_ids=["obligation:route"],
@@ -763,8 +768,8 @@ def test_nonmerge_relations_preserve_nodes_and_permit_readiness(tmp_path, relati
 
 def test_material_conflict_is_preserved_as_explicit_disclosure_obligation(tmp_path):
     nodes = [
-        SearchNode(node_id="a", claim="condition is sufficient", evidence=["paper"], score=0.8),
-        SearchNode(node_id="b", claim="condition is not sufficient", evidence=["paper"], score=0.79),
+        completed_node(node_id="a", claim="condition is sufficient", evidence=["paper"], score=0.8),
+        completed_node(node_id="b", claim="condition is not sufficient", evidence=["paper"], score=0.79),
     ]
     run_dir = make_duplicate_gate_run(tmp_path, nodes=nodes)
     grant = next_app_episode(run_dir)
@@ -787,25 +792,25 @@ def test_material_conflict_is_preserved_as_explicit_disclosure_obligation(tmp_pa
 def test_pending_enrichment_becomes_material_when_merge_expands_selection(tmp_path):
     run_dir = tmp_path / "pending-materiality-promotion"
     nodes = [
-        SearchNode(
+        completed_node(
             node_id="a",
             claim="route A",
             score=0.99,
             local_embedding=[1.0] + [0.0] * 7,
         ),
-        SearchNode(node_id="c", claim="duplicate", score=0.89),
-        SearchNode(
+        completed_node(node_id="c", claim="duplicate", score=0.89),
+        completed_node(
             node_id="d",
             claim=" DUPLICATE ",
             score=0.79,
             evidence=["richer canonical"],
         ),
-        SearchNode(node_id="e", claim="e", score=0.69),
-        SearchNode(node_id="f", claim="f", score=0.59),
-        SearchNode(node_id="g", claim="g", score=0.49),
-        SearchNode(node_id="h", claim="h", score=0.39),
-        SearchNode(node_id="i", claim="i", score=0.29),
-        SearchNode(
+        completed_node(node_id="e", claim="e", score=0.69),
+        completed_node(node_id="f", claim="f", score=0.59),
+        completed_node(node_id="g", claim="g", score=0.49),
+        completed_node(node_id="h", claim="h", score=0.39),
+        completed_node(node_id="i", claim="i", score=0.29),
+        completed_node(
             node_id="b",
             claim="route B",
             score=0.19,
@@ -854,13 +859,13 @@ def test_pending_enrichment_becomes_material_when_merge_expands_selection(tmp_pa
 
 def test_resolved_nonmaterial_conflict_is_disclosed_if_both_endpoints_later_selected():
     nodes = [
-        SearchNode(
+        completed_node(
             node_id="a",
             claim="route A",
             score=0.8,
             local_embedding=[1.0, 0.0],
         ),
-        SearchNode(
+        completed_node(
             node_id="b",
             claim="route B",
             score=0.7,
@@ -968,8 +973,8 @@ def test_materiality_promotion_helper_changes_only_pending_enrichment():
     entropy_only = base.model_copy(update={"candidate_reason": "entropy_plateau"})
     updates = generate_relation_enrichment_candidates(
         [
-            SearchNode(node_id="a", claim="A", score=0.9),
-            SearchNode(node_id="b", claim="B", score=0.1),
+            completed_node(node_id="a", claim="A", score=0.9),
+            completed_node(node_id="b", claim="B", score=0.1),
         ],
         node_revisions={"a": 0, "b": 0},
         graph_revision=2,
@@ -986,8 +991,8 @@ def test_materiality_promotion_helper_changes_only_pending_enrichment():
 def test_enrichment_record_does_not_cover_a_new_blocking_obligation(tmp_path):
     run_dir = tmp_path / "enrichment-promoted-to-blocking"
     nodes = [
-        SearchNode(node_id="root", claim="shared committed parent", score=0.1),
-        SearchNode(
+        completed_node(node_id="root", claim="shared committed parent", score=0.1),
+        completed_node(
             node_id="a",
             claim="condition is sufficient",
             evidence=["shared source"],
@@ -995,7 +1000,7 @@ def test_enrichment_record_does_not_cover_a_new_blocking_obligation(tmp_path):
             local_embedding=[1.0] + [0.0] * 7,
             parent_ids=["root"],
         ),
-        SearchNode(
+        completed_node(
             node_id="b",
             claim="condition is not sufficient",
             evidence=["shared source"],
@@ -1053,9 +1058,9 @@ def test_enrichment_record_does_not_cover_a_new_blocking_obligation(tmp_path):
 def test_material_conflict_disclosure_survives_later_equivalent_alias_merge(tmp_path):
     run_dir = tmp_path / "conflict-then-alias"
     nodes = [
-        SearchNode(node_id="a", claim="route A", score=0.80, local_embedding=[1.0] + [0.0] * 7),
-        SearchNode(node_id="b", claim="route A", score=0.79),
-        SearchNode(
+        completed_node(node_id="a", claim="route A", score=0.80, local_embedding=[1.0] + [0.0] * 7),
+        completed_node(node_id="b", claim="route A", score=0.79),
+        completed_node(
             node_id="c",
             claim="richer equivalent of A",
             score=0.20,
@@ -1091,23 +1096,26 @@ def test_material_conflict_disclosure_survives_later_equivalent_alias_merge(tmp_
         terminal = next_app_episode(run_dir)
     assert terminal.controller_action == "ready_for_synthesis"
     state = app_run_status(run_dir)
-    assert next(node for node in state.nodes if node.node_id == "a").status == "merged"
-    assert state.merge_applications[-1].canonical_node_id == "c"
+    # The live frontier representative wins over a closed equivalent alias;
+    # the disclosure must survive regardless of which alias is canonical.
+    assert next(node for node in state.nodes if node.node_id == "a").status == "frontier"
+    assert next(node for node in state.nodes if node.node_id == "c").status == "merged"
+    assert state.merge_applications[-1].canonical_node_id == "a"
     assert state.synthesis_readiness.disclosure_required_conflicts == [conflict_record_id]
 
 
 def test_targeted_synthesis_follows_equivalent_merge_alias(tmp_path):
     run_dir = tmp_path / "targeted-alias"
     nodes = [
-        SearchNode(node_id="root", claim="shared parent", score=0.10),
-        SearchNode(
+        completed_node(node_id="root", claim="shared parent", score=0.10),
+        completed_node(
             node_id="a",
             claim="targeted route",
             parent_ids=["root"],
             score=0.80,
             local_embedding=[1.0] + [0.0] * 7,
         ),
-        SearchNode(
+        completed_node(
             node_id="c",
             claim="richer equivalent route",
             parent_ids=["root"],
@@ -1249,8 +1257,8 @@ def test_confirmed_unapplied_merge_blocks_readiness(tmp_path):
 
 def test_material_conflict_requires_resolution_or_disclosure(tmp_path):
     nodes = [
-        SearchNode(node_id="a", claim="yes", evidence=["shared"], score=0.8),
-        SearchNode(node_id="b", claim="no", evidence=["shared"], score=0.79),
+        completed_node(node_id="a", claim="yes", evidence=["shared"], score=0.8),
+        completed_node(node_id="b", claim="no", evidence=["shared"], score=0.79),
     ]
     run_dir = make_duplicate_gate_run(tmp_path, nodes=nodes)
     request = next_app_episode(run_dir).request
@@ -1282,7 +1290,7 @@ def test_material_conflict_requires_resolution_or_disclosure(tmp_path):
 
 def test_legacy_persisted_terminal_without_audit_record_is_rejected(tmp_path):
     run_dir = tmp_path / "legacy"
-    create_app_run(run_dir, spec(), [SearchNode(node_id="a", claim="A")])
+    create_app_run(run_dir, spec(), [completed_node(node_id="a", claim="A")])
     state_path = run_dir / "app_run_state.json"
     payload = json.loads(state_path.read_text(encoding="utf-8"))
     payload["controller_action"] = "ready_for_synthesis"
@@ -1318,7 +1326,7 @@ def judge_result(request):
 def executor_result(request, *, child_id, claim, evidence):
     output = ExecutorEpisodeOutput(
         nodes=[
-            ExecutorNodeCandidate(
+            completed_candidate(
                 node_id=child_id,
                 claim=claim,
                 evidence=list(evidence),
@@ -1345,16 +1353,43 @@ def drive_two_executor_children(run_dir, *, claims, evidence):
     judge = next_app_episode(run_dir).request
     assert judge.role == "judge"
     submit_app_episode_result(run_dir, judge_result(judge))
-    children = []
-    for index in range(2):
-        executor = next_app_episode(run_dir, embedding_provider=HashEmbeddingProvider(dim=8)).request
-        assert executor.role == "executor"  # positive grants precede Relation scheduling
-        child_id = f"child-{index}"
-        submit_app_episode_result(
-            run_dir,
-            executor_result(executor, child_id=child_id, claim=claims[index], evidence=evidence[index]),
-        )
-        children.append(child_id)
+
+    # One granted Executor episode may return up to its controller allocation.
+    # For this end-to-end Relation fixture we deliberately request two children
+    # in that single bounded episode instead of assuming two separate grants.
+    executor = next_app_episode(
+        run_dir, embedding_provider=HashEmbeddingProvider(dim=8)
+    ).request
+    assert executor.role == "executor"
+    assert executor.max_returned_children == 2
+    children = ["child-0", "child-1"]
+    output = ExecutorEpisodeOutput(
+        nodes=[
+            completed_candidate(
+                node_id=child_id,
+                claim=claims[index],
+                evidence=list(evidence[index]),
+                parent_ids=[executor.parent_node_id],
+            )
+            for index, child_id in enumerate(children)
+        ]
+    )
+    submit_app_episode_result(
+        run_dir,
+        EpisodeResult(
+            episode_id=executor.episode_id,
+            attempt_id=executor.attempt_id,
+            run_id=executor.run_id,
+            role="executor",
+            input_graph_revision=executor.input_graph_revision,
+            selected_node_revisions=executor.selected_node_revisions,
+            status="completed",
+            structured_output=output,
+            runtime_diagnostics=diagnostics(),
+            output_hash=compute_output_hash(output, executor.output_schema_version),
+            schema_version=executor.output_schema_version,
+        ),
+    )
     return children
 
 
@@ -1362,8 +1397,8 @@ def test_end_to_end_judge_executor_relation_equivalent_to_ready(tmp_path):
     run_dir = tmp_path / "e2e-equivalent"
     create_app_run(
         run_dir,
-        spec(cap=2, pair_cap=2),
-        [SearchNode(node_id="p0", claim="parent A"), SearchNode(node_id="p1", claim="parent B")],
+        spec(cap=2, pair_cap=2, allocation_mass=2),
+        [completed_node(node_id="p0", claim="parent A"), completed_node(node_id="p1", claim="parent B")],
     )
     children = drive_two_executor_children(
         run_dir,
@@ -1389,8 +1424,8 @@ def test_end_to_end_judge_executor_material_conflict_to_disclosed_ready(tmp_path
     run_dir = tmp_path / "e2e-conflict"
     create_app_run(
         run_dir,
-        spec(cap=2, pair_cap=2),
-        [SearchNode(node_id="p0", claim="parent A"), SearchNode(node_id="p1", claim="parent B")],
+        spec(cap=2, pair_cap=2, allocation_mass=2),
+        [completed_node(node_id="p0", claim="parent A"), completed_node(node_id="p1", claim="parent B")],
     )
     children = drive_two_executor_children(
         run_dir,
@@ -1442,7 +1477,7 @@ def test_writing_relation_result_file_alone_cannot_mutate_ledger(tmp_path):
 
 def conflict_nodes(count=8):
     return [
-        SearchNode(
+        completed_node(
             node_id=f"n{i}",
             claim=f"material conclusion {i}",
             coverage_ids=["seed:shared"],
@@ -1472,7 +1507,7 @@ def test_shared_coverage_alone_does_not_create_all_pairs_blockers(tmp_path):
 
 def test_all_selected_duplicate_pairs_are_inventoried_before_any_merge(tmp_path):
     run_dir = tmp_path / "duplicates-28"
-    nodes = [SearchNode(node_id=f"n{i}", claim="same", score=0.9 - i * 0.01) for i in range(8)]
+    nodes = [completed_node(node_id=f"n{i}", claim="same", score=0.9 - i * 0.01) for i in range(8)]
     create_controller_checkpoint_run(run_dir, spec(pair_cap=3, enrichment_cap=0), nodes)
     force_stop_intent(run_dir)
     grant = next_app_episode(run_dir)
@@ -1496,7 +1531,7 @@ def test_all_selected_duplicate_pairs_are_inventoried_before_any_merge(tmp_path)
 
 
 def test_enrichment_generation_filters_known_pairs_before_window_truncation():
-    nodes = [SearchNode(node_id=f"n{i}", claim=f"claim {i}", score=0.8) for i in range(8)]
+    nodes = [completed_node(node_id=f"n{i}", claim=f"claim {i}", score=0.8) for i in range(8)]
     revisions = {node.node_id: 0 for node in nodes}
     first = generate_relation_enrichment_candidates(
         nodes,
@@ -1529,7 +1564,7 @@ def test_enrichment_generation_filters_known_pairs_before_window_truncation():
 
 def test_enrichment_node_window_rotates_past_covered_related_nodes():
     selected = [
-        SearchNode(
+        completed_node(
             node_id=f"s{i}",
             claim=f"selected {i}",
             score=1.0 - i * 0.05,
@@ -1538,7 +1573,7 @@ def test_enrichment_node_window_rotates_past_covered_related_nodes():
         for i in range(8)
     ]
     related = [
-        SearchNode(
+        completed_node(
             node_id=f"r{i}",
             claim=f"related {i}",
             score=0.4 - i * 0.01,
@@ -1580,7 +1615,7 @@ def test_enrichment_node_window_rotates_past_covered_related_nodes():
 
 
 def test_relation_identity_ignores_graph_revision_but_tracks_node_revision():
-    nodes = [SearchNode(node_id="a", claim="A", score=0.8), SearchNode(node_id="b", claim="B", score=0.8)]
+    nodes = [completed_node(node_id="a", claim="A", score=0.8), completed_node(node_id="b", claim="B", score=0.8)]
     first = generate_relation_enrichment_candidates(
         nodes,
         node_revisions={"a": 0, "b": 0},
@@ -1610,7 +1645,7 @@ def test_relation_identity_ignores_graph_revision_but_tracks_node_revision():
 
 
 def test_invalidated_candidates_do_not_occupy_enrichment_window():
-    nodes = [SearchNode(node_id=f"n{i}", claim=f"claim {i}", score=0.8) for i in range(8)]
+    nodes = [completed_node(node_id=f"n{i}", claim=f"claim {i}", score=0.8) for i in range(8)]
     revisions = {node.node_id: 0 for node in nodes}
     first = generate_relation_enrichment_candidates(
         nodes,
@@ -1636,10 +1671,10 @@ def test_invalidated_candidates_do_not_occupy_enrichment_window():
 
 def test_nonselected_unrelated_pairs_are_not_scheduled_for_enrichment():
     nodes = [
-        SearchNode(node_id="a", claim="selected A", score=0.8),
-        SearchNode(node_id="b", claim="selected B", score=0.8),
-        SearchNode(node_id="x", claim="unrelated X", score=0.8),
-        SearchNode(node_id="y", claim="unrelated Y", score=0.8),
+        completed_node(node_id="a", claim="selected A", score=0.8),
+        completed_node(node_id="b", claim="selected B", score=0.8),
+        completed_node(node_id="x", claim="unrelated X", score=0.8),
+        completed_node(node_id="y", claim="unrelated Y", score=0.8),
     ]
     candidates = generate_relation_enrichment_candidates(
         nodes,
@@ -1655,7 +1690,7 @@ def test_nonselected_unrelated_pairs_are_not_scheduled_for_enrichment():
 def make_enrichment_run(tmp_path, *, budget=3, pair_cap=2, node_count=5):
     run_dir = tmp_path / f"enrichment-{budget}-{pair_cap}-{node_count}"
     nodes = [
-        SearchNode(node_id=f"n{i}", claim=f"distinct claim {i}", score=0.8)
+        completed_node(node_id=f"n{i}", claim=f"distinct claim {i}", score=0.8)
         for i in range(node_count)
     ]
     create_controller_checkpoint_run(
@@ -1762,14 +1797,14 @@ def test_overlapping_enrichment_candidate_can_be_granted_in_a_later_episode(tmp_
 
 
 def test_relation_request_builder_rejects_overlapping_pairs_without_dropping_them():
-    graph = EpisodeGraph(nodes=[SearchNode(node_id=node_id, claim=node_id) for node_id in "abc"])
+    graph = EpisodeGraph(nodes=[completed_node(node_id=node_id, claim=node_id) for node_id in "abc"])
     candidates = relation_candidates_for_pairs([("a", "b"), ("b", "c")])
     with pytest.raises(ValueError, match="candidate pairs must be node-disjoint"):
         build_relation_request_for_test(graph, candidates)
 
 
 def test_relation_request_builder_accepts_node_disjoint_pairs():
-    graph = EpisodeGraph(nodes=[SearchNode(node_id=node_id, claim=node_id) for node_id in "abcd"])
+    graph = EpisodeGraph(nodes=[completed_node(node_id=node_id, claim=node_id) for node_id in "abcd"])
     candidates = relation_candidates_for_pairs([("a", "b"), ("c", "d")])
     request = build_relation_request_for_test(graph, candidates)
     assert [pair.candidate_id for pair in request.relation_payload.candidate_pairs] == [
@@ -1779,7 +1814,7 @@ def test_relation_request_builder_accepts_node_disjoint_pairs():
 
 @pytest.mark.parametrize("relation_type", ["equivalent", "complementary", "independent"])
 def test_commit_rejects_old_overlapping_relation_request_atomically(relation_type):
-    graph = EpisodeGraph(nodes=[SearchNode(node_id=node_id, claim=node_id) for node_id in "abc"])
+    graph = EpisodeGraph(nodes=[completed_node(node_id=node_id, claim=node_id) for node_id in "abc"])
     candidates = relation_candidates_for_pairs([("a", "b"), ("b", "c")])
     left_request = build_relation_request_for_test(graph, candidates[:1])
     right_request = build_relation_request_for_test(graph, candidates[1:])
@@ -1807,9 +1842,9 @@ def test_commit_rejects_old_overlapping_relation_request_atomically(relation_typ
 
 def test_merge_provenance_conflict_rejects_the_whole_relation_commit():
     nodes = [
-        SearchNode(node_id="a", claim="canonical A"),
-        SearchNode(node_id="b", claim="absorbed B", status="merged"),
-        SearchNode(node_id="c", claim="canonical C"),
+        completed_node(node_id="a", claim="canonical A"),
+        completed_node(node_id="b", claim="absorbed B", status="merged"),
+        completed_node(node_id="c", claim="canonical C"),
     ]
     candidate = relation_candidates_for_pairs([("b", "c")])[0]
     graph = EpisodeGraph(
@@ -1913,7 +1948,7 @@ def test_merge_alias_resolver_rejects_noop_or_unaccounted_sources():
 
 
 def test_two_node_disjoint_equivalent_merges_commit_atomically():
-    graph = EpisodeGraph(nodes=[SearchNode(node_id=node_id, claim=node_id) for node_id in "abcd"])
+    graph = EpisodeGraph(nodes=[completed_node(node_id=node_id, claim=node_id) for node_id in "abcd"])
     candidates = relation_candidates_for_pairs([("a", "b"), ("c", "d")])
     request = build_relation_request_for_test(graph, candidates)
     grant_relation_candidates(graph, candidates, request)
@@ -2056,9 +2091,9 @@ def test_cancelled_or_expired_enrichment_attempt_does_not_consume_budget(
 def test_blocking_candidates_are_always_granted_before_enrichment(tmp_path):
     run_dir = tmp_path / "blocking-first"
     nodes = [
-        SearchNode(node_id="a", claim="yes", evidence=["shared"], score=0.8),
-        SearchNode(node_id="b", claim="no", evidence=["shared"], score=0.8),
-        SearchNode(node_id="c", claim="other", evidence=["different"], score=0.8),
+        completed_node(node_id="a", claim="yes", evidence=["shared"], score=0.8),
+        completed_node(node_id="b", claim="no", evidence=["shared"], score=0.8),
+        completed_node(node_id="c", claim="other", evidence=["different"], score=0.8),
     ]
     create_controller_checkpoint_run(run_dir, spec(enrichment_cap=3), nodes)
     force_stop_intent(run_dir)

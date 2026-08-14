@@ -134,9 +134,10 @@ def allocate_frontier(
 ) -> list[AllocationResult]:
     """Compute canonical UCB scores and Boltzmann expansion budgets.
 
-    Judge fills ``score`` and the geometry layer fills ``uncertainty``. The local
-    UCB score is always ``score + uncertainty``. Legacy ``tau`` and
-    ``c_explore`` arguments are accepted for compatibility but do not affect UCB.
+    ``score`` remains Judge-owned observability. On the `new` release line the
+    proper-volume controller precomputes canonical ``ucb_score = V + SD`` and
+    this allocator consumes it directly. Callers without a precomputed UCB retain
+    the legacy ``score + uncertainty`` fallback for isolated compatibility tests.
 
     ``allocation_metric=\"ucb\"`` remains the default so local uncertainty affects
     actual expansion rather than display only. ``\"score\"`` retains the older
@@ -146,7 +147,12 @@ def allocate_frontier(
     frontier = [n for n in nodes if n.status == "frontier"]
     scores = [float(n.score if n.score is not None else n.confidence) for n in frontier]
     uncertainties = [float(n.uncertainty if n.uncertainty is not None else 0.0) for n in frontier]
-    ucb_scores = [calculate_ucb(v, u, tau=tau, c_explore=c_explore) for v, u in zip(scores, uncertainties)]
+    ucb_scores = [
+        float(node.ucb_score)
+        if node.ucb_score is not None
+        else calculate_ucb(score, uncertainty, tau=tau, c_explore=c_explore)
+        for node, score, uncertainty in zip(frontier, scores, uncertainties)
+    ]
 
     if allocation_metric == "ucb":
         allocation_values = ucb_scores

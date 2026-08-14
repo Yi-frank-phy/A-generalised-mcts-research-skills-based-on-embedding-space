@@ -1,4 +1,5 @@
 from __future__ import annotations
+from tests.helpers import completed_node, completed_candidate
 
 import hashlib
 import json
@@ -117,7 +118,7 @@ def executor_result(
     nodes = []
     if child_id is not None:
         nodes.append(
-            ExecutorNodeCandidate(
+            completed_candidate(
                 node_id=child_id,
                 claim=claim,
                 evidence=list(evidence or []),
@@ -209,8 +210,8 @@ def drive_relation_run(
         run_dir,
         run_spec(),
         [
-            SearchNode(node_id="p0", claim="parent zero"),
-            SearchNode(node_id="p1", claim="parent one"),
+            completed_node(node_id="p0", claim="parent zero"),
+            completed_node(node_id="p1", claim="parent one"),
         ],
         run_id=f"run-{relation_type}",
     )
@@ -253,8 +254,8 @@ def drive_enrichment_run(tmp_path: Path) -> Path:
         run_dir,
         run_spec(enrichment=1),
         [
-            SearchNode(node_id="a", claim="alpha route"),
-            SearchNode(node_id="b", claim="beta route"),
+            completed_node(node_id="a", claim="alpha route"),
+            completed_node(node_id="b", claim="beta route"),
         ],
         run_id="run-enrichment",
     )
@@ -373,7 +374,7 @@ def test_frontier_wait_is_read_only_and_does_not_change_allocation(tmp_path):
             embedding_provider="hash",
             embedding_dimension=8,
         ),
-        [SearchNode(node_id=f"p{index}", claim=f"route {index}") for index in range(3)],
+        [completed_node(node_id=f"p{index}", claim=f"route {index}") for index in range(3)],
         run_id="frontier-wait",
     )
     while True:
@@ -447,7 +448,7 @@ def test_rejected_late_and_retried_attempts_do_not_duplicate_committed_work(tmp_
     create_app_run(
         run_dir,
         run_spec(cap=1, iterations=2),
-        [SearchNode(node_id="n", claim="candidate")],
+        [completed_node(node_id="n", claim="candidate")],
         run_id="retry-run",
     )
     first = next_app_episode(run_dir).request
@@ -484,7 +485,7 @@ def test_failed_and_cancelled_attempts_are_visible(tmp_path, transition, expecte
     create_app_run(
         run_dir,
         run_spec(),
-        [SearchNode(node_id="n", claim="candidate")],
+        [completed_node(node_id="n", claim="candidate")],
         run_id=transition,
     )
     request = next_app_episode(run_dir).request
@@ -501,7 +502,7 @@ def test_expired_attempt_is_visible(tmp_path, monkeypatch):
     create_app_run(
         run_dir,
         run_spec(),
-        [SearchNode(node_id="n", claim="candidate")],
+        [completed_node(node_id="n", claim="candidate")],
         run_id="expired",
     )
     request = next_app_episode(
@@ -544,7 +545,7 @@ def test_corrupt_telemetry_tail_is_recovered_logically_without_repair(tmp_path):
     create_app_run(
         run_dir,
         run_spec(),
-        [SearchNode(node_id="n", claim="candidate")],
+        [completed_node(node_id="n", claim="candidate")],
         run_id="corrupt-telemetry",
     )
     telemetry = run_dir / "episode_events.jsonl"
@@ -564,7 +565,7 @@ def test_missing_legacy_fields_and_artifacts_are_reported_not_guessed(tmp_path):
     create_app_run(
         run_dir,
         run_spec(),
-        [SearchNode(node_id="n", claim="candidate")],
+        [completed_node(node_id="n", claim="candidate")],
         run_id="legacy",
     )
     state_path = run_dir / "app_run_state.json"
@@ -592,7 +593,7 @@ def test_unprovenanced_legacy_score_is_not_guessed_as_a_judge_result(tmp_path):
     create_app_run(
         run_dir,
         run_spec(),
-        [SearchNode(node_id="n", claim="candidate")],
+        [completed_node(node_id="n", claim="candidate")],
         run_id="legacy-score",
     )
     state_path = run_dir / "app_run_state.json"
@@ -722,7 +723,7 @@ def test_feedback_append_repairs_only_its_own_corrupt_tail(tmp_path):
     create_app_run(
         run_dir,
         run_spec(),
-        [SearchNode(node_id="n", claim="candidate")],
+        [completed_node(node_id="n", claim="candidate")],
         run_id="feedback-tail",
     )
     record_feedback(
@@ -759,7 +760,7 @@ def test_runtime_aggregate_diagnostics_are_optional_nullable_and_source_labelled
     create_app_run(
         run_dir,
         run_spec(),
-        [SearchNode(node_id="n", claim="candidate")],
+        [completed_node(node_id="n", claim="candidate")],
         run_id="diagnostics",
     )
     request = next_app_episode(run_dir).request
@@ -790,7 +791,7 @@ def test_legacy_runtime_diagnostics_defaults_do_not_create_false_mirror_drift(tm
     create_app_run(
         run_dir,
         run_spec(),
-        [SearchNode(node_id="n", claim="candidate")],
+        [completed_node(node_id="n", claim="candidate")],
         run_id="legacy-runtime-diagnostics",
     )
     request = next_app_episode(run_dir).request
@@ -893,7 +894,7 @@ def test_valid_but_stale_mirror_is_reported_as_recoverable(tmp_path):
     create_app_run(
         run_dir,
         run_spec(),
-        [SearchNode(node_id="n", claim="candidate")],
+        [completed_node(node_id="n", claim="candidate")],
         run_id="stale-mirror",
     )
     mirror = run_dir / "relations" / "candidates.json"
@@ -914,7 +915,7 @@ def test_feedback_refuses_to_append_after_invalid_complete_record(tmp_path):
     create_app_run(
         run_dir,
         run_spec(),
-        [SearchNode(node_id="n", claim="candidate")],
+        [completed_node(node_id="n", claim="candidate")],
         run_id="invalid-feedback-record",
     )
     path = run_dir / "observability" / "feedback.jsonl"

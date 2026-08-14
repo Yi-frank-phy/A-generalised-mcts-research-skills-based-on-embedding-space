@@ -1,3 +1,4 @@
+from tests.helpers import completed_node
 import math
 
 from dte_backend.app_driver import (
@@ -26,8 +27,8 @@ def test_run_frontier_search_minimal_loop():
         budget=BudgetSpec(max_iterations=1, allocation_mass_per_iteration=2),
     )
     nodes = [
-        SearchNode(node_id="a", claim="route A", rationale="direct", confidence=0.6),
-        SearchNode(node_id="b", claim="route B", rationale="counter", confidence=0.5),
+        completed_node(node_id="a", claim="route A", rationale="direct", confidence=0.6),
+        completed_node(node_id="b", claim="route B", rationale="counter", confidence=0.5),
     ]
     result = run_frontier_search(spec, nodes)
     assert result.traces
@@ -43,8 +44,8 @@ def test_runner_temperature_uses_current_frontier_diversity():
         budget=BudgetSpec(max_iterations=1, allocation_mass_per_iteration=2),
     )
     nodes = [
-        SearchNode(node_id="a", claim="route A", confidence=0.6),
-        SearchNode(node_id="b", claim="route B", confidence=0.5),
+        completed_node(node_id="a", claim="route A", confidence=0.6),
+        completed_node(node_id="b", claim="route B", confidence=0.5),
     ]
 
     result = run_frontier_search(spec, nodes)
@@ -74,8 +75,8 @@ def test_run_frontier_search_uses_supplied_judge_adapter():
         budget=BudgetSpec(max_iterations=1, allocation_mass_per_iteration=1),
     )
     nodes = [
-        SearchNode(node_id="a", claim="strong route", confidence=0.1),
-        SearchNode(node_id="b", claim="weak route", confidence=0.9),
+        completed_node(node_id="a", claim="strong route", confidence=0.1),
+        completed_node(node_id="b", claim="weak route", confidence=0.9),
     ]
 
     def judge_adapter(frontier):
@@ -96,7 +97,7 @@ def test_run_frontier_search_validates_supplied_judge_adapter_output():
         goal="report",
         budget=BudgetSpec(max_iterations=1, allocation_mass_per_iteration=1),
     )
-    nodes = [SearchNode(node_id="a", claim="route")]
+    nodes = [completed_node(node_id="a", claim="route")]
 
     def bad_judge_adapter(frontier):
         return [{"node_id": frontier[0].node_id, "score": 0.91, "reasoning": "bad", "ucb_score": 99}]
@@ -117,8 +118,8 @@ def test_run_frontier_search_accepts_user_interruption_after_checkpoint():
         ),
     )
     nodes = [
-        SearchNode(node_id="a", claim="route A", confidence=0.7),
-        SearchNode(node_id="b", claim="route B", confidence=0.6),
+        completed_node(node_id="a", claim="route A", confidence=0.7),
+        completed_node(node_id="b", claim="route B", confidence=0.6),
     ]
 
     def control_callback(spec, nodes, traces):
@@ -160,7 +161,7 @@ def test_run_frontier_search_accepts_authorized_main_agent_request():
 
     result = run_frontier_search(
         spec,
-        [SearchNode(node_id="a", claim="route A")],
+        [completed_node(node_id="a", claim="route A")],
         control_callback=control_callback,
     )
 
@@ -187,7 +188,7 @@ def test_legacy_controller_natural_entropy_stop_is_unchanged():
         ),
     )
 
-    result = run_frontier_search(spec, [SearchNode(node_id="a", claim="route A")])
+    result = run_frontier_search(spec, [completed_node(node_id="a", claim="route A")])
 
     assert result.stop_reason == "entropy_plateau"
     assert result.forced_synthesis is None
@@ -205,8 +206,8 @@ def test_bounded_runner_rejects_initial_nodes_above_cap():
         run_frontier_search(
             spec,
             [
-                SearchNode(node_id="a", claim="route A"),
-                SearchNode(node_id="b", claim="route B"),
+                completed_node(node_id="a", claim="route A"),
+                completed_node(node_id="b", claim="route B"),
             ],
         )
 
@@ -223,7 +224,7 @@ def test_bounded_runner_judges_equal_cap_then_stops_without_expansion():
 
     result = run_frontier_search(
         spec,
-        [SearchNode(node_id="a", claim="route A")],
+        [completed_node(node_id="a", claim="route A")],
     )
 
     assert result.stop_reason == "max_search_nodes"
@@ -245,14 +246,14 @@ def test_app_native_and_strict_runner_share_equal_cap_stop(tmp_path):
     )
     strict = run_frontier_search(
         spec,
-        [SearchNode(node_id="a", claim="route A")],
+        [completed_node(node_id="a", claim="route A")],
     )
 
     run_dir = tmp_path / "shared-cap"
     create_app_run(
         run_dir,
         spec,
-        [SearchNode(node_id="a", claim="route A")],
+        [completed_node(node_id="a", claim="route A")],
         run_id="shared-cap",
     )
     request = next_app_episode(run_dir).request
@@ -308,8 +309,8 @@ def test_bounded_runner_trims_allocation_to_remaining_node_slots():
         ),
     )
     initial = [
-        SearchNode(node_id="a", claim="route A"),
-        SearchNode(node_id="b", claim="route B"),
+        completed_node(node_id="a", claim="route A"),
+        completed_node(node_id="b", claim="route B"),
     ]
 
     result = run_frontier_search(spec, initial)
@@ -320,5 +321,5 @@ def test_bounded_runner_trims_allocation_to_remaining_node_slots():
 
 def test_synthesis_mentions_protocol():
     spec = DTERunSpec(problem="p", goal="g")
-    report = synthesize_report(spec, [SearchNode(node_id="n", claim="claim", score=0.8)])
+    report = synthesize_report(spec, [completed_node(node_id="n", claim="claim", score=0.8)])
     assert "Judge/Evolution/Expansion" in report

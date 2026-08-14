@@ -1,3 +1,4 @@
+from tests.helpers import completed_node
 import subprocess
 import sys
 from pathlib import Path
@@ -22,7 +23,7 @@ class RecordingAdapter:
     def expand(self, request: ExpansionRequest) -> list[SearchNode]:
         self.requests.append(request)
         return [
-            SearchNode(
+            completed_node(
                 node_id=f"{request.parent.node_id}-adapter-child",
                 claim=f"adapter child for {request.parent.claim}",
                 rationale="structured executor output",
@@ -35,7 +36,7 @@ class RecordingAdapter:
 class BadObjectAdapter:
     def expand(self, request: ExpansionRequest) -> list[SearchNode]:
         return [
-            SearchNode(
+            completed_node(
                 node_id=f"{request.parent.node_id}-bad-child",
                 claim="bad child",
                 parent_ids=[request.parent.node_id],
@@ -45,7 +46,7 @@ class BadObjectAdapter:
 
 
 def test_expand_frontier_uses_executor_adapter_and_closes_parent():
-    parent = SearchNode(node_id="p", claim="parent")
+    parent = completed_node(node_id="p", claim="parent")
     adapter = RecordingAdapter()
 
     nodes = expand_frontier([parent], {"p": 1}, iteration=2, executor_adapter=adapter)
@@ -58,7 +59,7 @@ def test_expand_frontier_uses_executor_adapter_and_closes_parent():
 
 
 def test_expand_frontier_validates_object_adapter_output_before_consuming():
-    parent = SearchNode(node_id="p", claim="parent")
+    parent = completed_node(node_id="p", claim="parent")
 
     with pytest.raises(ValueError, match="controller-owned field: score"):
         expand_frontier([parent], {"p": 1}, iteration=2, executor_adapter=BadObjectAdapter())
@@ -71,7 +72,7 @@ def test_run_frontier_search_keeps_adapter_inside_mandatory_loop():
         budget=BudgetSpec(max_iterations=1, allocation_mass_per_iteration=1),
     )
     adapter = RecordingAdapter()
-    result = run_frontier_search(spec, [SearchNode(node_id="p", claim="parent")], executor_adapter=adapter)
+    result = run_frontier_search(spec, [completed_node(node_id="p", claim="parent")], executor_adapter=adapter)
 
     assert len(adapter.requests) == 1
     assert result.traces[0].allocations
@@ -81,18 +82,18 @@ def test_run_frontier_search_keeps_adapter_inside_mandatory_loop():
 
 
 def test_executor_child_cannot_return_synthesis_node():
-    parent = SearchNode(node_id="p", claim="parent")
-    child = SearchNode(node_id="s", node_type="synthesis", claim="bad", parent_ids=["p"], status="synthesis")
+    parent = completed_node(node_id="p", claim="parent")
+    child = completed_node(node_id="s", node_type="synthesis", claim="bad", parent_ids=["p"], status="synthesis")
 
     with pytest.raises(ValueError, match="synthesis"):
         validate_executor_children(parent, 1, [child])
 
 
 def test_executor_child_count_cannot_exceed_budget():
-    parent = SearchNode(node_id="p", claim="parent")
+    parent = completed_node(node_id="p", claim="parent")
     children = [
-        SearchNode(node_id="c1", claim="child 1", parent_ids=["p"]),
-        SearchNode(node_id="c2", claim="child 2", parent_ids=["p"]),
+        completed_node(node_id="c1", claim="child 1", parent_ids=["p"]),
+        completed_node(node_id="c2", claim="child 2", parent_ids=["p"]),
     ]
 
     with pytest.raises(ValueError, match="budget 1"):
@@ -100,32 +101,32 @@ def test_executor_child_count_cannot_exceed_budget():
 
 
 def test_executor_child_must_include_parent_id():
-    parent = SearchNode(node_id="p", claim="parent")
-    child = SearchNode(node_id="c", claim="bad", parent_ids=["other"])
+    parent = completed_node(node_id="p", claim="parent")
+    child = completed_node(node_id="c", claim="bad", parent_ids=["other"])
 
     with pytest.raises(ValueError, match="parent id"):
         validate_executor_children(parent, 1, [child])
 
 
 def test_executor_child_must_return_to_frontier():
-    parent = SearchNode(node_id="p", claim="parent")
-    child = SearchNode(node_id="c", claim="bad", parent_ids=["p"], status="closed")
+    parent = completed_node(node_id="p", claim="parent")
+    child = completed_node(node_id="c", claim="bad", parent_ids=["p"], status="closed")
 
     with pytest.raises(ValueError, match="frontier"):
         validate_executor_children(parent, 1, [child])
 
 
 def test_executor_child_cannot_prefill_judge_metrics():
-    parent = SearchNode(node_id="p", claim="parent")
-    child = SearchNode(node_id="c", claim="bad", parent_ids=["p"], score=0.9)
+    parent = completed_node(node_id="p", claim="parent")
+    child = completed_node(node_id="c", claim="bad", parent_ids=["p"], score=0.9)
 
     with pytest.raises(ValueError, match="metrics"):
         validate_executor_children(parent, 1, [child])
 
 
 def test_executor_child_cannot_prefill_expansion_budget():
-    parent = SearchNode(node_id="p", claim="parent")
-    child = SearchNode(node_id="c", claim="bad", parent_ids=["p"], expansion_budget=1)
+    parent = completed_node(node_id="p", claim="parent")
+    child = completed_node(node_id="c", claim="bad", parent_ids=["p"], expansion_budget=1)
 
     with pytest.raises(ValueError, match="expansion budgets"):
         validate_executor_children(parent, 1, [child])
@@ -144,7 +145,7 @@ def test_search_node_rejects_extra_free_form_fields():
 
 
 def test_expansion_request_rejects_extra_free_form_fields():
-    parent = SearchNode(node_id="p", claim="parent")
+    parent = completed_node(node_id="p", claim="parent")
 
     with pytest.raises(ValidationError):
         ExpansionRequest.model_validate(
@@ -177,7 +178,7 @@ def test_subprocess_executor_adapter_reads_structured_json(tmp_path):
         ),
         encoding="utf-8",
     )
-    parent = SearchNode(node_id="p", claim="parent")
+    parent = completed_node(node_id="p", claim="parent")
     request = ExpansionRequest(parent=parent, count=1, iteration=1)
     adapter = SubprocessExecutorAdapter([sys.executable, str(script)])
 
@@ -190,7 +191,7 @@ def test_subprocess_executor_adapter_reads_structured_json(tmp_path):
 def test_subprocess_executor_adapter_rejects_nonzero_exit(tmp_path):
     script = tmp_path / "adapter.py"
     script.write_text("import sys\nsys.stderr.write('failed')\nsys.exit(3)\n", encoding="utf-8")
-    parent = SearchNode(node_id="p", claim="parent")
+    parent = completed_node(node_id="p", claim="parent")
     request = ExpansionRequest(parent=parent, count=1, iteration=1)
     adapter = SubprocessExecutorAdapter([sys.executable, str(script)])
 
@@ -201,7 +202,7 @@ def test_subprocess_executor_adapter_rejects_nonzero_exit(tmp_path):
 def test_subprocess_executor_adapter_requires_node_list(tmp_path):
     script = tmp_path / "adapter.py"
     script.write_text("print('{\"not_nodes\": []}')\n", encoding="utf-8")
-    parent = SearchNode(node_id="p", claim="parent")
+    parent = completed_node(node_id="p", claim="parent")
     request = ExpansionRequest(parent=parent, count=1, iteration=1)
     adapter = SubprocessExecutorAdapter([sys.executable, str(script)])
 

@@ -1,3 +1,4 @@
+from tests.helpers import completed_node, completed_candidate
 import json
 import copy
 import uuid
@@ -85,7 +86,7 @@ def judge_result(request, score=0.8):
 def executor_result(request, child_id="child"):
     output = ExecutorEpisodeOutput(
         nodes=[
-            ExecutorNodeCandidate(
+            completed_candidate(
                 node_id=child_id,
                 claim="bounded executor child",
                 parent_ids=[request.parent_node_id],
@@ -170,8 +171,8 @@ def create_duplicate_gate(run_dir, *, final=True):
         run_dir,
         run_spec(final=final, iterations=1),
         [
-            SearchNode(node_id="a", claim="duplicate"),
-            SearchNode(node_id="b", claim=" DUPLICATE "),
+            completed_node(node_id="a", claim="duplicate"),
+            completed_node(node_id="b", claim=" DUPLICATE "),
         ],
     )
     judge = next_app_episode(run_dir).request
@@ -229,7 +230,7 @@ def create_duplicate_gate(run_dir, *, final=True):
 )
 def test_create_run_rejects_controller_owned_initial_state(tmp_path, update):
     run_dir = tmp_path / next(iter(update))
-    node = SearchNode(node_id="seed", claim="producer node").model_copy(update=update)
+    node = completed_node(node_id="seed", claim="producer node").model_copy(update=update)
     with pytest.raises(ValueError, match="controller-owned"):
         create_app_run(run_dir, run_spec(), [node])
     assert not (run_dir / "app_run_state.json").exists()
@@ -237,7 +238,7 @@ def test_create_run_rejects_controller_owned_initial_state(tmp_path, update):
 
 def test_clean_create_run_always_grants_judge_first(tmp_path):
     run_dir = tmp_path / "clean"
-    create_app_run(run_dir, run_spec(), [SearchNode(node_id="seed", claim="clean")])
+    create_app_run(run_dir, run_spec(), [completed_node(node_id="seed", claim="clean")])
     outcome = next_app_episode(run_dir)
     assert outcome.request is not None
     assert outcome.request.role == "judge"
@@ -246,7 +247,7 @@ def test_clean_create_run_always_grants_judge_first(tmp_path):
 @pytest.mark.parametrize("revision_kind", ["graph", "node"])
 def test_load_rejects_revision_without_a_committed_transition(tmp_path, revision_kind):
     run_dir = tmp_path / f"forged-{revision_kind}-revision"
-    create_app_run(run_dir, run_spec(), [SearchNode(node_id="seed", claim="clean")])
+    create_app_run(run_dir, run_spec(), [completed_node(node_id="seed", claim="clean")])
     payload = json.loads((run_dir / "app_run_state.json").read_text(encoding="utf-8"))
     if revision_kind == "graph":
         payload["graph_revision"] = 50
@@ -273,7 +274,7 @@ def test_load_rejects_revision_without_a_committed_transition(tmp_path, revision
 )
 def test_load_binds_deadline_to_runtime_grant(tmp_path, mutate):
     run_dir = tmp_path / "deadline-binding"
-    create_app_run(run_dir, run_spec(), [SearchNode(node_id="seed", claim="clean")])
+    create_app_run(run_dir, run_spec(), [completed_node(node_id="seed", claim="clean")])
     next_app_episode(
         run_dir,
         runtime_limits=RuntimeLimits(wall_clock_seconds=1),
@@ -289,7 +290,7 @@ def test_load_binds_deadline_to_runtime_grant(tmp_path, mutate):
 @pytest.mark.parametrize("granted_at", ["not-a-time", "2026-01-01T00:00:00"])
 def test_load_rejects_invalid_or_naive_attempt_timestamp(tmp_path, granted_at):
     run_dir = tmp_path / "invalid-time"
-    create_app_run(run_dir, run_spec(), [SearchNode(node_id="seed", claim="clean")])
+    create_app_run(run_dir, run_spec(), [completed_node(node_id="seed", claim="clean")])
     next_app_episode(run_dir)
     payload = json.loads((run_dir / "app_run_state.json").read_text(encoding="utf-8"))
     payload["episodes"][0]["attempts"][0]["granted_at"] = granted_at
@@ -301,7 +302,7 @@ def test_load_rejects_invalid_or_naive_attempt_timestamp(tmp_path, granted_at):
 
 def test_submit_uses_one_receipt_timestamp_at_deadline_boundary(tmp_path, monkeypatch):
     run_dir = tmp_path / "deadline-receipt"
-    create_app_run(run_dir, run_spec(), [SearchNode(node_id="seed", claim="clean")])
+    create_app_run(run_dir, run_spec(), [completed_node(node_id="seed", claim="clean")])
     request = next_app_episode(
         run_dir,
         runtime_limits=RuntimeLimits(wall_clock_seconds=1),
@@ -325,7 +326,7 @@ def test_submit_uses_one_receipt_timestamp_at_deadline_boundary(tmp_path, monkey
 
 def test_synthesis_intent_waits_for_judge_and_controller_safe_point(tmp_path):
     run_dir = tmp_path / "safe-point"
-    create_app_run(run_dir, run_spec(), [SearchNode(node_id="seed", claim="clean")])
+    create_app_run(run_dir, run_spec(), [completed_node(node_id="seed", claim="clean")])
     request_app_synthesis(
         run_dir,
         SynthesisControlRequest(
@@ -380,7 +381,7 @@ def test_synthesis_intent_waits_for_judge_and_controller_safe_point(tmp_path):
 
 def test_targeted_synthesis_rejects_unknown_node(tmp_path):
     run_dir = tmp_path / "unknown-target"
-    create_app_run(run_dir, run_spec(), [SearchNode(node_id="seed", claim="clean")])
+    create_app_run(run_dir, run_spec(), [completed_node(node_id="seed", claim="clean")])
     with pytest.raises(ValueError, match="unknown node IDs"):
         request_app_synthesis(
             run_dir,
@@ -399,7 +400,7 @@ def test_run_complete_is_sticky_preserves_reason_and_emits_once(tmp_path):
     create_app_run(
         run_dir,
         run_spec(final=False, iterations=1),
-        [SearchNode(node_id="seed", claim="trusted checkpoint")],
+        [completed_node(node_id="seed", claim="trusted checkpoint")],
     )
     judge = next_app_episode(run_dir).request
     submit_app_episode_result(run_dir, judge_result(judge))
@@ -435,7 +436,7 @@ def test_retry_cannot_reopen_terminal_state(tmp_path):
     create_app_run(
         run_dir,
         run_spec(iterations=1),
-        [SearchNode(node_id="seed", claim="clean")],
+        [completed_node(node_id="seed", claim="clean")],
     )
     judge = next_app_episode(run_dir).request
     fail_app_episode(run_dir, judge.episode_id, judge.attempt_id, "failed before terminal")
@@ -565,7 +566,7 @@ def test_load_replays_equivalent_merge_semantics_for_canonical_node(tmp_path):
 
 def test_state_write_failure_cannot_publish_false_commit(tmp_path, monkeypatch):
     run_dir = tmp_path / "state-failure"
-    create_app_run(run_dir, run_spec(), [SearchNode(node_id="seed", claim="clean")])
+    create_app_run(run_dir, run_spec(), [completed_node(node_id="seed", claim="clean")])
     request = next_app_episode(run_dir).request
     status_path = run_dir / "episodes" / request.episode_id / request.attempt_id / "status.json"
 
@@ -590,7 +591,7 @@ def test_state_write_failure_cannot_publish_false_commit(tmp_path, monkeypatch):
 
 def test_commit_event_outbox_recovers_after_telemetry_failure(tmp_path, monkeypatch):
     run_dir = tmp_path / "outbox"
-    create_app_run(run_dir, run_spec(), [SearchNode(node_id="seed", claim="clean")])
+    create_app_run(run_dir, run_spec(), [completed_node(node_id="seed", claim="clean")])
     request = next_app_episode(run_dir).request
     original_emit = EpisodeEventLog.emit
     failed = {"done": False}
@@ -618,7 +619,7 @@ def test_commit_event_outbox_recovers_after_telemetry_failure(tmp_path, monkeypa
 
 def test_restart_repairs_stale_attempt_status_mirror_after_commit(tmp_path, monkeypatch):
     run_dir = tmp_path / "attempt-mirror-repair"
-    create_app_run(run_dir, run_spec(), [SearchNode(node_id="seed", claim="clean")])
+    create_app_run(run_dir, run_spec(), [completed_node(node_id="seed", claim="clean")])
     request = next_app_episode(run_dir).request
     status_path = run_dir / "episodes" / request.episode_id / request.attempt_id / "status.json"
     assert json.loads(status_path.read_text(encoding="utf-8"))["status"] == "in_progress"
@@ -640,7 +641,7 @@ def test_restart_repairs_stale_attempt_status_mirror_after_commit(tmp_path, monk
 
 def test_load_rejects_persisted_self_ancestry(tmp_path):
     run_dir = tmp_path / "invalid-persisted"
-    create_app_run(run_dir, run_spec(), [SearchNode(node_id="a", claim="clean")])
+    create_app_run(run_dir, run_spec(), [completed_node(node_id="a", claim="clean")])
     payload = json.loads((run_dir / "app_run_state.json").read_text(encoding="utf-8"))
     payload["nodes"][0]["parent_ids"] = ["a"]
     write_raw_state(run_dir, payload)
@@ -650,7 +651,7 @@ def test_load_rejects_persisted_self_ancestry(tmp_path):
 
 def test_load_rejects_partial_active_attempt_identity(tmp_path):
     run_dir = tmp_path / "partial-active"
-    create_app_run(run_dir, run_spec(), [SearchNode(node_id="a", claim="clean")])
+    create_app_run(run_dir, run_spec(), [completed_node(node_id="a", claim="clean")])
     payload = json.loads((run_dir / "app_run_state.json").read_text(encoding="utf-8"))
     payload["active_episode_id"] = "orphaned-episode"
     write_raw_state(run_dir, payload)
@@ -662,7 +663,7 @@ def test_load_rejects_partial_active_attempt_identity(tmp_path):
 @pytest.mark.parametrize("identity_field", ["episode_id", "attempt_id"])
 def test_persisted_attempt_identity_cannot_escape_artifact_directory(tmp_path, identity_field):
     run_dir = tmp_path / f"path-{identity_field}"
-    create_app_run(run_dir, run_spec(), [SearchNode(node_id="a", claim="clean")])
+    create_app_run(run_dir, run_spec(), [completed_node(node_id="a", claim="clean")])
     request = next_app_episode(run_dir).request
     payload = json.loads((run_dir / "app_run_state.json").read_text(encoding="utf-8"))
     forged = f"../../../escaped-{identity_field}"
@@ -808,7 +809,7 @@ def test_create_run_rejects_empty_initial_frontier_without_writing_state(tmp_pat
 
 def test_submit_uses_one_detached_payload_for_commit_artifact_and_hash(tmp_path):
     run_dir = tmp_path / "single-result-snapshot"
-    create_app_run(run_dir, run_spec(), [SearchNode(node_id="seed", claim="clean")])
+    create_app_run(run_dir, run_spec(), [completed_node(node_id="seed", claim="clean")])
     request = next_app_episode(run_dir).request
     first = judge_result(request, score=0.81)
     second = judge_result(request, score=0.12)
@@ -843,7 +844,7 @@ def test_submit_uses_one_detached_payload_for_commit_artifact_and_hash(tmp_path)
 
 def test_result_json_detachment_failure_is_audited_without_consuming_attempt(tmp_path):
     run_dir = tmp_path / "non-finite-result"
-    create_app_run(run_dir, run_spec(), [SearchNode(node_id="seed", claim="clean")])
+    create_app_run(run_dir, run_spec(), [completed_node(node_id="seed", claim="clean")])
     request = next_app_episode(run_dir).request
     payload = judge_result(request).model_dump(mode="json")
     payload["structured_output"]["observations"][0]["score"] = float("nan")
@@ -969,7 +970,7 @@ def test_authorized_synthesis_replaces_pending_run_complete_intent(tmp_path):
 
 def test_mutated_runtime_limits_are_rejected_before_grant_persistence(tmp_path):
     run_dir = tmp_path / "mutated-limits"
-    create_app_run(run_dir, run_spec(), [SearchNode(node_id="seed", claim="clean")])
+    create_app_run(run_dir, run_spec(), [completed_node(node_id="seed", claim="clean")])
     limits = RuntimeLimits(max_retries=1)
     limits.max_retries = -7
     limits.wall_clock_seconds = 0
@@ -985,7 +986,7 @@ def test_mutated_runtime_limits_are_rejected_before_grant_persistence(tmp_path):
 
 def test_retry_runtime_override_is_validated_without_superseding_attempt(tmp_path):
     run_dir = tmp_path / "invalid-retry-limits"
-    create_app_run(run_dir, run_spec(), [SearchNode(node_id="seed", claim="clean")])
+    create_app_run(run_dir, run_spec(), [completed_node(node_id="seed", claim="clean")])
     first = next_app_episode(
         run_dir,
         runtime_limits=RuntimeLimits(max_retries=1),
@@ -1025,7 +1026,7 @@ def test_retry_runtime_override_is_validated_without_superseding_attempt(tmp_pat
 )
 def test_load_rejects_cross_envelope_lifecycle_identity(tmp_path, mutate, message):
     run_dir = tmp_path / message.replace(" ", "-")
-    create_app_run(run_dir, run_spec(), [SearchNode(node_id="seed", claim="clean")])
+    create_app_run(run_dir, run_spec(), [completed_node(node_id="seed", claim="clean")])
     next_app_episode(run_dir)
     payload = json.loads((run_dir / "app_run_state.json").read_text(encoding="utf-8"))
     mutate(payload)
@@ -1053,7 +1054,7 @@ def test_load_rejects_relation_grant_not_owned_by_active_request(tmp_path):
 
 def test_save_state_revalidates_assignment_mutations_before_install(tmp_path):
     run_dir = tmp_path / "save-boundary"
-    create_app_run(run_dir, run_spec(), [SearchNode(node_id="seed", claim="clean")])
+    create_app_run(run_dir, run_spec(), [completed_node(node_id="seed", claim="clean")])
     state = app_driver.load_app_run(run_dir)
     state.pending_terminal_reason = "orphaned reason"
     before = (run_dir / "app_run_state.json").read_text(encoding="utf-8")
@@ -1067,7 +1068,7 @@ def test_save_state_revalidates_assignment_mutations_before_install(tmp_path):
 
 def test_load_rejects_await_without_a_durable_blocking_fact(tmp_path):
     run_dir = tmp_path / "forged-await"
-    create_app_run(run_dir, run_spec(), [SearchNode(node_id="seed", claim="clean")])
+    create_app_run(run_dir, run_spec(), [completed_node(node_id="seed", claim="clean")])
     payload = json.loads((run_dir / "app_run_state.json").read_text(encoding="utf-8"))
     payload["controller_action"] = "await_operator_decision"
     write_raw_state(run_dir, payload)
@@ -1078,7 +1079,7 @@ def test_load_rejects_await_without_a_durable_blocking_fact(tmp_path):
 
 def test_load_rejects_continue_that_bypasses_failed_attempt(tmp_path):
     run_dir = tmp_path / "bypass-failed"
-    create_app_run(run_dir, run_spec(), [SearchNode(node_id="seed", claim="clean")])
+    create_app_run(run_dir, run_spec(), [completed_node(node_id="seed", claim="clean")])
     request = next_app_episode(
         run_dir,
         runtime_limits=RuntimeLimits(max_retries=0),
@@ -1094,7 +1095,7 @@ def test_load_rejects_continue_that_bypasses_failed_attempt(tmp_path):
 
 def test_load_rejects_hand_appended_attempt_beyond_retry_grant(tmp_path):
     run_dir = tmp_path / "forged-retry"
-    create_app_run(run_dir, run_spec(), [SearchNode(node_id="seed", claim="clean")])
+    create_app_run(run_dir, run_spec(), [completed_node(node_id="seed", claim="clean")])
     request = next_app_episode(
         run_dir,
         runtime_limits=RuntimeLimits(max_retries=0),
@@ -1125,7 +1126,7 @@ def test_load_rejects_hand_appended_attempt_beyond_retry_grant(tmp_path):
 
 def test_load_rejects_accepted_outcome_on_noncommitted_attempt(tmp_path):
     run_dir = tmp_path / "forged-outcome"
-    create_app_run(run_dir, run_spec(), [SearchNode(node_id="seed", claim="clean")])
+    create_app_run(run_dir, run_spec(), [completed_node(node_id="seed", claim="clean")])
     next_app_episode(run_dir)
     payload = json.loads((run_dir / "app_run_state.json").read_text(encoding="utf-8"))
     attempt = payload["episodes"][0]["attempts"][0]
@@ -1146,7 +1147,7 @@ def test_load_rejects_accepted_outcome_on_noncommitted_attempt(tmp_path):
 
 def test_load_rejects_forged_nonterminal_synthesis_readiness(tmp_path):
     run_dir = tmp_path / "forged-readiness"
-    create_app_run(run_dir, run_spec(), [SearchNode(node_id="seed", claim="clean")])
+    create_app_run(run_dir, run_spec(), [completed_node(node_id="seed", claim="clean")])
     payload = json.loads((run_dir / "app_run_state.json").read_text(encoding="utf-8"))
     payload["relation_readiness_status"] = "evaluated"
     payload["provisional_synthesis_selection"] = {
@@ -1184,7 +1185,7 @@ def test_load_rejects_forged_nonterminal_synthesis_readiness(tmp_path):
 
 def test_load_rejects_commit_telemetry_without_commit_fact(tmp_path):
     run_dir = tmp_path / "forged-outbox"
-    create_app_run(run_dir, run_spec(), [SearchNode(node_id="seed", claim="clean")])
+    create_app_run(run_dir, run_spec(), [completed_node(node_id="seed", claim="clean")])
     payload = json.loads((run_dir / "app_run_state.json").read_text(encoding="utf-8"))
     payload["pending_telemetry_events"] = [
         {

@@ -1,3 +1,4 @@
+from tests.helpers import completed_node, completed_candidate
 import json
 import hashlib
 import subprocess
@@ -52,7 +53,7 @@ def spec() -> DTERunSpec:
 
 
 def parent() -> SearchNode:
-    return SearchNode(node_id="parent", claim="committed parent")
+    return completed_node(node_id="parent", claim="committed parent")
 
 
 def create_run(tmp_path):
@@ -226,8 +227,8 @@ def test_app_create_rejects_initial_nodes_above_search_node_cap(tmp_path):
             tmp_path / "over-cap",
             bounded,
             [
-                SearchNode(node_id="one", claim="one"),
-                SearchNode(node_id="two", claim="two"),
+                completed_node(node_id="one", claim="one"),
+                completed_node(node_id="two", claim="two"),
             ],
         )
 
@@ -274,8 +275,8 @@ def test_app_allocation_and_executor_grant_share_remaining_node_slots(tmp_path):
         run_dir,
         bounded,
         [
-            SearchNode(node_id="one", claim="one"),
-            SearchNode(node_id="two", claim="two"),
+            completed_node(node_id="one", claim="one"),
+            completed_node(node_id="two", claim="two"),
         ],
         run_id="two-slots",
     )
@@ -343,7 +344,7 @@ def result_for(request, *, children=1, node_id_prefix="child", status="completed
     if status == "completed":
         output = ExecutorEpisodeOutput(
             nodes=[
-                ExecutorNodeCandidate(
+                completed_candidate(
                     node_id=f"{node_id_prefix}-{index}",
                     claim=f"candidate {index}",
                     parent_ids=[request.parent_node_id],
@@ -613,7 +614,7 @@ def test_app_driver_preserves_operator_policy_authority(tmp_path):
     restricted_data = spec().model_dump()
     restricted_data["operator_policy"] = {"main_agent_may_request_synthesis": False}
     restricted = DTERunSpec.model_validate(restricted_data)
-    create_app_run(run_dir, restricted, [SearchNode(node_id="closed", claim="done")])
+    create_app_run(run_dir, restricted, [completed_node(node_id="closed", claim="done")])
     main_request = SynthesisControlRequest(
         action="force_synthesis_after_current_task",
         requested_by="main_agent",

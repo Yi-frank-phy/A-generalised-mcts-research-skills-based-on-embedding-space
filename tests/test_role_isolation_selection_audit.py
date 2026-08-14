@@ -1,3 +1,4 @@
+from tests.helpers import completed_node
 import json
 import time
 from pathlib import Path
@@ -182,7 +183,7 @@ def test_strict_isolation_rejects_reused_role_session_across_roles(tmp_path):
     create_app_run(
         run_dir,
         strict_spec(),
-        [SearchNode(node_id="seed", claim="seed claim")],
+        [completed_node(node_id="seed", claim="seed claim")],
         run_id="strict-reuse",
     )
     judge = next_app_episode(run_dir).request
@@ -212,7 +213,7 @@ def test_strict_isolation_rejects_context_manifest_mismatch(tmp_path):
     create_app_run(
         run_dir,
         strict_spec(),
-        [SearchNode(node_id="seed", claim="seed claim")],
+        [completed_node(node_id="seed", claim="seed claim")],
         run_id="strict-hash",
     )
     request = next_app_episode(run_dir).request
@@ -243,7 +244,7 @@ def test_model_result_cannot_self_assert_backend_verified(tmp_path):
     create_app_run(
         run_dir,
         strict_spec(),
-        [SearchNode(node_id="seed", claim="seed claim")],
+        [completed_node(node_id="seed", claim="seed claim")],
         run_id="strict-self-verified",
     )
     request = next_app_episode(run_dir).request
@@ -270,7 +271,7 @@ def test_shared_context_requires_unverified_fallback_and_discloses_risk(tmp_path
     create_app_run(
         run_dir,
         spec,
-        [SearchNode(node_id="seed", claim="seed claim")],
+        [completed_node(node_id="seed", claim="seed claim")],
         run_id="shared",
     )
     request = next_app_episode(run_dir).request
@@ -293,7 +294,7 @@ def test_shared_context_requires_unverified_fallback_and_discloses_risk(tmp_path
     create_app_run(
         second_dir,
         spec,
-        [SearchNode(node_id="seed", claim="seed claim")],
+        [completed_node(node_id="seed", claim="seed claim")],
         run_id="shared-false-claim",
     )
     second = next_app_episode(second_dir).request
@@ -310,7 +311,7 @@ def test_shared_context_requires_unverified_fallback_and_discloses_risk(tmp_path
 
 
 def test_executor_and_judge_payloads_exclude_controller_and_cross_role_state():
-    parent = SearchNode(
+    parent = completed_node(
         node_id="canonical-parent",
         claim="parent claim",
         judge_reasoning="CANARY_JUDGE_REASONING",
@@ -319,7 +320,7 @@ def test_executor_and_judge_payloads_exclude_controller_and_cross_role_state():
         ucb_score=4.2,
         expansion_budget=7,
     )
-    hidden = SearchNode(node_id="hidden-frontier", claim="CANARY_HIDDEN_FRONTIER")
+    hidden = completed_node(node_id="hidden-frontier", claim="CANARY_HIDDEN_FRONTIER")
     graph = EpisodeGraph(nodes=[parent, hidden])
     executor = build_executor_episode_request(
         graph,
@@ -366,7 +367,7 @@ def test_executor_and_judge_payloads_exclude_controller_and_cross_role_state():
 
 def test_relation_v2_payload_is_blind_and_backend_reattaches_metadata():
     nodes = [
-        SearchNode(
+        completed_node(
             node_id="a",
             claim="claim a",
             evidence=["direct a"],
@@ -374,7 +375,7 @@ def test_relation_v2_payload_is_blind_and_backend_reattaches_metadata():
             judge_risks=["CANARY_RISK_A"],
             score=0.99,
         ),
-        SearchNode(
+        completed_node(
             node_id="b",
             claim="claim b",
             evidence=["direct b"],
@@ -465,8 +466,8 @@ def test_terminal_handoff_visibility_excludes_undisclosed_unselected_content(tmp
             update={"role_isolation_mode": "shared_context_single_agent"}
         ),
         [
-            SearchNode(node_id="material", claim="material claim"),
-            SearchNode(
+            completed_node(node_id="material", claim="material claim"),
+            completed_node(
                 node_id="hidden",
                 claim=" material   CLAIM ",
             ),
@@ -522,13 +523,13 @@ def test_subgroup_stator_fixture_preserves_coverage_dependencies_and_headline_ca
 
 def test_missing_required_coverage_is_durable_and_score_cannot_displace_it():
     nodes = [
-        SearchNode(
+        completed_node(
             node_id="peripheral",
             claim="peripheral",
             score=0.99,
             coverage_ids=["coverage:peripheral"],
         ),
-        SearchNode(
+        completed_node(
             node_id="required",
             claim="required",
             score=0.95,
@@ -624,8 +625,8 @@ def test_empty_material_epistemic_contributions_do_not_force_nonmaterial_filler(
             update={"role_isolation_mode": "shared_context_single_agent"}
         ),
         [
-            SearchNode(node_id="material", claim="material"),
-            SearchNode(node_id="nonmaterial", claim="nonmaterial"),
+            completed_node(node_id="material", claim="material"),
+            completed_node(node_id="nonmaterial", claim="nonmaterial"),
         ],
         run_id="provenance",
     )
@@ -709,7 +710,7 @@ def test_optional_provenance_uses_explicit_degraded_terminal_not_deadlock(
     create_app_run(
         run_dir,
         _shared_provenance_spec("terminal_disclosure"),
-        [SearchNode(node_id="seed", claim="material claim")],
+        [completed_node(node_id="seed", claim="material claim")],
     )
     judge = next_app_episode(run_dir).request
     submit_app_episode_result(
@@ -737,7 +738,7 @@ def test_strict_provenance_repair_succeeds_without_rescoring(tmp_path):
     create_app_run(
         run_dir,
         _shared_provenance_spec("strict_repair"),
-        [SearchNode(node_id="seed", claim="material claim")],
+        [completed_node(node_id="seed", claim="material claim")],
     )
     judge = next_app_episode(run_dir).request
     submit_app_episode_result(
@@ -792,7 +793,7 @@ def test_strict_provenance_repair_exhaustion_degrades_once(tmp_path):
     create_app_run(
         run_dir,
         _shared_provenance_spec("strict_repair"),
-        [SearchNode(node_id="seed", claim="material claim")],
+        [completed_node(node_id="seed", claim="material claim")],
     )
     judge = next_app_episode(run_dir).request
     submit_app_episode_result(
@@ -845,8 +846,8 @@ def test_authorized_scoped_synthesis_records_incomplete_coverage(tmp_path):
         run_dir,
         spec,
         [
-            SearchNode(node_id="inside", claim="inside scope"),
-            SearchNode(node_id="outside", claim="outside scope"),
+            completed_node(node_id="inside", claim="inside scope"),
+            completed_node(node_id="outside", claim="outside scope"),
         ],
     )
     judge = next_app_episode(run_dir).request
@@ -881,28 +882,28 @@ def test_marginal_audit_preserves_unique_information_not_judge_score(tmp_path):
             }
         ),
         [
-            SearchNode(
+            completed_node(
                 node_id="material",
                 claim="retained claim",
                 assumptions=["shared assumption"],
                 evidence=["shared evidence"],
                 risks=["shared risk"],
             ),
-            SearchNode(
+            completed_node(
                 node_id="unique",
                 claim="low-score alternative",
                 assumptions=["unique assumption"],
                 evidence=["unique evidence"],
                 risks=["unique failure mode"],
             ),
-            SearchNode(
+            completed_node(
                 node_id="redundant",
                 claim=" retained   CLAIM ",
                 assumptions=["shared assumption"],
                 evidence=["shared evidence"],
                 risks=["shared risk"],
             ),
-            SearchNode(
+            completed_node(
                 node_id="counterexample",
                 node_type="counterexample",
                 claim="low-score boundary case",
@@ -1055,7 +1056,7 @@ def test_relation_batch_bounded_improvement_recovers_one_for_two_matching():
 
 def test_shared_seed_coverage_is_enrichment_not_all_pairs_blocking():
     nodes = [
-        SearchNode(
+        completed_node(
             node_id=f"child-{index:02d}",
             claim=f"independent alternative {index}",
             coverage_ids=["seed:one"],
@@ -1091,9 +1092,9 @@ def test_shared_seed_coverage_is_enrichment_not_all_pairs_blocking():
 
 def test_duplicate_and_direct_counterexample_remain_blocking():
     nodes = [
-        SearchNode(node_id="claim", claim="base claim"),
-        SearchNode(node_id="duplicate", claim=" base   CLAIM "),
-        SearchNode(
+        completed_node(node_id="claim", claim="base claim"),
+        completed_node(node_id="duplicate", claim=" base   CLAIM "),
+        completed_node(
             node_id="counterexample",
             node_type="counterexample",
             claim="explicit failing case",
@@ -1120,7 +1121,7 @@ def test_duplicate_and_direct_counterexample_remain_blocking():
 
 def test_triggered_continuation_rejects_selection_change_as_epistemic_yield():
     nodes = [
-        SearchNode(
+        completed_node(
             node_id="n1",
             claim="single frontier",
             coverage_ids=["coverage:one"],
@@ -1151,7 +1152,7 @@ def test_triggered_continuation_rejects_selection_change_as_epistemic_yield():
     no_coverage = evaluate_continuation_gate(
         iteration=1,
         graph_revision=1,
-        nodes=[SearchNode(node_id="n1", claim="single frontier")],
+        nodes=[completed_node(node_id="n1", claim="single frontier")],
         max_committed_search_nodes=3,
         entropy_delta=0.0,
         consecutive_plateau_count=2,
@@ -1172,7 +1173,7 @@ def test_triggered_continuation_rejects_selection_change_as_epistemic_yield():
 
 def test_direct_legacy_selection_keeps_historical_top_eight_scope():
     nodes = [
-        SearchNode(node_id=f"n{index}", claim=f"claim {index}", score=index / 10)
+        completed_node(node_id=f"n{index}", claim=f"claim {index}", score=index / 10)
         for index in range(9)
     ]
     selection = select_provisional_synthesis_nodes(

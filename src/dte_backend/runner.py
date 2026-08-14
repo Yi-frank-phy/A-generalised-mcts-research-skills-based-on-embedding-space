@@ -206,13 +206,7 @@ def run_frontier_search(
         for node, uncertainty in zip(frontier, kde_state.uncertainty):
             node.uncertainty = uncertainty
 
-        current_ucb_scores = [
-            calculate_ucb(
-                float(node.score if node.score is not None else node.confidence),
-                float(node.uncertainty if node.uncertainty is not None else 0.0),
-            )
-            for node in frontier
-        ]
+        current_ucb_scores = [float(value) for value in kde_state.ucb_scores]
 
         entropy_state = evaluate_entropy_state(
             spatial_entropy=kde_state.spatial_entropy,

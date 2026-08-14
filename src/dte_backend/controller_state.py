@@ -23,6 +23,7 @@ class FrontierControllerState:
     spatial_entropy: float
     volume_bandwidth: float
     realized_returns: np.ndarray
+    transition_embeddings: np.ndarray
     value_source: str = "proper_volume_history"
     sd_source: str = "proper_volume_boltzmann_reward"
 
@@ -78,4 +79,5 @@ def score_frontier(
         spatial_entropy=float(np.mean(entropies)),
         volume_bandwidth=scale,
         realized_returns=realized,
+        transition_embeddings=live_embeddings,
     )

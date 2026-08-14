@@ -1,3 +1,4 @@
+from tests.helpers import completed_node
 import json
 
 import pytest
@@ -96,7 +97,7 @@ def test_real_mode_without_gemini_credentials_fails_before_oracles(monkeypatch, 
             mode="real",
             out_dir=tmp_path / "out",
             cache_path=str(tmp_path / "cache.json"),
-            initial_nodes=[SearchNode(node_id="a", claim="route A")],
+            initial_nodes=[completed_node(node_id="a", claim="route A")],
             judge_adapter=judge_adapter,
             judge_command="python real_judge.py",
             executor_adapter=RecordingExecutor(),
@@ -128,8 +129,8 @@ def test_strict_run_reads_control_file_and_records_forced_synthesis(tmp_path):
         ),
     )
     nodes = [
-        SearchNode(node_id="a", claim="route A", confidence=0.7),
-        SearchNode(node_id="b", claim="route B", confidence=0.6),
+        completed_node(node_id="a", claim="route A", confidence=0.7),
+        completed_node(node_id="b", claim="route B", confidence=0.6),
     ]
     control_path = tmp_path / "strict_run_control.json"
     control_path.write_text(
@@ -174,7 +175,7 @@ def test_strict_run_rejects_invalid_control_file(tmp_path):
             min_iterations_before_synthesis=5,
         ),
     )
-    nodes = [SearchNode(node_id="a", claim="route A")]
+    nodes = [completed_node(node_id="a", claim="route A")]
     control_path = tmp_path / "strict_run_control.json"
     control_path.write_text(
         json.dumps(
@@ -224,7 +225,7 @@ def test_strict_run_rejects_malformed_control_json_fail_closed(tmp_path):
             mode="smoke",
             out_dir=tmp_path / "out",
             cache_path=None,
-            initial_nodes=[SearchNode(node_id="a", claim="route A")],
+            initial_nodes=[completed_node(node_id="a", claim="route A")],
             control_path=control_path,
         )
 
@@ -264,7 +265,7 @@ def test_strict_run_without_control_path_registers_no_callback_and_finalizes_onc
         mode="smoke",
         out_dir=tmp_path / "out",
         cache_path=None,
-        initial_nodes=[SearchNode(node_id="a", claim="route A")],
+        initial_nodes=[completed_node(node_id="a", claim="route A")],
         control_path=None,
     )
 
@@ -285,7 +286,7 @@ def test_strict_run_rejects_main_agent_when_operator_policy_disables_it(tmp_path
         budget=BudgetSpec(max_iterations=5, allocation_mass_per_iteration=1, min_iterations_before_synthesis=5),
         operator_policy={"main_agent_may_request_synthesis": False},
     )
-    nodes = [SearchNode(node_id="a", claim="route A")]
+    nodes = [completed_node(node_id="a", claim="route A")]
     control_path = tmp_path / "strict_run_control.json"
     control_path.write_text(
         json.dumps(
@@ -346,7 +347,7 @@ def test_strict_real_mode_executes_with_compliant_oracles(monkeypatch, tmp_path)
         mode="real",
         out_dir=tmp_path / "out",
         cache_path=str(tmp_path / "cache.json"),
-        initial_nodes=[SearchNode(node_id="a", claim="route A")],
+        initial_nodes=[completed_node(node_id="a", claim="route A")],
         judge_adapter=judge_adapter,
         judge_command="python real_judge.py",
     )

@@ -54,6 +54,16 @@ def hashed_embedding(text: str, dim: int = 64) -> list[float]:
         sign = 1.0 if digest[4] % 2 == 0 else -1.0
         vec[bucket] += sign * (1.0 + math.log(count))
 
+    # Low-dimensional feature hashing can make distinct transition texts exactly
+    # collinear. That creates zero-length edges in the finite metric atlas and can
+    # make the required H(T)=S solve impossible even though the texts are distinct.
+    # Add a small deterministic full-text fingerprint so the offline fallback keeps
+    # identity of distinct inputs without pretending to add semantic quality.
+    fingerprint = hashlib.blake2b(text.encode("utf-8"), digest_size=32).digest()
+    for index in range(dim):
+        byte = fingerprint[index % len(fingerprint)]
+        vec[index] += 1e-3 * ((byte / 127.5) - 1.0)
+
     norm = float(np.linalg.norm(vec))
     if norm > 0:
         vec /= norm

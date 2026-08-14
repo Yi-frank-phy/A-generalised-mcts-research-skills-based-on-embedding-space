@@ -7,7 +7,10 @@ def test_seed_pipeline_creates_nodes():
     spec = DTERunSpec(problem="p", goal="g", constraints=["c1"])
     nodes, audit = seed_frontier_from_roles(spec)
     assert len(nodes) >= 4
-    assert "decomposition" in audit
+    assert audit == {
+        "seed_coordinate": "completed_method_epistemic_transition",
+        "seed_count": len(nodes),
+    }
     assert len({node.node_id for node in nodes}) == len(nodes)
 
 

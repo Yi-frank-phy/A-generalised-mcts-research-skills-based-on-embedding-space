@@ -1,3 +1,4 @@
+from tests.helpers import completed_node
 import pytest
 
 from dte_backend.models import BudgetSpec, DTERunSpec, SearchNode, SynthesisControlRequest
@@ -23,7 +24,7 @@ def test_operator_control_is_polled_only_after_checkpoint_and_complete_expansion
     class RecordingExecutor:
         def expand(self, request):
             events.append("executor_started")
-            child = SearchNode(node_id="child", claim="validated child", parent_ids=[request.parent.node_id])
+            child = completed_node(node_id="child", claim="validated child", parent_ids=[request.parent.node_id])
             events.append("executor_returned")
             return [child]
 
@@ -50,7 +51,7 @@ def test_operator_control_is_polled_only_after_checkpoint_and_complete_expansion
 
     result = run_frontier_search(
         _spec(),
-        [SearchNode(node_id="parent", claim="parent")],
+        [completed_node(node_id="parent", claim="parent")],
         executor_adapter=RecordingExecutor(),
         checkpoint_callback=checkpoint_callback,
         control_callback=control_callback,
@@ -75,7 +76,7 @@ def test_pending_control_does_not_bypass_executor_validation():
     class InvalidExecutor:
         def expand(self, request):
             return [
-                SearchNode(
+                completed_node(
                     node_id="bad-child",
                     claim="invalid because it pre-fills a controller field",
                     parent_ids=[request.parent.node_id],
@@ -94,7 +95,7 @@ def test_pending_control_does_not_bypass_executor_validation():
             reason="must not be consumed before validation",
         )
 
-    parent = SearchNode(node_id="parent", claim="parent")
+    parent = completed_node(node_id="parent", claim="parent")
     with pytest.raises(ValueError, match="controller-owned field: score"):
         run_frontier_search(
             _spec(),
@@ -113,7 +114,7 @@ def test_invalid_control_after_valid_expansion_preserves_only_the_completed_chec
 
     class ValidExecutor:
         def expand(self, request):
-            return [SearchNode(node_id="child", claim="validated child", parent_ids=[request.parent.node_id])]
+            return [completed_node(node_id="child", claim="validated child", parent_ids=[request.parent.node_id])]
 
     def checkpoint_callback(result):
         snapshots.append({node.node_id: node.status for node in result.nodes})
@@ -125,7 +126,7 @@ def test_invalid_control_after_valid_expansion_preserves_only_the_completed_chec
             return None
         raise ValueError("invalid synthesis control request")
 
-    parent = SearchNode(node_id="parent", claim="parent")
+    parent = completed_node(node_id="parent", claim="parent")
     with pytest.raises(ValueError, match="invalid synthesis control request"):
         run_frontier_search(
             _spec(),

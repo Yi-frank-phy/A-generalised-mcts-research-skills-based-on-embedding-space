@@ -1,7 +1,6 @@
-"""Frozen-atlas volume measure and reward mapping for next-generation DTE."""
+"""Frozen-atlas proper-volume measure for the new controller."""
 
 from __future__ import annotations
-
 import numpy as np
 
 
@@ -13,7 +12,6 @@ def _vec(values: np.ndarray, name: str) -> np.ndarray:
 
 
 def intrinsic_cell_volumes(reference_density: np.ndarray) -> np.ndarray:
-    """Return atlas quadrature weights with mean uniform-reference weight one."""
     density = _vec(reference_density, "reference_density")
     if np.any(density <= 0.0):
         raise ValueError("reference_density must be positive")
@@ -44,12 +42,7 @@ def _volume_profile(radii: np.ndarray, volumes: np.ndarray) -> tuple[np.ndarray,
     )
 
 
-def intrinsic_proper_volume_at_radius(
-    radii: np.ndarray,
-    cell_volumes: np.ndarray,
-    query_radius: float,
-) -> float:
-    """Map intrinsic radius to cumulative crossed proper research-space volume."""
+def intrinsic_proper_volume_at_radius(radii: np.ndarray, cell_volumes: np.ndarray, query_radius: float) -> float:
     query = float(query_radius)
     if not np.isfinite(query) or query < 0.0:
         raise ValueError("query_radius must be finite and non-negative")
@@ -57,12 +50,7 @@ def intrinsic_proper_volume_at_radius(
     return float(np.interp(query, profile_r, profile_v, left=0.0, right=float(profile_v[-1])))
 
 
-def volume_reward_statistics(
-    radii: np.ndarray,
-    cell_volumes: np.ndarray,
-    probabilities: np.ndarray,
-) -> dict[str, np.ndarray | float]:
-    """Mean/SD of the same cumulative-volume variable used by realized return."""
+def volume_reward_statistics(radii: np.ndarray, cell_volumes: np.ndarray, probabilities: np.ndarray) -> dict[str, np.ndarray | float]:
     r, v = _phase_space(radii, cell_volumes)
     p = _vec(probabilities, "probabilities")
     if len(p) != len(r) or np.any(p < 0.0) or np.sum(p) <= 0.0:

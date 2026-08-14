@@ -1,22 +1,9 @@
 {
   "additionalProperties": false,
-  "description": "Validated operator request to stop after the current safe task.",
   "properties": {
     "action": {
       "const": "force_synthesis_after_current_task",
       "title": "Action",
-      "type": "string"
-    },
-    "node_ids": {
-      "items": {
-        "type": "string"
-      },
-      "title": "Node Ids",
-      "type": "array"
-    },
-    "reason": {
-      "minLength": 1,
-      "title": "Reason",
       "type": "string"
     },
     "requested_by": {
@@ -27,6 +14,11 @@
       "title": "Requested By",
       "type": "string"
     },
+    "reason": {
+      "minLength": 1,
+      "title": "Reason",
+      "type": "string"
+    },
     "scope": {
       "default": "all",
       "enum": [
@@ -35,6 +27,13 @@
       ],
       "title": "Scope",
       "type": "string"
+    },
+    "node_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Node Ids",
+      "type": "array"
     }
   },
   "required": [

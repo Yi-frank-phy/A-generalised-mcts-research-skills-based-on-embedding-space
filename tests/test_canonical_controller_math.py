@@ -1,3 +1,4 @@
+from tests.helpers import completed_node
 import math
 
 import pytest
@@ -67,9 +68,9 @@ def test_app_controller_record_uses_current_ucb_spectrum_to_match_geometry_entro
         run_dir,
         spec,
         [
-            SearchNode(node_id="a", claim="route A"),
-            SearchNode(node_id="b", claim="route B"),
-            SearchNode(node_id="c", claim="route C"),
+            completed_node(node_id="a", claim="route A"),
+            completed_node(node_id="b", claim="route B"),
+            completed_node(node_id="c", claim="route C"),
         ],
         run_id="canonical-app",
     )

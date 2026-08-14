@@ -1,3 +1,4 @@
+from tests.helpers import completed_node
 import pytest
 
 from dte_backend.episode_adapter import build_executor_episode_request
@@ -11,7 +12,7 @@ from dte_backend.models import SearchNode
 
 
 def executor_request(*, transport_hints=None, coverage_requirements=None):
-    parent = SearchNode(node_id="parent", claim="develop the assigned branch")
+    parent = completed_node(node_id="parent", claim="develop the assigned branch")
     graph = EpisodeGraph(nodes=[parent])
     return build_executor_episode_request(
         graph,

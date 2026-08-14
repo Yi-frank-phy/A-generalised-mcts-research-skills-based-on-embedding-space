@@ -39,3 +39,6 @@ dte-backend = "dte_backend.__main__:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

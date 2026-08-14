@@ -1,3 +1,4 @@
+from tests.helpers import completed_node, completed_candidate
 import json
 import sys
 
@@ -27,7 +28,7 @@ from dte_backend.telemetry import EpisodeEventLog
 
 
 def make_graph() -> EpisodeGraph:
-    return EpisodeGraph(nodes=[SearchNode(node_id="parent", claim="assigned parent")])
+    return EpisodeGraph(nodes=[completed_node(node_id="parent", claim="assigned parent")])
 
 
 def make_request(graph: EpisodeGraph, *, grant: int = 2) -> EpisodeRequest:
@@ -67,7 +68,7 @@ def make_result(request: EpisodeRequest, output: ExecutorEpisodeOutput) -> Episo
 
 
 def child(node_id: str = "child", parent_id: str = "parent") -> ExecutorNodeCandidate:
-    return ExecutorNodeCandidate(node_id=node_id, claim="candidate", parent_ids=[parent_id])
+    return completed_candidate(node_id=node_id, claim="candidate", parent_ids=[parent_id])
 
 
 def assert_rejected_unchanged(graph, request, result, match):
@@ -248,8 +249,8 @@ def test_child_cannot_reference_sibling_from_same_result_as_parent():
 def test_child_may_reference_additional_preexisting_parent():
     graph = EpisodeGraph(
         nodes=[
-            SearchNode(node_id="parent", claim="assigned parent"),
-            SearchNode(node_id="existing", claim="preexisting supporting parent"),
+            completed_node(node_id="parent", claim="assigned parent"),
+            completed_node(node_id="existing", claim="preexisting supporting parent"),
         ]
     )
     request = make_request(graph)
@@ -400,7 +401,7 @@ def test_strict_run_emits_run_lifecycle_events(tmp_path):
         mode="smoke",
         out_dir=tmp_path / "out",
         cache_path=None,
-        initial_nodes=[SearchNode(node_id="p", claim="parent")],
+        initial_nodes=[completed_node(node_id="p", claim="parent")],
         control_path=None,
     )
     events = EpisodeEventLog(tmp_path / "out" / "episode_events.jsonl").read_events()
@@ -415,7 +416,7 @@ def test_command_adapter_conforms_to_agent_episode_protocol(tmp_path):
         "import json, sys\n"
         "r=json.loads(sys.stdin.read())\n"
         "p=r['parent']['node_id']\n"
-        "print(json.dumps({'nodes':[{'node_id':'cmd-child','claim':'command','parent_ids':[p]}]}))\n",
+        "print(json.dumps({'nodes':[{'node_id':'cmd-child','claim':'command','parent_ids':[p], 'retrospective_method':'command continuation', 'epistemic_change_kind':'new_understanding', 'epistemic_change':'command child created'}]}))\n",
         encoding="utf-8",
     )
     graph = make_graph()
@@ -450,7 +451,7 @@ def test_native_stub_runs_inside_dte_executor_vertical_slice(tmp_path):
     log = EpisodeEventLog(tmp_path / "episode_events.jsonl")
     result = run_frontier_search(
         spec,
-        [SearchNode(node_id="parent", claim="parent")],
+        [completed_node(node_id="parent", claim="parent")],
         episode_adapter=NativeStubEpisodeAdapter(produce),
         episode_event_log=log,
         run_id="vertical-slice",

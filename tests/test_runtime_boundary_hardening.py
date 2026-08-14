@@ -1,3 +1,4 @@
+from tests.helpers import completed_node
 import pytest
 from pydantic import ValidationError
 
@@ -22,7 +23,7 @@ from dte_backend.relation_models import (
 
 
 def executor_grant():
-    parent = SearchNode(node_id="parent", claim="committed")
+    parent = completed_node(node_id="parent", claim="committed")
     graph = EpisodeGraph(nodes=[parent], revision=0, node_revisions={"parent": 0})
     request = build_executor_episode_request(
         graph,
@@ -59,7 +60,7 @@ def test_legacy_runtime_revalidates_request_before_adapter_side_effects():
 
 
 def relation_envelope():
-    nodes = [SearchNode(node_id="a", claim="A"), SearchNode(node_id="b", claim="B")]
+    nodes = [completed_node(node_id="a", claim="A"), completed_node(node_id="b", claim="B")]
     graph = EpisodeGraph(nodes=nodes, revision=0, node_revisions={"a": 0, "b": 0})
     candidate = RelationCandidate(
         candidate_id="candidate",

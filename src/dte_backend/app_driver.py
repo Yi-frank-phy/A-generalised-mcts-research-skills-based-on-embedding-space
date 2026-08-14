@@ -288,6 +288,8 @@ class ControllerIterationRecord(DTEBaseModel):
     node_revisions_before: dict[str, int]
     allocations: dict[str, int]
     ucb_scores: dict[str, float]
+    # Compatibility name: on `new` these are canonical completed-transition
+    # embeddings captured for replay, not SearchNode.local_embedding semantic vectors.
     local_embeddings: dict[str, list[float]]
     densities: dict[str, float]
     uncertainties: dict[str, float]
@@ -1740,6 +1742,9 @@ def _validate_loaded_state(state: AppRunState) -> None:
         "risks",
         "parent_ids",
         "confidence",
+        "retrospective_method",
+        "epistemic_change_kind",
+        "epistemic_change",
     }
     expected_semantics = {
         node_id: {field: origin[field] for field in producer_fields}
@@ -1826,7 +1831,6 @@ def _validate_loaded_state(state: AppRunState) -> None:
             or node.judge_result_provenance is not None
         )
         geometry = (
-            node.local_embedding,
             node.density,
             node.uncertainty,
             node.ucb_score,
@@ -1856,8 +1860,6 @@ def _validate_loaded_state(state: AppRunState) -> None:
                 state.node_revisions.get(node.node_id, -1)
                 <= allocation_record.node_revisions_before[node.node_id]
                 or node.ucb_score != allocation_record.ucb_scores[node.node_id]
-                or node.local_embedding
-                != allocation_record.local_embeddings[node.node_id]
                 or node.density != allocation_record.densities[node.node_id]
                 or node.uncertainty
                 != allocation_record.uncertainties[node.node_id]
@@ -2335,7 +2337,13 @@ def _validate_loaded_state(state: AppRunState) -> None:
             "risks",
             "confidence",
         }
-        executor_parent_fields = judge_input_fields | {"parent_ids", "coverage_ids"}
+        executor_parent_fields = judge_input_fields | {
+            "parent_ids",
+            "coverage_ids",
+            "retrospective_method",
+            "epistemic_change_kind",
+            "epistemic_change",
+        }
         if request.role == "executor":
             parent = nodes_by_id.get(request.parent_node_id or "")
             payload = request.executor_payload
@@ -3317,13 +3325,7 @@ def _progress_controller(
         node.density = math.exp(log_density)
         node.uncertainty = uncertainty
 
-    current_ucb_scores = [
-        calculate_ucb(
-            float(node.score if node.score is not None else node.confidence),
-            float(node.uncertainty if node.uncertainty is not None else 0.0),
-        )
-        for node in next_frontier
-    ]
+    current_ucb_scores = [float(value) for value in kde_state.ucb_scores]
 
     iteration = state.controller_iteration + 1
     previous_plateau_count = (
@@ -3385,7 +3387,8 @@ def _progress_controller(
                 for node in next_frontier
             },
             local_embeddings={
-                node.node_id: list(node.local_embedding or []) for node in next_frontier
+                node.node_id: [float(item) for item in embedding]
+                for node, embedding in zip(next_frontier, kde_state.transition_embeddings)
             },
             densities={node.node_id: node.density or 0.0 for node in next_frontier},
             uncertainties={

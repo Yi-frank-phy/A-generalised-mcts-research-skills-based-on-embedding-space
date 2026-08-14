@@ -1,3 +1,4 @@
+from tests.helpers import completed_node
 import dte_backend
 import dte_backend.app_driver as app_driver
 
@@ -27,7 +28,7 @@ def _create_run(tmp_path):
         embedding_provider="hash",
         embedding_dimension=8,
     )
-    parent = SearchNode(node_id="parent", claim="committed parent")
+    parent = completed_node(node_id="parent", claim="committed parent")
     app_driver.create_app_run(run_dir, spec, [parent], run_id="guard-run")
     judge = app_driver.next_app_episode(run_dir).request
     output = JudgeEpisodeOutput(

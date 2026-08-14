@@ -2,113 +2,6 @@
   "additionalProperties": false,
   "description": "A node in the DTE search graph/frontier.",
   "properties": {
-    "assumptions": {
-      "items": {
-        "type": "string"
-      },
-      "title": "Assumptions",
-      "type": "array"
-    },
-    "claim": {
-      "minLength": 1,
-      "title": "Claim",
-      "type": "string"
-    },
-    "confidence": {
-      "default": 0.5,
-      "maximum": 1.0,
-      "minimum": 0.0,
-      "title": "Confidence",
-      "type": "number"
-    },
-    "coverage_ids": {
-      "items": {
-        "type": "string"
-      },
-      "title": "Coverage Ids",
-      "type": "array"
-    },
-    "density": {
-      "anyOf": [
-        {
-          "type": "number"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "title": "Density"
-    },
-    "evidence": {
-      "items": {
-        "type": "string"
-      },
-      "title": "Evidence",
-      "type": "array"
-    },
-    "expansion_budget": {
-      "default": 0,
-      "minimum": 0,
-      "title": "Expansion Budget",
-      "type": "integer"
-    },
-    "judge_reasoning": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "title": "Judge Reasoning"
-    },
-    "judge_result_provenance": {
-      "anyOf": [
-        {
-          "additionalProperties": {
-            "type": "string"
-          },
-          "type": "object"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "title": "Judge Result Provenance"
-    },
-    "judge_risks": {
-      "items": {
-        "type": "string"
-      },
-      "title": "Judge Risks",
-      "type": "array"
-    },
-    "judge_uncertainty_evidence": {
-      "items": {
-        "type": "string"
-      },
-      "title": "Judge Uncertainty Evidence",
-      "type": "array"
-    },
-    "local_embedding": {
-      "anyOf": [
-        {
-          "items": {
-            "type": "number"
-          },
-          "type": "array"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "title": "Local Embedding"
-    },
     "node_id": {
       "title": "Node Id",
       "type": "string"
@@ -125,17 +18,29 @@
       "title": "Node Type",
       "type": "string"
     },
-    "parent_ids": {
-      "items": {
-        "type": "string"
-      },
-      "title": "Parent Ids",
-      "type": "array"
+    "claim": {
+      "minLength": 1,
+      "title": "Claim",
+      "type": "string"
     },
     "rationale": {
       "default": "",
       "title": "Rationale",
       "type": "string"
+    },
+    "assumptions": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Assumptions",
+      "type": "array"
+    },
+    "evidence": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Evidence",
+      "type": "array"
     },
     "risks": {
       "items": {
@@ -143,6 +48,124 @@
       },
       "title": "Risks",
       "type": "array"
+    },
+    "parent_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Parent Ids",
+      "type": "array"
+    },
+    "coverage_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Coverage Ids",
+      "type": "array"
+    },
+    "confidence": {
+      "default": 0.5,
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Confidence",
+      "type": "number"
+    },
+    "retrospective_method": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Retrospective Method"
+    },
+    "epistemic_change_kind": {
+      "anyOf": [
+        {
+          "enum": [
+            "new_understanding",
+            "sharper_unknown",
+            "no_material_change"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Epistemic Change Kind"
+    },
+    "epistemic_change": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Epistemic Change"
+    },
+    "local_embedding": {
+      "anyOf": [
+        {
+          "items": {
+            "type": "number"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Local Embedding"
+    },
+    "judge_reasoning": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Judge Reasoning"
+    },
+    "judge_risks": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Judge Risks",
+      "type": "array"
+    },
+    "judge_uncertainty_evidence": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Judge Uncertainty Evidence",
+      "type": "array"
+    },
+    "judge_result_provenance": {
+      "anyOf": [
+        {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Judge Result Provenance"
     },
     "score": {
       "anyOf": [
@@ -158,19 +181,7 @@
       "default": null,
       "title": "Score"
     },
-    "status": {
-      "default": "frontier",
-      "enum": [
-        "frontier",
-        "closed",
-        "archived",
-        "merged",
-        "synthesis"
-      ],
-      "title": "Status",
-      "type": "string"
-    },
-    "ucb_score": {
+    "density": {
       "anyOf": [
         {
           "type": "number"
@@ -180,7 +191,7 @@
         }
       ],
       "default": null,
-      "title": "Ucb Score"
+      "title": "Density"
     },
     "uncertainty": {
       "anyOf": [
@@ -194,6 +205,36 @@
       ],
       "default": null,
       "title": "Uncertainty"
+    },
+    "ucb_score": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Ucb Score"
+    },
+    "expansion_budget": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Expansion Budget",
+      "type": "integer"
+    },
+    "status": {
+      "default": "frontier",
+      "enum": [
+        "frontier",
+        "closed",
+        "archived",
+        "merged",
+        "synthesis"
+      ],
+      "title": "Status",
+      "type": "string"
     }
   },
   "required": [

@@ -1,4 +1,5 @@
 from __future__ import annotations
+from tests.helpers import completed_node, completed_candidate
 
 import hashlib
 import json
@@ -157,11 +158,11 @@ def graph_snapshot(graph: EpisodeGraph):
 
 
 def test_executor_commits_structured_epistemic_contributions_atomically():
-    graph = EpisodeGraph(nodes=[SearchNode(node_id="parent", claim="parent claim")])
+    graph = EpisodeGraph(nodes=[completed_node(node_id="parent", claim="parent claim")])
     request = direct_executor_request(graph)
     output = ExecutorEpisodeOutput(
         nodes=[
-            ExecutorNodeCandidate(
+            completed_candidate(
                 node_id="child",
                 claim="child claim",
                 parent_ids=["parent"],
@@ -206,7 +207,7 @@ def test_executor_commits_structured_epistemic_contributions_atomically():
 
 
 def test_judge_commits_epistemic_contributions_without_creating_nodes():
-    graph = EpisodeGraph(nodes=[SearchNode(node_id="parent", claim="parent claim")])
+    graph = EpisodeGraph(nodes=[completed_node(node_id="parent", claim="parent claim")])
     request = direct_judge_request(graph)
     output = JudgeEpisodeOutput(
         observations=[
@@ -229,7 +230,7 @@ def test_judge_commits_epistemic_contributions_without_creating_nodes():
 
 @pytest.mark.parametrize("role", ["executor", "judge"])
 def test_legacy_episode_output_without_epistemic_field_remains_compatible(role):
-    graph = EpisodeGraph(nodes=[SearchNode(node_id="parent", claim="parent claim")])
+    graph = EpisodeGraph(nodes=[completed_node(node_id="parent", claim="parent claim")])
     if role == "executor":
         request = direct_executor_request(graph, grant=0)
         output = ExecutorEpisodeOutput(nodes=[])
@@ -251,7 +252,7 @@ def test_legacy_episode_output_without_epistemic_field_remains_compatible(role):
 
 
 def test_cross_episode_committed_epistemic_reference_resolves():
-    graph = EpisodeGraph(nodes=[SearchNode(node_id="parent", claim="parent claim")])
+    graph = EpisodeGraph(nodes=[completed_node(node_id="parent", claim="parent claim")])
     judge_request = direct_judge_request(graph)
     judge_output = JudgeEpisodeOutput(
         observations=[
@@ -301,7 +302,7 @@ def test_cross_episode_committed_epistemic_reference_resolves():
     ],
 )
 def test_unknown_epistemic_reference_rejects_the_whole_commit(bad_ref):
-    graph = EpisodeGraph(nodes=[SearchNode(node_id="parent", claim="parent claim")])
+    graph = EpisodeGraph(nodes=[completed_node(node_id="parent", claim="parent claim")])
     request = direct_executor_request(graph, grant=0)
     output = ExecutorEpisodeOutput(
         nodes=[],
@@ -333,7 +334,7 @@ def test_unknown_epistemic_reference_rejects_the_whole_commit(bad_ref):
 def test_safe_existing_artifact_and_explicit_external_reference_are_accepted(tmp_path):
     artifact = tmp_path / "proof.json"
     artifact.write_text("{}", encoding="utf-8")
-    graph = EpisodeGraph(nodes=[SearchNode(node_id="parent", claim="parent claim")])
+    graph = EpisodeGraph(nodes=[completed_node(node_id="parent", claim="parent claim")])
     request = direct_executor_request(graph, grant=0)
     output = ExecutorEpisodeOutput(
         nodes=[],
@@ -362,7 +363,7 @@ def test_safe_existing_artifact_and_explicit_external_reference_are_accepted(tmp
 
 @pytest.mark.parametrize("source_type", ["human_confirmed", "backend_derived"])
 def test_agent_episode_cannot_forge_human_or_backend_source(source_type):
-    graph = EpisodeGraph(nodes=[SearchNode(node_id="parent", claim="parent claim")])
+    graph = EpisodeGraph(nodes=[completed_node(node_id="parent", claim="parent claim")])
     request = direct_executor_request(graph, grant=0)
     output = ExecutorEpisodeOutput(
         nodes=[],
@@ -433,8 +434,8 @@ def test_epistemic_basis_reference_length_is_bounded():
 def test_episode_cannot_target_an_existing_but_ungranted_node(role):
     graph = EpisodeGraph(
         nodes=[
-            SearchNode(node_id="parent", claim="parent claim"),
-            SearchNode(node_id="ungranted", claim="ungranted claim"),
+            completed_node(node_id="parent", claim="parent claim"),
+            completed_node(node_id="ungranted", claim="ungranted claim"),
         ]
     )
     bundle = EpistemicContributionBundle(
@@ -476,7 +477,7 @@ def test_episode_cannot_target_an_existing_but_ungranted_node(role):
 
 
 def test_external_artifact_backed_requires_an_external_or_artifact_basis():
-    graph = EpisodeGraph(nodes=[SearchNode(node_id="parent", claim="parent claim")])
+    graph = EpisodeGraph(nodes=[completed_node(node_id="parent", claim="parent claim")])
     request = direct_executor_request(graph, grant=0)
     output = ExecutorEpisodeOutput(
         nodes=[],
@@ -512,7 +513,7 @@ def test_strong_negative_disposition_requires_basis(disposition):
 
 
 def test_stale_rejected_commit_adds_no_epistemic_records():
-    graph = EpisodeGraph(nodes=[SearchNode(node_id="parent", claim="parent claim")])
+    graph = EpisodeGraph(nodes=[completed_node(node_id="parent", claim="parent claim")])
     request = direct_executor_request(graph, grant=0)
     output = ExecutorEpisodeOutput(
         nodes=[], epistemic_contributions=assumption_bundle()
@@ -527,7 +528,7 @@ def test_stale_rejected_commit_adds_no_epistemic_records():
 
 def test_duplicate_stable_id_is_rejected_atomically():
     first_graph = EpisodeGraph(
-        nodes=[SearchNode(node_id="parent", claim="parent claim")]
+        nodes=[completed_node(node_id="parent", claim="parent claim")]
     )
     request = direct_executor_request(first_graph, grant=0)
     output = ExecutorEpisodeOutput(
@@ -537,7 +538,7 @@ def test_duplicate_stable_id_is_rejected_atomically():
     assert commit_episode_result(first_graph, request, result).accepted
 
     replay_graph = EpisodeGraph(
-        nodes=[SearchNode(node_id="parent", claim="parent claim")],
+        nodes=[completed_node(node_id="parent", claim="parent claim")],
         epistemic_ledger=first_graph.epistemic_ledger.model_copy(deep=True),
     )
     before = graph_snapshot(replay_graph)
@@ -552,7 +553,7 @@ def test_retry_only_commits_the_final_attempt_epistemic_records(tmp_path):
     create_app_run(
         run_dir,
         spec(),
-        [SearchNode(node_id="parent", claim="parent claim")],
+        [completed_node(node_id="parent", claim="parent claim")],
         run_id="retry-run",
     )
     first = next_app_episode(run_dir).request
@@ -582,7 +583,7 @@ def test_repository_reference_is_repairable_on_the_same_attempt(tmp_path):
     create_app_run(
         run_dir,
         spec(),
-        [SearchNode(node_id="parent", claim="parent claim")],
+        [completed_node(node_id="parent", claim="parent claim")],
         run_id="repository-repair-run",
     )
     request = next_app_episode(run_dir).request
@@ -624,7 +625,7 @@ def test_late_superseded_attempt_cannot_write_epistemic_ledger(tmp_path):
     create_app_run(
         run_dir,
         spec(),
-        [SearchNode(node_id="parent", claim="parent claim")],
+        [completed_node(node_id="parent", claim="parent claim")],
         run_id="late-run",
     )
     first = next_app_episode(run_dir).request
@@ -652,7 +653,7 @@ def test_app_run_state_legacy_migration_defaults_to_empty_epistemic_ledger(tmp_p
     create_app_run(
         run_dir,
         spec(),
-        [SearchNode(node_id="parent", claim="parent claim")],
+        [completed_node(node_id="parent", claim="parent claim")],
         run_id="legacy-run",
     )
     path = run_dir / "app_run_state.json"
@@ -696,7 +697,7 @@ def drive_terminal_run(
     create_app_run(
         run_dir,
         spec(node_cap=1),
-        [SearchNode(node_id="parent", claim="the bound holds")],
+        [completed_node(node_id="parent", claim="the bound holds")],
         run_id=run_dir.name,
     )
     judge = next_app_episode(run_dir).request
@@ -959,8 +960,8 @@ def drive_targeted_selection_run(tmp_path: Path) -> Path:
         run_dir,
         spec(node_cap=2),
         [
-            SearchNode(node_id="selected", claim="selected claim"),
-            SearchNode(node_id="other", claim="low-score alternative"),
+            completed_node(node_id="selected", claim="selected claim"),
+            completed_node(node_id="other", claim="low-score alternative"),
         ],
         run_id="targeted-run",
     )
@@ -1050,7 +1051,7 @@ def test_max_search_nodes_terminal_handoff_marks_unselected_frontier_out_of_budg
     create_app_run(
         run_dir,
         bounded,
-        [SearchNode(node_id=f"n{index}", claim=f"distinct claim {index}") for index in range(9)],
+        [completed_node(node_id=f"n{index}", claim=f"distinct claim {index}") for index in range(9)],
         run_id="node-cap-handoff",
     )
     judge = next_app_episode(run_dir).request
@@ -1124,12 +1125,12 @@ def drive_conflict_run(tmp_path: Path) -> Path:
         run_dir,
         spec(node_cap=2),
         [
-            SearchNode(
+            completed_node(
                 node_id="left",
                 claim="the condition is sufficient",
                 evidence=["shared-source"],
             ),
-            SearchNode(
+            completed_node(
                 node_id="right",
                 claim="the condition is not sufficient",
                 evidence=["shared-source"],
@@ -1197,7 +1198,7 @@ def test_legacy_researcher_learning_file_is_ignored_and_not_modified(tmp_path):
 
 
 def test_learning_reference_is_rejected_by_current_commit_contract():
-    graph = EpisodeGraph(nodes=[SearchNode(node_id="parent", claim="parent claim")])
+    graph = EpisodeGraph(nodes=[completed_node(node_id="parent", claim="parent claim")])
     request = direct_executor_request(graph, grant=0)
     output = ExecutorEpisodeOutput(
         nodes=[],
@@ -1306,25 +1307,15 @@ def test_skill_and_agents_require_both_terminal_summaries_without_learning_ledge
     assert "most dangerous" in combined.casefold() or "最危险" in combined
 
 
-def test_spec_freezes_v1_architecture_until_real_run_evidence_justifies_change():
+def test_new_release_spec_locks_controller_authority_and_transition_contract():
     root = Path(__file__).resolve().parents[1]
     spec_text = (root / "SPEC.md").read_text(encoding="utf-8").casefold()
-    architecture_text = (root / "ARCHITECTURE.md").read_text(
-        encoding="utf-8"
-    ).casefold()
-    operator_text = "\n".join(
-        (root / name).read_text(encoding="utf-8").casefold()
-        for name in ("README.md", "AGENTS.md", "SKILL.md")
-    )
 
-    assert "v1 architecture freeze and evidence-gated evolution" in spec_text
-    assert "native final synthesis episode" in spec_text
-    assert "verifier, human-approval gate" in spec_text
-    assert "dormant-node state" in spec_text
-    assert "additional reward, convergence, learning, reliability" in spec_text
-    assert "real runs provide a reproducible failure case" in spec_text
-    assert "v1 architecture is now frozen" in architecture_text
-    assert "future architecture work is evidence-gated" in architecture_text
-    assert "feature-complete v1" in operator_text
-    assert "dormant-node state" in operator_text
-    assert "comparative outcome evidence" in operator_text
+    assert "# dte `new` release specification" in spec_text
+    assert "docs/physics.md" in spec_text
+    assert "completed research transition" in spec_text
+    assert "seed producers and executor outputs must provide completed-transition fields directly" in spec_text
+    assert "fails closed" in spec_text
+    assert "judge score is not controller value" in spec_text
+    assert "direct pushes to `new` and `old` must trigger ci" in spec_text
+    assert "silent mathematical drift is a release failure" in spec_text

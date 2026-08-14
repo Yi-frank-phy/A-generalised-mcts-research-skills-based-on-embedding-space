@@ -1,3 +1,4 @@
+from tests.helpers import completed_node, completed_candidate
 import json
 from datetime import timedelta
 
@@ -60,7 +61,7 @@ def make_run(
     require_final_synthesis=True,
 ):
     run_dir = tmp_path / "run"
-    nodes = [SearchNode(node_id=f"n{index}", claim=f"claim {index}") for index in range(node_count)]
+    nodes = [completed_node(node_id=f"n{index}", claim=f"claim {index}") for index in range(node_count)]
     create_app_run(
         run_dir,
         run_spec(
@@ -117,7 +118,7 @@ def judge_result(request, *, observations=None, status="completed"):
 def executor_result(request, *, child_id="child", child_claim="bounded child"):
     output = ExecutorEpisodeOutput(
         nodes=[
-            ExecutorNodeCandidate(
+            completed_candidate(
                 node_id=child_id,
                 claim=child_claim,
                 parent_ids=[request.parent_node_id],
@@ -145,10 +146,12 @@ class TrackingEmbeddingProvider:
         self.model = model
         self.dim = dim
         self.calls = 0
+        self.texts = []
 
     def embed_texts(self, texts):
         self.calls += len(texts)
-        return [[float(index + 1) for index in range(self.dim)] for _ in texts]
+        self.texts.extend(texts)
+        return HashEmbeddingProvider(dim=self.dim).embed_texts(texts)
 
 
 def graph_snapshot(run_dir):
@@ -223,7 +226,7 @@ def test_judge_score_range_is_rejected_without_mutation(tmp_path):
 
 
 def test_mutated_judge_result_instance_is_revalidated_before_commit():
-    graph = EpisodeGraph(nodes=[SearchNode(node_id="n", claim="claim")])
+    graph = EpisodeGraph(nodes=[completed_node(node_id="n", claim="claim")])
     request = build_judge_episode_request(
         graph,
         graph.nodes,
@@ -264,7 +267,7 @@ def test_judge_grant_membership_is_exact_and_atomic(tmp_path, case):
 
 
 def test_judge_stale_graph_and_selected_node_revisions_are_atomic():
-    graph = EpisodeGraph(nodes=[SearchNode(node_id="n", claim="claim")])
+    graph = EpisodeGraph(nodes=[completed_node(node_id="n", claim="claim")])
     request = build_judge_episode_request(
         graph,
         graph.nodes,
@@ -502,7 +505,8 @@ def test_app_progression_reuses_file_backed_embedding_cache_across_calls(tmp_pat
 
     first_provider = TrackingEmbeddingProvider()
     executor = next_app_episode(run_dir, embedding_provider=first_provider).request
-    assert first_provider.calls == 1
+    assert first_provider.calls > 1  # semantic node + frozen transition-atlas build
+    assert any(not text.startswith("METHOD_EPISTEMIC_TRANSITION_V1") for text in first_provider.texts)
     assert (run_dir / "dte_cache.json").exists()
     submit_app_episode_result(
         run_dir,
@@ -517,10 +521,16 @@ def test_app_progression_reuses_file_backed_embedding_cache_across_calls(tmp_pat
     next_grant = next_app_episode(run_dir, embedding_provider=second_provider)
     assert next_grant.controller_action == "episode_required"
     assert next_grant.request.role == "executor"
-    assert second_provider.calls == 0
+    # Semantic claim/context embeddings come from the file-backed cache. The
+    # canonical transition controller still recomputes its own geometry inputs.
+    assert second_provider.calls > 0
+    assert all(
+        text.startswith("METHOD_EPISTEMIC_TRANSITION_V1")
+        for text in second_provider.texts
+    )
 
     cache = FileDTECache(run_dir / "dte_cache.json")
-    semantic_twin = SearchNode(node_id="other-id", claim="claim 0")
+    semantic_twin = completed_node(node_id="other-id", claim="claim 0")
     matching = EmbeddingCacheNamespace("tracking", "tracking-v1", 8, "embedding-v1")
     assert cache.get_embedding(semantic_twin, namespace=matching) is not None
     for changed in (

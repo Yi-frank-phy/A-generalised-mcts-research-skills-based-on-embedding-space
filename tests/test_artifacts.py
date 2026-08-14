@@ -1,3 +1,4 @@
+from tests.helpers import completed_node
 from dte_backend.artifacts import (
     render_checkpoint_summary_markdown,
     render_entropy_trace_markdown,
@@ -14,7 +15,7 @@ def test_codex_app_artifacts_render():
         goal="g",
         budget=BudgetSpec(max_iterations=1, allocation_mass_per_iteration=1),
     )
-    result = run_frontier_search(spec, [SearchNode(node_id="n", claim="claim")])
+    result = run_frontier_search(spec, [completed_node(node_id="n", claim="claim")])
     assert "DTE Frontier" in render_frontier_markdown(result)
     assert "Entropy" in render_entropy_trace_markdown(result)
     assert "Main Agent Status" in render_main_agent_status(result)
@@ -26,7 +27,7 @@ def test_checkpoint_summary_mentions_forced_synthesis_state():
         goal="g",
         budget=BudgetSpec(max_iterations=5, allocation_mass_per_iteration=1),
     )
-    nodes = [SearchNode(node_id="n", claim="claim")]
+    nodes = [completed_node(node_id="n", claim="claim")]
 
     def control_callback(spec, nodes, traces):
         return SynthesisControlRequest(

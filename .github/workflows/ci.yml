@@ -61,6 +61,19 @@ jobs:
           name: pytest-results-linux-py312
           path: pytest-results.xml
           if-no-files-found: error
+      - name: Upload temporary source snapshot
+        if: always() && github.event_name == 'push' && runner.os == 'Linux' && matrix.python-version == '3.12'
+        uses: actions/upload-artifact@v4
+        with:
+          name: new-source-snapshot
+          path: |
+            src
+            tests
+            examples
+            schemas
+            scripts
+            pyproject.toml
+          if-no-files-found: error
       - name: Preserve unit-test failure
         if: steps.unit_tests.outcome == 'failure'
         run: python -c "raise SystemExit(1)"

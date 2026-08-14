@@ -61,6 +61,29 @@ jobs:
           name: pytest-results-linux-py312
           path: pytest-results.xml
           if-no-files-found: error
+      - name: Report pytest failures
+        if: steps.unit_tests.outcome == 'failure' && runner.os == 'Linux' && matrix.python-version == '3.12'
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+
+          root = ET.parse(Path("pytest-results.xml")).getroot()
+          for case in root.iter("testcase"):
+              problem = case.find("failure")
+              if problem is None:
+                  problem = case.find("error")
+              if problem is None:
+                  continue
+              identity = "::".join(
+                  part for part in (case.get("classname", ""), case.get("name", "")) if part
+              )
+              details = (problem.get("message") or problem.text or "pytest failure").strip()
+              text = f"{identity}: {details}" if identity else details
+              text = text[:4000].replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+              print(f"::error title=pytest failure::{text}")
+          PY
       - name: Upload temporary source snapshot
         if: always() && github.event_name == 'push' && runner.os == 'Linux' && matrix.python-version == '3.12'
         uses: actions/upload-artifact@v4

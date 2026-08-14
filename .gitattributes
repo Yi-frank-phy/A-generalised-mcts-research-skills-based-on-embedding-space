@@ -1,3 +1,5 @@
 hooks/dte_enforcement_hook.py text eol=lf
 deploy/managed-template/hooks/dte_enforcement_hook.py text eol=lf
 deploy/managed-template/requirements.toml text eol=lf
+docs/PHYSICS.md text eol=lf
+docs/DESIGN.md text eol=lf

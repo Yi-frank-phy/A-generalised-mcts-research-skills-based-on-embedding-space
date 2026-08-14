@@ -33,7 +33,7 @@ Judge scores remain research observations and are not controller value. The auth
 
 This project is **public alpha**. The backend, persistence contracts, packaging, CI matrix, smoke workflow, and App/headless protocol are intended to be runnable and reproducible. Passing tests establishes implementation behavior; it does **not** establish scientific correctness or prove that DTE improves research outcomes.
 
-Current package version: `0.2.0`.
+Current package/release version: `2.0.0`.
 
 ## Install
 

@@ -87,11 +87,6 @@ jobs:
           cd "$RUNNER_TEMP"
           "$RUNNER_TEMP/dte-wheel-venv/bin/python" -m dte_backend hook-driver --help
           "$RUNNER_TEMP/dte-wheel-venv/bin/dte-backend" hook-driver --help
-      - name: Refresh repository Skill bundle metadata
-        run: |
-          "$RUNNER_TEMP/dte-wheel-venv/bin/python" scripts/generate_bundle_manifest.py
-          "$RUNNER_TEMP/dte-wheel-venv/bin/python" -c "from pathlib import Path; data=Path('bundle-manifest.json').read_bytes(); target=Path('deploy/managed-template/bundle-manifest.json'); target.parent.mkdir(parents=True, exist_ok=True); target.write_bytes(data)"
-          "$RUNNER_TEMP/dte-wheel-venv/bin/python" scripts/generate_bundle_manifest.py --verify
       - name: Verify repository Skill bundle
         run: |
           "$RUNNER_TEMP/dte-wheel-venv/bin/python" scripts/install_skill_bundle.py --source . --target "$RUNNER_TEMP/dte-installed-skill"

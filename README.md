@@ -4,14 +4,14 @@
 
 ## Branches
 
-This repository is currently transitioning toward one future primary line and one preserved legacy line:
+This repository has one primary development/release line and one preserved legacy line:
 
 | Branch | Role | Controller |
 |---|---|---|
-| [`new`](https://github.com/Yi-frank-phy/A-generalised-mcts-research-skills-based-on-embedding-space/tree/new) | **Intended future primary mainline / recommended for current development** | completed-transition embedding + frozen-atlas proper-volume metric-measure controller |
+| [`new`](https://github.com/Yi-frank-phy/A-generalised-mcts-research-skills-based-on-embedding-space/tree/new) | **Primary mainline / default / recommended** | completed-transition embedding + frozen-atlas proper-volume metric-measure controller |
 | [`old`](https://github.com/Yi-frank-phy/A-generalised-mcts-research-skills-based-on-embedding-space/tree/old) | Legacy compatibility / reproducibility | direct node/semantic embedding + RBF-KDE compatibility controller |
 
-**`new` is the forward development line and is being prepared to become the primary maintenance/release branch.** Future fixes, documentation work, controller changes, and releases should land on `new`. `old` is retained so previous runs and v1 controller behavior remain reproducible; it is not a peer development line.
+**`new` is the active development, maintenance, and release branch.** Future fixes, documentation work, controller changes, and normal releases land on `new`. `old` is retained so previous runs and v1 controller behavior remain reproducible; it is not a peer development line.
 
 ## What `new` changes
 
@@ -35,7 +35,7 @@ Judge scores remain research observations and are not controller value. The auth
 
 This project is **public alpha**. The backend, persistence contracts, packaging, CI matrix, smoke workflow, and App/headless protocol are intended to be runnable and reproducible. Passing tests establishes implementation behavior; it does **not** establish scientific correctness or prove that DTE improves research outcomes.
 
-Current package version on the future mainline: `2.0.0`.
+Current package version on the primary mainline: `2.0.0`.
 
 ## Install
 
@@ -94,14 +94,14 @@ tests/                   regression and release-contract tests
 
 ## Release policy
 
-- **All future normal releases are intended to be cut from `new`.**
-- `new` is the forward development branch and the intended future primary maintenance/release branch.
+- **All future normal releases are cut from `new`.**
+- `new` is the default and primary long-term development, maintenance, and release branch.
 - `old` is retained only for v1 compatibility, reproducibility, and narrowly scoped maintenance.
 - Do not silently move old controller mathematics into `new` or vice versa.
 - A theory-affecting change on `new` must update the mathematical authority and its lock/tests explicitly.
 - Tags/releases should point to the exact `new` commit being released.
 
-The next planned mainline release is **v2.0.0**.
+The current mainline release is **v2.0.0**.
 
 ## License
 

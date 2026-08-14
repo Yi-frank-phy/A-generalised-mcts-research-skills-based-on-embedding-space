@@ -59,6 +59,11 @@ jobs:
               '    assert summary.controller_trajectory[0].positive_budget_parent_count == 1\n',
               1,
           )
+          text = text.replace(
+              '    assert summary.node_funnel.canonical_frontier_node_count == 1\n',
+              '    assert summary.node_funnel.canonical_frontier_node_count == 2\n',
+              1,
+          )
           path.write_text(text, encoding='utf-8')
 
           path = Path('scripts/smoke_epistemic_workflow.py')

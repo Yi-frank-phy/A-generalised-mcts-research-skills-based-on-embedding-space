@@ -64,6 +64,16 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.14"
+      - name: Verify committed release metadata
+        run: |
+          python scripts/generate_bundle_manifest.py --verify
+          python - <<'PY'
+          from pathlib import Path
+
+          root = Path("bundle-manifest.json").read_bytes()
+          managed = Path("deploy/managed-template/bundle-manifest.json").read_bytes()
+          assert root == managed, "managed-template bundle manifest differs from root bundle manifest"
+          PY
       - name: Build backend wheel
         run: |
           python -m pip install build

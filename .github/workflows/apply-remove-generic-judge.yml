@@ -74,6 +74,29 @@ jobs:
           set -o pipefail
           python scripts/remove_generic_judge_phase2.py 2>&1 | tee judge-removal-codemod.log
 
+      - name: Capture post-codemod snapshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: judge-removal-post-codemod
+          path: |
+            src/
+            tests/
+            scripts/
+            prompts/
+            schemas/
+            docs/
+            hooks/
+            SKILL.md
+            README.md
+            ARCHITECTURE.md
+            PRD.md
+            PROTOTYPE.md
+            SPEC.md
+            pyproject.toml
+          include-hidden-files: true
+          if-no-files-found: error
+
       - name: Verify focused GREEN
         shell: bash
         run: |

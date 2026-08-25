@@ -28,13 +28,14 @@ jobs:
       - name: Reassert phase-1 migration
         run: python scripts/remove_generic_judge_phase1.py
 
-      - name: Correct phase-2 duplicate CLI assertion
+      - name: Correct phase-2 codemod assertions
         shell: bash
         run: |
           python - <<'PY'
           from pathlib import Path
           path = Path("scripts/remove_generic_judge_phase2.py")
           text = path.read_text(encoding="utf-8")
+
           first = '    text = replace_exact(text, run_block, "", "CLI flexible-run Judge adapter")\n'
           second = '    text = replace_exact(text, run_block, "", "CLI strict-run Judge adapter")\n'
           exact = first + second
@@ -45,6 +46,16 @@ jobs:
               '    text = replace_exact(text, run_block, "", "CLI Judge adapter blocks", count=2)\n',
               1,
           )
+
+          old_end_guard = '    require_count(text, end, 1, f"{label} end")\n'
+          new_end_guard = (
+              '    if end not in text:\n'
+              '        raise RuntimeError(f"{label} end: marker not found")\n'
+          )
+          if text.count(old_end_guard) != 1:
+              raise SystemExit("phase-2 end-marker assertion patch did not match exactly once")
+          text = text.replace(old_end_guard, new_end_guard, 1)
+
           path.write_text(text, encoding="utf-8")
           PY
 

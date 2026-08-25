@@ -1,8 +1,8 @@
 """One-shot, fail-closed migration for phase 1 of generic Judge removal.
 
-This script is intentionally temporary and public.  It edits only the App-run
+This script is intentionally temporary and public. It edits only the App-run
 production path needed to make new runs bypass generic Judge episodes while
-retaining legacy Judge schemas/read validation for old persisted artifacts.
+retaining legacy Judge schemas/read/retry validation for old persisted artifacts.
 Every edit is guarded by exact structural assertions; a partial or unexpected
 source tree aborts without writing the target file.
 """
@@ -47,13 +47,6 @@ def migrate(text: str) -> str:
         and "judge_or_confidence=" not in text
     ):
         return text
-
-    text = replace_once(
-        text,
-        "    build_executor_episode_request,\n    build_judge_episode_request,\n    build_relation_episode_request,\n",
-        "    build_executor_episode_request,\n    build_relation_episode_request,\n",
-        "remove Judge request-builder import",
-    )
 
     text = delete_between(
         text,
@@ -143,9 +136,7 @@ def migrate(text: str) -> str:
     # the old Judge observation validation only when legacy Judge-owned fields
     # are actually present.
     score_start = "        if node.score is None:\n"
-    geometry_start = (
-        "        if any(value is not None for value in geometry) and not all(\n"
-    )
+    geometry_start = "        if any(value is not None for value in geometry) and not all(\n"
     require_once(text, score_start, "Judge-owned node-state validation start")
     require_once(text, geometry_start, "geometry validation continuation")
     i = text.index(score_start)
@@ -178,8 +169,16 @@ def migrate(text: str) -> str:
     for label, needle in forbidden.items():
         if needle in text:
             raise RuntimeError(f"phase-1 invariant failed: {label} remains")
-    if "build_judge_episode_request" in text:
-        raise RuntimeError("phase-1 invariant failed: App driver still builds Judge episodes")
+
+    # `build_judge_episode_request` is intentionally allowed only for retrying a
+    # legacy already-persisted Judge attempt. Phase 2 removes that compatibility
+    # path together with the Judge protocol itself.
+    if text.count("build_judge_episode_request(") != 1:
+        raise RuntimeError(
+            "phase-1 invariant failed: expected exactly one legacy Judge retry builder"
+        )
+    if "Judge retry targets are no longer committed frontier nodes" not in text:
+        raise RuntimeError("phase-1 invariant failed: legacy Judge builder is not retry-only")
     return text
 
 

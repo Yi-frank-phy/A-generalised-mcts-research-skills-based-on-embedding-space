@@ -35,16 +35,11 @@ jobs:
           from pathlib import Path
           path = Path("scripts/remove_generic_judge_phase2.py")
           text = path.read_text(encoding="utf-8")
-          old = '''    text = replace_exact(text, run_block, "", "CLI flexible-run Judge adapter")
-              text = replace_exact(text, run_block, "", "CLI strict-run Judge adapter")
-          '''
-          # The two blocks are intentionally identical: one belongs to `run`,
-          # one to `strict-run`. Replace both in one asserted operation.
-          exact = '''    text = replace_exact(text, run_block, "", "CLI flexible-run Judge adapter")
-              text = replace_exact(text, run_block, "", "CLI strict-run Judge adapter")
-          '''
-          if exact not in text:
-              raise SystemExit("phase-2 CLI assertion patch did not match")
+          first = '    text = replace_exact(text, run_block, "", "CLI flexible-run Judge adapter")\n'
+          second = '    text = replace_exact(text, run_block, "", "CLI strict-run Judge adapter")\n'
+          exact = first + second
+          if text.count(exact) != 1:
+              raise SystemExit("phase-2 CLI assertion patch did not match exactly once")
           text = text.replace(
               exact,
               '    text = replace_exact(text, run_block, "", "CLI Judge adapter blocks", count=2)\n',

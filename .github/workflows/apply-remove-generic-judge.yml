@@ -31,6 +31,9 @@ jobs:
       - name: Verify focused GREEN
         run: python -m pytest tests/test_no_generic_judge.py -q
 
+      - name: Run full regression after Judge bypass
+        run: python -m pytest -q
+
       - name: Refresh public release metadata
         run: |
           python scripts/generate_bundle_manifest.py

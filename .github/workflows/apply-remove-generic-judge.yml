@@ -1,0 +1,51 @@
+name: Apply generic Judge removal
+
+on:
+  push:
+    branches:
+      - agent/remove-generic-judge
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  phase1-green:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: agent/remove-generic-judge
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Install
+        run: python -m pip install -e .[dev]
+
+      - name: Apply fail-closed phase-1 migration
+        run: python scripts/remove_generic_judge_phase1.py
+
+      - name: Verify focused GREEN
+        run: python -m pytest tests/test_no_generic_judge.py -q
+
+      - name: Refresh public release metadata
+        run: |
+          python scripts/generate_bundle_manifest.py
+          python -c "from pathlib import Path; data=Path('bundle-manifest.json').read_bytes(); target=Path('deploy/managed-template/bundle-manifest.json'); target.parent.mkdir(parents=True, exist_ok=True); target.write_bytes(data)"
+          python scripts/generate_bundle_manifest.py --verify
+
+      - name: Commit verified migration
+        shell: bash
+        run: |
+          if git diff --quiet; then
+            echo "No migration changes remain."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/dte_backend/app_driver.py bundle-manifest.json deploy/managed-template/bundle-manifest.json
+          git commit -m "refactor: bypass generic Judge in App workflow"
+          git push origin HEAD:agent/remove-generic-judge

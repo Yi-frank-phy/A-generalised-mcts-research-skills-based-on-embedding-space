@@ -108,8 +108,8 @@
     },
     {
       "path": "src/dte_backend/app_driver.py",
-      "size": 259402,
-      "sha256": "c8e3d63065073c1c7df0b63a7064f53e70027430cdcba6b719698c28ce2a589d"
+      "size": 256435,
+      "sha256": "79c291662920531300b7977222a40ef37b8e051b89c8e534708a0963b63fc0c3"
     },
     {
       "path": "src/dte_backend/artifacts.py",
@@ -382,5 +382,5 @@
       "sha256": "b7c578325f60737a6feda3660fd6c53b4d15782a3c931cf2a5e6718591ce4092"
     }
   ],
-  "bundle_sha256": "d6c3f92d28898e9b0639bce1d364726658c192bbc2aeb9cc4f9f5fa9c7dcb13b"
+  "bundle_sha256": "b09d75a55d7b7b3de7004657ba302d34719731bb6afd0ba219c033209f218626"
 }

@@ -28,15 +28,49 @@ jobs:
       - name: Reassert phase-1 migration
         run: python scripts/remove_generic_judge_phase1.py
 
+      - name: Correct phase-2 duplicate CLI assertion
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path("scripts/remove_generic_judge_phase2.py")
+          text = path.read_text(encoding="utf-8")
+          old = '''    text = replace_exact(text, run_block, "", "CLI flexible-run Judge adapter")
+              text = replace_exact(text, run_block, "", "CLI strict-run Judge adapter")
+          '''
+          # The two blocks are intentionally identical: one belongs to `run`,
+          # one to `strict-run`. Replace both in one asserted operation.
+          exact = '''    text = replace_exact(text, run_block, "", "CLI flexible-run Judge adapter")
+              text = replace_exact(text, run_block, "", "CLI strict-run Judge adapter")
+          '''
+          if exact not in text:
+              raise SystemExit("phase-2 CLI assertion patch did not match")
+          text = text.replace(
+              exact,
+              '    text = replace_exact(text, run_block, "", "CLI Judge adapter blocks", count=2)\n',
+              1,
+          )
+          path.write_text(text, encoding="utf-8")
+          PY
+
       - name: Apply fail-closed phase-2 migration
-        run: python scripts/remove_generic_judge_phase2.py 2>&1 | tee judge-removal-codemod.log
+        shell: bash
+        run: |
+          set -o pipefail
+          python scripts/remove_generic_judge_phase2.py 2>&1 | tee judge-removal-codemod.log
 
       - name: Verify focused GREEN
-        run: python -m pytest tests/test_no_generic_judge.py -q 2>&1 | tee judge-removal-focused.log
+        shell: bash
+        run: |
+          set -o pipefail
+          python -m pytest tests/test_no_generic_judge.py -q 2>&1 | tee judge-removal-focused.log
 
       - name: Run full regression
         id: pytest
-        run: python -m pytest -q --junitxml=judge-removal-pytest.xml 2>&1 | tee judge-removal-pytest.log
+        shell: bash
+        run: |
+          set -o pipefail
+          python -m pytest -q --junitxml=judge-removal-pytest.xml 2>&1 | tee judge-removal-pytest.log
 
       - name: Upload regression evidence
         if: always()

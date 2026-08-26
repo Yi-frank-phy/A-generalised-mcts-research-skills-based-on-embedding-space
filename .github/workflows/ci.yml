@@ -8,204 +8,15 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
-  judge-phase2:
-    name: Repair post-Judge regressions
-    if: github.event_name == 'pull_request' && github.head_ref == 'agent/remove-generic-judge'
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          ref: agent/remove-generic-judge
-          fetch-depth: 0
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.13"
-      - name: Apply regression repairs
-        shell: bash
-        run: |
-          python - <<'PY'
-          import ast
-          from pathlib import Path
-
-          def replace_once(path: Path, old: str, new: str, label: str) -> None:
-              text = path.read_text(encoding="utf-8")
-              if old in text:
-                  if text.count(old) != 1:
-                      raise SystemExit(f"{label}: expected exactly one old block")
-                  text = text.replace(old, new, 1)
-              elif new not in text:
-                  raise SystemExit(f"{label}: neither old nor repaired block found")
-              if path.suffix == ".py":
-                  ast.parse(text, filename=str(path))
-              path.write_text(text, encoding="utf-8")
-
-          replace_once(
-              Path("src/dte_backend/merge.py"),
-              "            -(node.score if node.score is not None else node.confidence),\n"
-              "            -(1 if node.judge_result_provenance else 0),\n",
-              "            -node.confidence,\n",
-              "merge canonical Judge ranking",
-          )
-
-          guard_path = Path("hooks/dte_guard.py")
-          guard = guard_path.read_text(encoding="utf-8")
-          guard = guard.replace("    validate_judge_output,\n", "")
-          tree = ast.parse(guard, filename=str(guard_path))
-          judge_fn = next(
-              (
-                  node
-                  for node in tree.body
-                  if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-                  and node.name == "cmd_judge"
-              ),
-              None,
-          )
-          if judge_fn is not None:
-              lines = guard.splitlines(keepends=True)
-              start = min(
-                  [judge_fn.lineno, *[item.lineno for item in judge_fn.decorator_list]]
-              ) - 1
-              del lines[start : judge_fn.end_lineno or judge_fn.lineno]
-              guard = "".join(lines)
-          judge_parser = (
-              '    judge = sub.add_parser("judge")\n'
-              '    judge.add_argument("--nodes", required=True)\n'
-              '    judge.add_argument("--output", required=True)\n'
-              '    judge.set_defaults(func=cmd_judge)\n\n'
-          )
-          if judge_parser in guard:
-              guard = guard.replace(judge_parser, "", 1)
-          elif 'sub.add_parser("judge")' in guard or "cmd_judge" in guard:
-              raise SystemExit("retired Judge guard parser remains in an unexpected shape")
-          ast.parse(guard, filename=str(guard_path))
-          guard_path.write_text(guard, encoding="utf-8")
-
-          replace_once(
-              Path("src/dte_backend/app_driver.py"),
-              "        if any(\n"
-              "            node.expansion_budget > 0\n"
-              "            or (node.status == \"frontier\" and node.score is None)\n"
-              "            for node in state.nodes\n"
-              "        ):\n"
-              "            raise ValueError(\"terminal App state retains authorized or unjudged work\")\n",
-              "        if any(node.expansion_budget > 0 for node in state.nodes):\n"
-              "            raise ValueError(\"terminal App state retains authorized expansion work\")\n",
-              "terminal generic Judge invariant",
-          )
-
-          regression_path = Path("tests/test_app_post_merge_regressions.py")
-          regression = regression_path.read_text(encoding="utf-8")
-          for line in (
-              '        {"judge_reasoning": "prefilled"},\n',
-              '        {"judge_risks": ["prefilled"]},\n',
-              '        {"judge_uncertainty_evidence": ["prefilled"]},\n',
-              '        {"judge_result_provenance": {"episode_id": "forged"}},\n',
-          ):
-              regression = regression.replace(line, "")
-          ast.parse(regression, filename=str(regression_path))
-          regression_path.write_text(regression, encoding="utf-8")
-
-          replace_once(
-              Path("tests/test_executor_adapter.py"),
-              "    assert result.nodes[0].score is not None\n"
-              "    assert result.nodes[-1].score is None\n",
-              "    assert result.nodes[0].score is None\n"
-              "    assert result.nodes[0].density is not None\n"
-              "    assert result.nodes[0].uncertainty is not None\n"
-              "    assert result.nodes[0].ucb_score is not None\n"
-              "    assert result.nodes[-1].score is None\n",
-              "runner no-Judge score expectation",
-          )
-
-          replace_once(
-              Path("tests/test_hook_enforcement.py"),
-              '                    "rationale": "seed",\n'
-              '                    "status": "frontier",\n',
-              '                    "rationale": "seed",\n'
-              '                    "retrospective_method": "initial candidate framing",\n'
-              '                    "epistemic_change_kind": "sharper_unknown",\n'
-              '                    "epistemic_change": "Established the initial bounded candidate for investigation.",\n'
-              '                    "status": "frontier",\n',
-              "hook fixture completed transition",
-          )
-
-          replace_once(
-              Path("tests/test_bundle_manifest.py"),
-              '        json.dumps([{"node_id": "seed", "claim": "installed copy probe"}]),\n',
-              '        json.dumps([{"node_id": "seed", "claim": "installed copy probe", '
-              '"retrospective_method": "installed-copy initialization", '
-              '"epistemic_change_kind": "sharper_unknown", '
-              '"epistemic_change": "Established the installed-copy probe as an active completed transition."}]),\n',
-              "installed-copy completed transition",
-          )
-          PY
-      - name: Install
-        run: python -m pip install -e .[dev]
-      - name: Refresh checked-in machine schemas
-        shell: bash
-        run: |
-          python - <<'PY'
-          import json
-          from pathlib import Path
-          from dte_backend.models import ExpansionRequest, SearchNode
-
-          for filename, model in (
-              ("search_node.schema.json", SearchNode),
-              ("expansion_request.schema.json", ExpansionRequest),
-          ):
-              path = Path("schemas") / filename
-              path.write_text(
-                  json.dumps(
-                      model.model_json_schema(mode="serialization"),
-                      ensure_ascii=False,
-                      indent=2,
-                  ) + "\n",
-                  encoding="utf-8",
-              )
-          PY
-      - name: Refresh generated release metadata
-        run: |
-          python scripts/generate_bundle_manifest.py
-          python -c "from pathlib import Path; data=Path('bundle-manifest.json').read_bytes(); target=Path('deploy/managed-template/bundle-manifest.json'); target.parent.mkdir(parents=True, exist_ok=True); target.write_bytes(data)"
-          python scripts/generate_bundle_manifest.py --verify
-      - name: Run targeted regression
-        run: >-
-          python -m pytest -q
-          tests/test_no_generic_judge.py
-          tests/test_merge.py
-          tests/test_relation_workflow.py
-          tests/test_app_relation_readiness.py
-          tests/test_hooks.py
-          tests/test_smoke_workflow.py
-          tests/test_hook_enforcement.py
-          tests/test_bundle_manifest.py
-          tests/test_executor_adapter.py
-          tests/test_schema.py
-          tests/test_app_post_merge_regressions.py
-      - name: Commit verified repairs
-        shell: bash
-        run: |
-          if git diff --quiet; then
-            echo "No post-Judge repairs remain."
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -m "fix: repair post-Judge regressions"
-          git push origin HEAD:agent/remove-generic-judge
-
   test:
     name: ${{ matrix.os }} / Python ${{ matrix.python-version }}
-    needs: judge-phase2
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     strategy:
@@ -228,8 +39,6 @@ jobs:
             python-version: "3.14"
     steps:
       - uses: actions/checkout@v6
-        with:
-          ref: agent/remove-generic-judge
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
@@ -248,13 +57,10 @@ jobs:
 
   package:
     name: Backend wheel and repository Skill bundle
-    needs: judge-phase2
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
-        with:
-          ref: agent/remove-generic-judge
       - uses: actions/setup-python@v6
         with:
           python-version: "3.14"

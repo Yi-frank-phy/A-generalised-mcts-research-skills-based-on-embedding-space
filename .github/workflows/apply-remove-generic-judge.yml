@@ -1,5 +1,6 @@
 name: Apply generic Judge removal
 
+# Branch-local one-shot migration; kept idempotent so reruns fail closed.
 on:
   push:
     branches:

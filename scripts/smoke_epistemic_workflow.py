@@ -26,8 +26,6 @@ from dte_backend.episode_models import (
     EpisodeResult,
     ExecutorEpisodeOutput,
     ExecutorNodeCandidate,
-    JudgeEpisodeOutput,
-    JudgeObservation,
     RuntimeDiagnostics,
     compute_output_hash,
 )
@@ -129,73 +127,6 @@ def main() -> None:
             run_id="epistemic-smoke",
         )
 
-        judge = next_app_episode(run_dir).request
-        assert judge is not None and judge.role == "judge"
-        judge_output = JudgeEpisodeOutput(
-            observations=[
-                JudgeObservation(
-                    node_id=node_id,
-                    score=0.8,
-                    reasoning="material but conditional",
-                    risks=["regularity remains unverified"],
-                )
-                for node_id in judge.selected_node_revisions
-            ],
-            epistemic_contributions=EpistemicContributionBundle(
-                statements=[
-                    EpistemicStatementContribution(
-                        local_id="regularity",
-                        statement_type="assumption",
-                        text="the regularity condition holds",
-                        target_node_id="left",
-                        source_type="agent_reported",
-                        basis_refs=[],
-                    ),
-                    EpistemicStatementContribution(
-                        local_id="boundary-challenge",
-                        statement_type="evidence",
-                        text="the boundary case challenges sufficiency",
-                        target_node_id="left",
-                        source_type="agent_reported",
-                        basis_refs=[],
-                    ),
-                ],
-                edges=[
-                    EpistemicEdgeContribution(
-                        local_id="requires-regularity",
-                        source_ref="node-claim:left",
-                        target_ref="local-statement:regularity",
-                        relation_type="requires",
-                        source_type="agent_reported",
-                        basis_refs=[],
-                        explanation="sufficiency depends on regularity",
-                    ),
-                    EpistemicEdgeContribution(
-                        local_id="challenge-left",
-                        source_ref="local-statement:boundary-challenge",
-                        target_ref="node-claim:left",
-                        relation_type="challenges",
-                        source_type="agent_reported",
-                        basis_refs=[],
-                        explanation="the boundary case weakens the selected claim",
-                    ),
-                ],
-                path_dispositions=[
-                    PathDispositionContribution(
-                        local_id="left-challenged",
-                        target_node_id="left",
-                        epistemic_disposition="challenged",
-                        source_type="agent_reported",
-                        basis_refs=["local-statement:boundary-challenge"],
-                        explanation="a material challenge remains",
-                    )
-                ],
-            ),
-        )
-        assert submit_app_episode_result(
-            run_dir, _result(judge, judge_output)
-        ).commit_outcome.accepted
-
         executor = next_app_episode(
             run_dir, embedding_provider=HashEmbeddingProvider(dim=8)
         ).request
@@ -204,12 +135,14 @@ def main() -> None:
         artifact = run_dir / "evidence" / "calculation.json"
         artifact.parent.mkdir(parents=True, exist_ok=True)
         artifact.write_text("{}", encoding="utf-8")
+        parent_id = executor.parent_node_id
+        assert parent_id is not None
         executor_output = ExecutorEpisodeOutput(
             nodes=[
                 ExecutorNodeCandidate(
                     node_id=child_id,
                     claim="the condition works away from the boundary",
-                    parent_ids=[executor.parent_node_id],
+                    parent_ids=[parent_id],
                     retrospective_method="perform the bounded away-from-boundary calculation",
                     epistemic_change_kind="new_understanding",
                     epistemic_change="established bounded support away from the unresolved boundary",
@@ -218,15 +151,49 @@ def main() -> None:
             epistemic_contributions=EpistemicContributionBundle(
                 statements=[
                     EpistemicStatementContribution(
+                        local_id="regularity",
+                        statement_type="assumption",
+                        text="the regularity condition holds",
+                        target_node_id=parent_id,
+                        source_type="agent_reported",
+                        basis_refs=[],
+                    ),
+                    EpistemicStatementContribution(
+                        local_id="boundary-challenge",
+                        statement_type="evidence",
+                        text="the boundary case challenges sufficiency",
+                        target_node_id=parent_id,
+                        source_type="agent_reported",
+                        basis_refs=[],
+                    ),
+                    EpistemicStatementContribution(
                         local_id="finite-check",
                         statement_type="evidence",
                         text="a bounded calculation supports the child claim",
                         target_node_id=child_id,
                         source_type="external_artifact_backed",
                         basis_refs=["artifact:evidence/calculation.json"],
-                    )
+                    ),
                 ],
                 edges=[
+                    EpistemicEdgeContribution(
+                        local_id="requires-regularity",
+                        source_ref=f"node-claim:{parent_id}",
+                        target_ref="local-statement:regularity",
+                        relation_type="requires",
+                        source_type="agent_reported",
+                        basis_refs=[],
+                        explanation="the candidate route depends on regularity",
+                    ),
+                    EpistemicEdgeContribution(
+                        local_id="challenge-parent",
+                        source_ref="local-statement:boundary-challenge",
+                        target_ref=f"node-claim:{parent_id}",
+                        relation_type="challenges",
+                        source_type="agent_reported",
+                        basis_refs=[],
+                        explanation="the boundary case weakens the selected route",
+                    ),
                     EpistemicEdgeContribution(
                         local_id="finite-support",
                         source_ref="local-statement:finite-check",
@@ -239,12 +206,22 @@ def main() -> None:
                     EpistemicEdgeContribution(
                         local_id="child-derived",
                         source_ref=f"node-claim:{child_id}",
-                        target_ref=f"node-claim:{executor.parent_node_id}",
+                        target_ref=f"node-claim:{parent_id}",
                         relation_type="derived_from",
                         source_type="agent_reported",
                         basis_refs=[],
                         explanation="the child refines its granted parent route",
                     ),
+                ],
+                path_dispositions=[
+                    PathDispositionContribution(
+                        local_id="parent-challenged",
+                        target_node_id=parent_id,
+                        epistemic_disposition="challenged",
+                        source_type="agent_reported",
+                        basis_refs=["local-statement:boundary-challenge"],
+                        explanation="a material challenge remains",
+                    )
                 ],
             ),
         )
@@ -257,22 +234,6 @@ def main() -> None:
             if outcome.request is None:
                 assert outcome.controller_action == "ready_for_synthesis"
                 break
-            if outcome.request.role == "judge":
-                followup_judge = JudgeEpisodeOutput(
-                    observations=[
-                        JudgeObservation(
-                            node_id=node_id,
-                            score=0.7,
-                            reasoning="the child is useful but remains provisional",
-                            risks=["bounded evidence does not cover every case"],
-                        )
-                        for node_id in outcome.request.selected_node_revisions
-                    ]
-                )
-                assert submit_app_episode_result(
-                    run_dir, _result(outcome.request, followup_judge)
-                ).commit_outcome.accepted
-                continue
             if outcome.request.role == "executor":
                 assert submit_app_episode_result(
                     run_dir,
@@ -315,7 +276,6 @@ def main() -> None:
         assert operational_after == operational_before
         assert epistemic_after == epistemic_before
 
-        # Restart through the normal state validator, then rebuild both views.
         app_run_status(run_dir)
         assert build_run_observability_summary(run_dir) == operational_after
         assert build_terminal_epistemic_handoff(run_dir) == epistemic_after

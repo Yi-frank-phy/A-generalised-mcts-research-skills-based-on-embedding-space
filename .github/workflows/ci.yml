@@ -88,6 +88,19 @@ jobs:
           ast.parse(guard, filename=str(guard_path))
           guard_path.write_text(guard, encoding="utf-8")
 
+          replace_once(
+              Path("src/dte_backend/app_driver.py"),
+              "        if any(\n"
+              "            node.expansion_budget > 0\n"
+              "            or (node.status == \"frontier\" and node.score is None)\n"
+              "            for node in state.nodes\n"
+              "        ):\n"
+              "            raise ValueError(\"terminal App state retains authorized or unjudged work\")\n",
+              "        if any(node.expansion_budget > 0 for node in state.nodes):\n"
+              "            raise ValueError(\"terminal App state retains authorized expansion work\")\n",
+              "terminal generic Judge invariant",
+          )
+
           regression_path = Path("tests/test_app_post_merge_regressions.py")
           regression = regression_path.read_text(encoding="utf-8")
           for line in (

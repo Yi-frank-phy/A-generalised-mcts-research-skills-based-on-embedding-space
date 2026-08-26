@@ -1755,12 +1755,6 @@ def _validate_loaded_state(state: AppRunState) -> None:
             raise ValueError("persisted node status disagrees with committed lifecycle transitions")
 
     for node in state.nodes:
-        judge_fields_present = bool(
-            node.judge_reasoning is not None
-            or node.judge_risks
-            or node.judge_uncertainty_evidence
-            or node.judge_result_provenance is not None
-        )
         geometry = (
             node.density,
             node.uncertainty,
@@ -1801,35 +1795,8 @@ def _validate_loaded_state(state: AppRunState) -> None:
                 or (node.status == "merged" and node.expansion_budget != 0)
             ):
                 raise ValueError("persisted node allocation/child accounting is inconsistent")
-        if node.score is None:
-            if judge_fields_present:
-                raise ValueError("unscored node contains persisted Judge-owned state")
-        else:
-            owner = None
-            if owner is None:
-                raise ValueError("scored node lacks an authoritative committed Judge observation")
-            episode, attempt, observation = owner
-            expected_provenance = {
-                "run_id": state.run_id,
-                "episode_id": episode.episode_id,
-                "attempt_id": attempt.attempt_id,
-                "schema_version": attempt.request.output_schema_version,
-                "output_hash": attempt.result_hash or "",
-            }
-            granted_revision = {
-                attempt.canonical_node_id_map.get(node_id, node_id): revision
-                for node_id, revision in attempt.request.selected_node_revisions.items()
-            }[node.node_id]
-            if (
-                node.score != observation.score
-                or node.judge_reasoning != observation.reasoning
-                or node.judge_risks != observation.risks
-                or node.judge_uncertainty_evidence != observation.uncertainty_evidence
-                or node.judge_result_provenance != expected_provenance
-                or state.node_revisions.get(node.node_id, -1)
-                <= granted_revision
-            ):
-                raise ValueError("persisted Judge-owned node state disagrees with committed output")
+        if node.score is not None:
+            raise ValueError("persisted node score is unsupported after generic Judge removal")
 
         if any(value is not None for value in geometry) and not all(
             value is not None for value in geometry
@@ -2902,8 +2869,6 @@ def _validate_initial_nodes(initial_nodes: list[SearchNode]) -> list[SearchNode]
             polluted.append("node_type")
         for field_name in (
             "local_embedding",
-            "judge_reasoning",
-            "judge_result_provenance",
             "score",
             "density",
             "uncertainty",
@@ -2911,10 +2876,6 @@ def _validate_initial_nodes(initial_nodes: list[SearchNode]) -> list[SearchNode]
         ):
             if getattr(node, field_name) is not None:
                 polluted.append(field_name)
-        if node.judge_risks:
-            polluted.append("judge_risks")
-        if node.judge_uncertainty_evidence:
-            polluted.append("judge_uncertainty_evidence")
         if node.expansion_budget != 0:
             polluted.append("expansion_budget")
         if polluted:

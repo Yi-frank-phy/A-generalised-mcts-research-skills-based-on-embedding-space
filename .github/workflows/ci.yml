@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   judge-phase2:
-    name: Apply Judge phase-2 migration
+    name: Repair Judge-removal observability residue
     if: github.event_name == 'pull_request' && github.head_ref == 'agent/remove-generic-judge'
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -28,71 +28,75 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
-      - name: Install
-        run: python -m pip install -e .[dev]
-      - name: Reassert phase-1 migration
-        run: python scripts/remove_generic_judge_phase1.py
-      - name: Correct phase-2 codemod assertions
+      - name: Repair observability residue
         shell: bash
         run: |
           python - <<'PY'
+          import ast
           from pathlib import Path
-          path = Path("scripts/remove_generic_judge_phase2.py")
+
+          path = Path("src/dte_backend/observability.py")
           text = path.read_text(encoding="utf-8")
 
-          first = '    text = replace_exact(text, run_block, "", "CLI flexible-run Judge adapter")\n'
-          second = '    text = replace_exact(text, run_block, "", "CLI strict-run Judge adapter")\n'
-          exact = first + second
-          if text.count(exact) != 1:
-              raise SystemExit("phase-2 CLI assertion patch did not match exactly once")
+          text = text.replace("    JudgeEpisodeOutput,\n", "")
           text = text.replace(
-              exact,
-              '    text = replace_exact(text, run_block, "", "CLI Judge adapter blocks", count=2)\n',
-              1,
+              "elif isinstance(structured, (JudgeEpisodeOutput, RelationEpisodeOutput)):",
+              "elif isinstance(structured, RelationEpisodeOutput):",
           )
 
-          old_end_guard = '    require_count(text, end, 1, f"{label} end")\n'
-          new_end_guard = (
-              '    if end not in text:\n'
-              '        raise RuntimeError(f"{label} end: marker not found")\n'
+          tree = ast.parse(text)
+          target = next(
+              (
+                  node
+                  for node in tree.body
+                  if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                  and node.name == "_committed_judge_observations"
+              ),
+              None,
           )
-          if text.count(old_end_guard) != 1:
-              raise SystemExit("phase-2 end-marker assertion patch did not match exactly once")
-          text = text.replace(old_end_guard, new_end_guard, 1)
+          if target is not None:
+              lines = text.splitlines(keepends=True)
+              del lines[target.lineno - 1 : target.end_lineno or target.lineno]
+              text = "".join(lines)
 
-          old_range = '        ((node.lineno - 1, node.end_lineno or node.lineno) for node in found.values()),\n'
-          new_range = (
-              '        ((min([node.lineno, *[item.lineno for item in getattr(node, "decorator_list", [])]]) - 1, '
-              'node.end_lineno or node.lineno) for node in found.values()),\n'
+          text = text.replace(
+              "    judge_observations = _committed_judge_observations(state, recoverable)\n",
+              "    judge_observations: dict[str, tuple[Any, Any, Any]] = {}\n",
           )
-          if text.count(old_range) != 1:
-              raise SystemExit("phase-2 decorator-safe range patch did not match exactly once")
-          text = text.replace(old_range, new_range, 1)
+          text = text.replace("node.judge_reasoning", 'getattr(node, "judge_reasoning", None)')
+          text = text.replace("node.judge_risks", 'getattr(node, "judge_risks", [])')
+          text = text.replace(
+              "node.judge_uncertainty_evidence",
+              'getattr(node, "judge_uncertainty_evidence", [])',
+          )
+          text = text.replace(
+              "node.judge_result_provenance",
+              'getattr(node, "judge_result_provenance", None)',
+          )
 
+          ast.parse(text, filename=str(path))
           path.write_text(text, encoding="utf-8")
           PY
-      - name: Apply fail-closed phase-2 migration
-        run: python scripts/remove_generic_judge_phase2.py
+      - name: Install
+        run: python -m pip install -e .[dev]
       - name: Verify focused removal tests
-        continue-on-error: true
         run: python -m pytest tests/test_no_generic_judge.py -q
       - name: Refresh generated release metadata
-        continue-on-error: true
         run: |
           python scripts/generate_bundle_manifest.py
           python -c "from pathlib import Path; data=Path('bundle-manifest.json').read_bytes(); target=Path('deploy/managed-template/bundle-manifest.json'); target.parent.mkdir(parents=True, exist_ok=True); target.write_bytes(data)"
           python scripts/generate_bundle_manifest.py --verify
-      - name: Commit migrated branch
+      - name: Commit repair
         shell: bash
         run: |
           if git diff --quiet; then
-            echo "No migration changes remain."
+            echo "No repair changes remain."
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
-          git commit -m "refactor: remove generic Judge production surface"
+          git commit -m "fix: remove residual Judge observability dependency"
           git push origin HEAD:agent/remove-generic-judge
 
   test:

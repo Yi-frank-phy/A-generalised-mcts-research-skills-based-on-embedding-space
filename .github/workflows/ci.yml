@@ -35,8 +35,6 @@ jobs:
           import ast
           from pathlib import Path
 
-          # Observability may keep its public v1 Judge-shaped report fields for legacy
-          # readability, but it must not import or depend on the removed production type.
           path = Path("src/dte_backend/observability.py")
           text = path.read_text(encoding="utf-8")
           text = text.replace("    JudgeEpisodeOutput,\n", "")
@@ -75,8 +73,6 @@ jobs:
           ast.parse(text, filename=str(path))
           path.write_text(text, encoding="utf-8")
 
-          # SearchNode no longer owns Judge metadata, so the new-run producer boundary
-          # must not inspect fields that no longer exist on the model.
           path = Path("src/dte_backend/app_driver.py")
           text = path.read_text(encoding="utf-8")
           for line in (
@@ -94,11 +90,36 @@ jobs:
               "",
               1,
           )
+
+          judge_presence = (
+              "        judge_fields_present = bool(\n"
+              "            node.judge_reasoning is not None\n"
+              "            or node.judge_risks\n"
+              "            or node.judge_uncertainty_evidence\n"
+              "            or node.judge_result_provenance is not None\n"
+              "        )\n"
+          )
+          if judge_presence not in text:
+              raise SystemExit("persisted Judge field-presence block not found exactly once")
+          text = text.replace(judge_presence, "", 1)
+
+          score_start_marker = "        if node.score is None:\n"
+          score_end_marker = (
+              "        if any(value is not None for value in geometry) and not all(\n"
+          )
+          score_start = text.find(score_start_marker)
+          score_end = text.find(score_end_marker, score_start)
+          if score_start < 0 or score_end < 0:
+              raise SystemExit("persisted Judge score validation block markers not found")
+          text = (
+              text[:score_start]
+              + "        if node.score is not None:\n"
+              + "            raise ValueError(\"persisted node score is unsupported after generic Judge removal\")\n\n"
+              + text[score_end:]
+          )
           ast.parse(text, filename=str(path))
           path.write_text(text, encoding="utf-8")
 
-          # Remove the stale App-native instruction that still required a generic
-          # Judge episode. Keep the surrounding controller ownership statement.
           path = Path("SKILL.md")
           text = path.read_text(encoding="utf-8")
           stale = (

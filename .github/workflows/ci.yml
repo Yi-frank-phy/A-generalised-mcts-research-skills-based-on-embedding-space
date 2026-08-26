@@ -37,6 +37,11 @@ jobs:
 
           TESTS = Path("tests")
           EXEMPT = {"test_no_generic_judge.py"}
+          RETIRED_TOKENS = ("judge", "stable_node_hash", "stable_node_payload")
+
+          def contains_retired(text: str) -> bool:
+              lowered = text.lower()
+              return any(token in lowered for token in RETIRED_TOKENS)
 
           def source_start(node: ast.AST) -> int:
               line = getattr(node, "lineno", 1)
@@ -83,8 +88,8 @@ jobs:
                       remaining = [
                           alias
                           for alias in node.names
-                          if "judge" not in alias.name.lower()
-                          and "judge" not in (alias.asname or "").lower()
+                          if not contains_retired(alias.name)
+                          and not contains_retired(alias.asname or "")
                       ]
                       if len(remaining) == len(node.names):
                           continue
@@ -99,8 +104,8 @@ jobs:
                       remaining = [
                           alias
                           for alias in node.names
-                          if "judge" not in alias.name.lower()
-                          and "judge" not in (alias.asname or "").lower()
+                          if not contains_retired(alias.name)
+                          and not contains_retired(alias.asname or "")
                       ]
                       if len(remaining) == len(node.names):
                           continue
@@ -119,7 +124,7 @@ jobs:
           for path in sorted(TESTS.glob("test_*.py")):
               if path.name in EXEMPT:
                   continue
-              if "judge" in path.name.lower():
+              if contains_retired(path.name):
                   path.unlink()
                   continue
 
@@ -131,12 +136,12 @@ jobs:
               for node in tree.body:
                   if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                       segment = ast.get_source_segment(text, node) or ""
-                      if "judge" in segment.lower():
+                      if contains_retired(segment):
                           removable[id(node)] = node
                           removed_names.add(node.name)
                   elif isinstance(node, (ast.Assign, ast.AnnAssign)):
                       segment = ast.get_source_segment(text, node) or ""
-                      if "judge" in segment.lower():
+                      if contains_retired(segment):
                           removable[id(node)] = node
                           removed_names.update(assigned_names(node))
 

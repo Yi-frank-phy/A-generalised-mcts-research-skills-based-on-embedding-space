@@ -136,10 +136,6 @@ class SearchNode(DTEBaseModel):
     epistemic_change: str | None = None
 
     local_embedding: list[float] | None = None
-    judge_reasoning: str | None = None
-    judge_risks: list[str] = Field(default_factory=list)
-    judge_uncertainty_evidence: list[str] = Field(default_factory=list)
-    judge_result_provenance: dict[str, str] | None = None
 
     score: float | None = Field(default=None, ge=0.0, le=1.0)
     density: float | None = None

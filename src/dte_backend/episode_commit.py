@@ -10,15 +10,7 @@ from typing import Any, Mapping
 
 from .epistemic_commit import EpistemicReferenceContext, prepare_epistemic_commit
 from .epistemic_models import EpistemicLedgerV1
-from .episode_models import (
-    CommitOutcome,
-    EpisodeRequest,
-    EpisodeResult,
-    ExecutorEpisodeOutput,
-    JudgeEpisodeOutput,
-    canonical_json_bytes,
-    compute_output_hash,
-)
+from .episode_models import CommitOutcome, EpisodeRequest, EpisodeResult, ExecutorEpisodeOutput, canonical_json_bytes, compute_output_hash
 from .merge import (
     apply_relation_equivalent_merge,
     validate_alias_projected_node_ancestry,
@@ -155,11 +147,6 @@ def _raw_nodes(raw_result: Any) -> list[Any]:
     return []
 
 
-def _raw_judge_observations(raw_result: Any) -> list[Any]:
-    output = _raw_structured_output(raw_result)
-    if isinstance(output, Mapping) and isinstance(output.get("observations"), list):
-        return list(output["observations"])
-    return []
 
 
 def _raw_relation_observations(raw_result: Any) -> list[Any]:
@@ -181,7 +168,7 @@ def _controller_owned_pollution(value: Any, forbidden: frozenset[str]) -> int:
 
 
 def _quality_counts(raw_result: Any) -> tuple[int, int]:
-    raw_nodes = _raw_nodes(raw_result) or _raw_judge_observations(raw_result) or _raw_relation_observations(raw_result)
+    raw_nodes = _raw_nodes(raw_result) or _raw_relation_observations(raw_result)
     role = raw_result.role if isinstance(raw_result, EpisodeResult) else raw_result.get("role") if isinstance(raw_result, Mapping) else None
     forbidden = RELATION_FORBIDDEN_FIELDS if role == "relation" else CONTROLLER_OWNED_FIELDS
     controller_violations = _controller_owned_pollution(_raw_structured_output(raw_result), forbidden)
@@ -219,7 +206,7 @@ def _reject(
             accepted_node_count=0,
             selected_node_count=len(request.selected_node_revisions),
             returned_observation_count=returned_observation_count,
-            accepted_observation_count=0 if request.role in {"judge", "relation"} else None,
+            accepted_observation_count=0 if request.role == "relation" else None,
             rejection_reason=reason,
             schema_valid=schema_valid,
             controller_field_violation_count=controller_violations,
@@ -267,7 +254,7 @@ def _reject_invalid_request(
         accepted_node_count=0,
         selected_node_count=selected_node_count,
         returned_observation_count=None,
-        accepted_observation_count=0 if role in {"judge", "relation"} else None,
+        accepted_observation_count=0 if role == "relation" else None,
         rejection_reason=reason,
         schema_valid=False,
         controller_field_violation_count=0,
@@ -311,14 +298,8 @@ def commit_episode_result(
     try:
         result_payload = _canonical_contract_payload(raw_result)
         controller_violations, duplicate_count = _quality_counts(result_payload)
-        raw_observations = (
-            _raw_judge_observations(result_payload)
-            if request.role == "judge"
-            else _raw_relation_observations(result_payload)
-            if request.role == "relation"
-            else []
-        )
-        returned_observation_count = len(raw_observations) if request.role in {"judge", "relation"} else None
+        raw_observations = _raw_relation_observations(result_payload) if request.role == "relation" else []
+        returned_observation_count = len(raw_observations) if request.role == "relation" else None
         result = EpisodeResult.model_validate(result_payload)
     except Exception as exc:
         return _reject(
@@ -366,138 +347,6 @@ def commit_episode_result(
         return reject(f"episode result hash validation failed: {exc}")
     if result.output_hash != expected_output_hash:
         return reject("output hash mismatch")
-
-    if request.role == "judge":
-        for node_id, revision in request.selected_node_revisions.items():
-            if graph.node_revisions.get(node_id) != revision:
-                return reject(f"stale selected-node revision: {node_id}")
-        if not isinstance(result.structured_output, JudgeEpisodeOutput):
-            return reject("completed Judge result has the wrong structured output schema")
-        if request.judge_payload is None:
-            return reject("Judge request is missing its payload")
-        granted_ids = set(request.selected_node_revisions)
-        observations = result.structured_output.observations
-        if request.judge_payload.purpose == "provenance_repair":
-            if observations:
-                return reject(
-                    "provenance repair must not return Judge score observations"
-                )
-            try:
-                next_epistemic_ledger = prepare_epistemic_commit(
-                    graph=graph,
-                    request=request,
-                    result=result,
-                    bundle=result.structured_output.epistemic_contributions,
-                    authorized_node_ids=granted_ids,
-                    committed_at=datetime.now(timezone.utc).isoformat(),
-                    context=epistemic_context,
-                )
-            except ValueError as exc:
-                return reject(f"epistemic contribution rejected: {exc}")
-            revision_before = graph.revision
-            graph.epistemic_ledger = next_epistemic_ledger
-            graph.revision = revision_before + 1
-            if telemetry is not None:
-                _emit_telemetry(
-                    telemetry,
-                    "provenance_repair_committed",
-                    run_id=request.run_id,
-                    episode_id=request.episode_id,
-                    attempt_id=request.attempt_id,
-                    role=request.role,
-                    status="committed",
-                    input_graph_revision=request.input_graph_revision,
-                    selected_node_count=len(granted_ids),
-                    returned_observation_count=0,
-                    accepted_observation_count=0,
-                    schema_valid=True,
-                    usage_source="unavailable",
-                )
-            return CommitOutcome(
-                accepted=True,
-                episode_id=request.episode_id,
-                accepted_node_ids=sorted(granted_ids),
-                accepted_node_count=0,
-                graph_revision_before=revision_before,
-                graph_revision_after=graph.revision,
-            )
-        if not observations:
-            return reject("initial Judge result must score every granted node")
-        observation_ids = [observation.node_id for observation in observations]
-        if len(observation_ids) != len(set(observation_ids)):
-            return reject("duplicate Judge node ID inside result")
-        returned_ids = set(observation_ids)
-        missing = sorted(granted_ids - returned_ids)
-        if missing:
-            return reject(f"Judge result omitted granted node: {missing[0]}")
-        extra = sorted(returned_ids - granted_ids)
-        if extra:
-            return reject(f"Judge result returned ungranted node: {extra[0]}")
-
-        next_nodes = deepcopy(graph.nodes)
-        next_revisions = dict(graph.node_revisions)
-        by_id = {node.node_id: node for node in next_nodes}
-        for observation in observations:
-            node = by_id.get(observation.node_id)
-            if node is None or node.status != "frontier":
-                return reject(f"Judge target is not a committed frontier node: {observation.node_id}")
-            node.score = observation.score
-            node.judge_reasoning = observation.reasoning
-            node.judge_risks = list(observation.risks)
-            node.judge_uncertainty_evidence = list(observation.uncertainty_evidence)
-            node.judge_result_provenance = {
-                "run_id": request.run_id,
-                "episode_id": request.episode_id,
-                "attempt_id": request.attempt_id,
-                "schema_version": result.schema_version,
-                "output_hash": result.output_hash,
-            }
-            next_revisions[node.node_id] += 1
-
-        try:
-            next_epistemic_ledger = prepare_epistemic_commit(
-                graph=graph,
-                request=request,
-                result=result,
-                bundle=result.structured_output.epistemic_contributions,
-                authorized_node_ids=granted_ids,
-                committed_at=datetime.now(timezone.utc).isoformat(),
-                context=epistemic_context,
-            )
-        except ValueError as exc:
-            return reject(f"epistemic contribution rejected: {exc}")
-
-        revision_before = graph.revision
-        graph.nodes = next_nodes
-        graph.node_revisions = next_revisions
-        graph.epistemic_ledger = next_epistemic_ledger
-        graph.revision = revision_before + 1
-        if telemetry is not None:
-            _emit_telemetry(
-                telemetry,
-                "judge_observations_committed",
-                run_id=request.run_id,
-                episode_id=request.episode_id,
-                attempt_id=request.attempt_id,
-                role=request.role,
-                status="committed",
-                input_graph_revision=request.input_graph_revision,
-                selected_node_count=len(granted_ids),
-                returned_observation_count=len(observations),
-                accepted_observation_count=len(observations),
-                schema_valid=True,
-                controller_field_violation_count=controller_violations,
-                duplicate_within_result_count=duplicate_count,
-                usage_source="unavailable",
-            )
-        return CommitOutcome(
-            accepted=True,
-            episode_id=request.episode_id,
-            accepted_node_ids=observation_ids,
-            accepted_node_count=len(observations),
-            graph_revision_before=revision_before,
-            graph_revision_after=graph.revision,
-        )
 
     if request.role == "relation":
         for node_id, revision in request.selected_node_revisions.items():

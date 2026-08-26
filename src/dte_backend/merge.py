@@ -208,8 +208,7 @@ def select_canonical_node(nodes: list[SearchNode]) -> SearchNode:
             -status_rank[node.status],
             -_canonical_information_content(node),
             -len(set(node.evidence)),
-            -(node.score if node.score is not None else node.confidence),
-            -(1 if node.judge_result_provenance else 0),
+            -node.confidence,
             node.node_id,
         ),
     )[0]

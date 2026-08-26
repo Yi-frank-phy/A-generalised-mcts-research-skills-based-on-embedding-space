@@ -3,8 +3,8 @@
   "files": [
     {
       "path": "SKILL.md",
-      "size": 29275,
-      "sha256": "f53e65a74c514223f2353e62856d594f56a49378c051de1524e42c72a305cdfc"
+      "size": 29155,
+      "sha256": "7d33854c27f6afd2ca6e7753a326595a4c003ebf63c25b53485649e012a61168"
     },
     {
       "path": "hooks/dte_enforcement_hook.py",
@@ -27,16 +27,6 @@
       "sha256": "61214c19ab809a2fb69621675f6b7ad34d34eb5ce48147c35520c714507f73ef"
     },
     {
-      "path": "prompts/judge.md",
-      "size": 512,
-      "sha256": "50eaa837b425eb78856c1449fc4e0fc4af950e4694de0254093700dd80573288"
-    },
-    {
-      "path": "prompts/judge_oracle.md",
-      "size": 1734,
-      "sha256": "3f047f32541a7bdfab37596074ea9e71c2c2c50b3ce1fd1409856e9846fa7a2f"
-    },
-    {
       "path": "prompts/relation_oracle.md",
       "size": 1562,
       "sha256": "d2c888ba982b72a2940388da7765ab08fe7b3785619a0ffcdf4d8ea2a4b39cbd"
@@ -53,8 +43,8 @@
     },
     {
       "path": "schemas/expansion_request.schema.json",
-      "size": 12728,
-      "sha256": "36ed2128a3490f9f4400d8133dc08faabc152967df7af1bea863b8c8e98ce083"
+      "size": 11764,
+      "sha256": "5d534975366dd8816e4c98c5c8d73f4669d3df1886e591a8ddd2a0a5300074af"
     },
     {
       "path": "schemas/run_spec.schema.json",
@@ -63,8 +53,8 @@
     },
     {
       "path": "schemas/search_node.schema.json",
-      "size": 4539,
-      "sha256": "c71e008c01c0ae585eca1ed07d7b092b6e806f06eb6c977eeb3a862068595c60"
+      "size": 3739,
+      "sha256": "3bd3365b122f2276b36e1db4b0af29ca293008c50fc621a62d9e8ae9ea934c6d"
     },
     {
       "path": "schemas/synthesis_control_request.schema.json",
@@ -98,8 +88,8 @@
     },
     {
       "path": "src/dte_backend/__main__.py",
-      "size": 27671,
-      "sha256": "519cac324a90ad8512fd7229fb7ff1f6f58e29e8841eb29c065c8abb52f80fb9"
+      "size": 26249,
+      "sha256": "e425455f29a4cad6799c2425a195657518393e5627be03dae29193ec4e952090"
     },
     {
       "path": "src/dte_backend/adapter.py",
@@ -108,8 +98,8 @@
     },
     {
       "path": "src/dte_backend/app_driver.py",
-      "size": 259402,
-      "sha256": "c8e3d63065073c1c7df0b63a7064f53e70027430cdcba6b719698c28ce2a589d"
+      "size": 250393,
+      "sha256": "3bc0a4eda9329140505023e82b29e90d43295d7286a1b4dd121829abb1f36ca1"
     },
     {
       "path": "src/dte_backend/artifacts.py",
@@ -123,8 +113,8 @@
     },
     {
       "path": "src/dte_backend/cache.py",
-      "size": 4511,
-      "sha256": "2e13b5dd963bb9dccf8eae0386624552262e6c25e972407ee27b277e2a86b4e9"
+      "size": 2486,
+      "sha256": "27fe8a6030596cbc10db4e83f766a48d67430a440b6693a7ced3df89fde70419"
     },
     {
       "path": "src/dte_backend/context_envelope.py",
@@ -168,18 +158,18 @@
     },
     {
       "path": "src/dte_backend/episode_adapter.py",
-      "size": 28721,
-      "sha256": "c70af318fc9f9ef1e0b2f8039d62f970ee9945d0c1f38aa23b498c91a37dd9db"
+      "size": 22924,
+      "sha256": "e68a0e85d3e2836978e548aa1cae22dff351671a8b2f0c491fd639ba5823c65f"
     },
     {
       "path": "src/dte_backend/episode_commit.py",
-      "size": 37520,
-      "sha256": "6e6309c94aaf5d91b130bd24bcc0cd1298ef987cf240e32f82e6e45dcf6e8b0e"
+      "size": 30855,
+      "sha256": "c57f41ea061701144ffeba48b834e1c940bfc6da1f2b8977b4e6d4289c6fcc81"
     },
     {
       "path": "src/dte_backend/episode_models.py",
-      "size": 22966,
-      "sha256": "5618fce72c6204ac388052dd4a05525f5385db6fdfaca71de16bd2926b8f2f91"
+      "size": 19328,
+      "sha256": "167698abc80a1c47b3348c581b985ab2249baa3816c2e345091da5435a70149d"
     },
     {
       "path": "src/dte_backend/epistemic.py",
@@ -208,8 +198,8 @@
     },
     {
       "path": "src/dte_backend/file_cache.py",
-      "size": 2726,
-      "sha256": "5bc350f1995f769deef72d9bf1e844df755136d8d2fb1483ab40626d21f040ea"
+      "size": 1676,
+      "sha256": "07632ddc99010a1789239394a04735e3e4b35aad74822184c87b3a9e52e351ea"
     },
     {
       "path": "src/dte_backend/guards.py",
@@ -227,11 +217,6 @@
       "sha256": "efd6a1b3f786a864c2a44b9e411e74b77b37d95425b5e8382a4a5c4123fc3b66"
     },
     {
-      "path": "src/dte_backend/judge.py",
-      "size": 2672,
-      "sha256": "4de4a78ecb220e720107b1ab91fd030915a007ac8e7e21bdd1178791eda90bd6"
-    },
-    {
       "path": "src/dte_backend/kde.py",
       "size": 2839,
       "sha256": "6c956715fa9df43ac63757ef3becf8b4add272f54a8e82f9ef0eb4cf0d63f038"
@@ -243,13 +228,13 @@
     },
     {
       "path": "src/dte_backend/merge.py",
-      "size": 13045,
-      "sha256": "3dd24dcb8ea06722b2bd2fca3090d07c6a411dae37c16ff0a9f010dc2b7af264"
+      "size": 12944,
+      "sha256": "6f9c1a5ef47caed44eebbe7136d41cbd1050ceb9c7a8489386206afca41eb0f0"
     },
     {
       "path": "src/dte_backend/models.py",
-      "size": 7594,
-      "sha256": "ebff0137456b3313e90ff02df64ea9fc5b45824c310040071f039061dcdcfb5b"
+      "size": 7368,
+      "sha256": "ce4eead867cf61ba7b4eea06157485e795ed871bc52a0f35d3f4d112a40b4f0d"
     },
     {
       "path": "src/dte_backend/new_controller.py",
@@ -263,8 +248,8 @@
     },
     {
       "path": "src/dte_backend/observability.py",
-      "size": 92249,
-      "sha256": "7c53d21ae9524283b4d2d8ec8bffc629e157aab64def678e84d1f333c0089e44"
+      "size": 91295,
+      "sha256": "8ef5aa012d9866e12e963f7c52f660babd19d0272b5f70ab17f48a4cb6db9753"
     },
     {
       "path": "src/dte_backend/observability_models.py",
@@ -273,13 +258,13 @@
     },
     {
       "path": "src/dte_backend/oracle_validation.py",
-      "size": 7613,
-      "sha256": "98003048041f285964764689237e78d07331217c0e1d362358aeb0b09693a214"
+      "size": 5379,
+      "sha256": "683fdab186159f2d7953219c633c512212d93de3f2a01ad47a4a1608a45cdd58"
     },
     {
       "path": "src/dte_backend/oracles.py",
-      "size": 2449,
-      "sha256": "3ca838d6173c7b99acb9b9042679ac0df82947a4b995752653fc482a3ad09d17"
+      "size": 1678,
+      "sha256": "5562b8005bafa52b7fe52971b205e36adfaf84efc5c66c46018d51184214cb55"
     },
     {
       "path": "src/dte_backend/prompt_builder.py",
@@ -298,8 +283,8 @@
     },
     {
       "path": "src/dte_backend/relation_models.py",
-      "size": 18594,
-      "sha256": "71336545c80ec6a7ce176b94af394f6eb54802b3e871ca663a0a2c30e3e17639"
+      "size": 18370,
+      "sha256": "b40c2a8d932207842ab20c654d82bcdeee164aa4f2435f3f7d1afc7d68665af6"
     },
     {
       "path": "src/dte_backend/relation_readiness.py",
@@ -318,8 +303,8 @@
     },
     {
       "path": "src/dte_backend/runner.py",
-      "size": 15635,
-      "sha256": "c9f640106deb925d781028b7f536c7186eca9895a3dcb19c8ce8cc0a821401ed"
+      "size": 14269,
+      "sha256": "97d13870f8ed06064e6740f35ee53a4be53b1915ce39fef29168f406d33963c7"
     },
     {
       "path": "src/dte_backend/seed_transitions.py",
@@ -343,13 +328,13 @@
     },
     {
       "path": "src/dte_backend/strict_runner.py",
-      "size": 9905,
-      "sha256": "610475c147dbfd3122a689750efea95edb3bfac0de901a5012133da19ac63959"
+      "size": 9155,
+      "sha256": "dd13c1d07e522551c88a16d0a6b05e2a3369f28f42fd5a3e72665700b560361a"
     },
     {
       "path": "src/dte_backend/subprocess_oracles.py",
-      "size": 2324,
-      "sha256": "602482a6d55901c6221574f02b081e6d7aadaeacb4419c0b9cf8a76228312f1e"
+      "size": 1300,
+      "sha256": "e91f4d596a7f4adffab2f7bf3d15a78a17618f8b9820642146ee2deae5e6d204"
     },
     {
       "path": "src/dte_backend/synthesis.py",
@@ -382,5 +367,5 @@
       "sha256": "b7c578325f60737a6feda3660fd6c53b4d15782a3c931cf2a5e6718591ce4092"
     }
   ],
-  "bundle_sha256": "d6c3f92d28898e9b0639bce1d364726658c192bbc2aeb9cc4f9f5fa9c7dcb13b"
+  "bundle_sha256": "e299bf42a3f99ab84a08fdb60ea511a0e7ba1902fec9f91eded0c04e86a87e85"
 }

@@ -62,7 +62,7 @@ from .oracle_validation import validate_relation_output
 from .relation_workflow import relation_result_to_outputs
 from .runner import run_frontier_search
 from .strict_runner import StrictRunError, strict_run
-from .subprocess_oracles import build_subprocess_judge_adapter, run_subprocess_judge, run_subprocess_relation
+from .subprocess_oracles import run_subprocess_relation
 from .validators import load_json_list, load_json_model
 
 
@@ -100,10 +100,6 @@ def cmd_allocate(args: argparse.Namespace) -> None:
     print(json.dumps([a.model_dump() for a in allocations], ensure_ascii=False, indent=2))
 
 
-def cmd_judge_oracle(args: argparse.Namespace) -> None:
-    nodes = load_json_list(args.nodes, SearchNode)
-    results = run_subprocess_judge(split_command(args.judge_command), nodes, timeout=args.timeout)
-    print(json.dumps({"results": [r.__dict__ for r in results]}, ensure_ascii=False, indent=2))
 
 
 def cmd_relation_oracle(args: argparse.Namespace) -> None:
@@ -184,15 +180,11 @@ def cmd_run(args: argparse.Namespace) -> None:
     executor_adapter = None
     if args.executor_command:
         executor_adapter = build_subprocess_adapter(split_command(args.executor_command), timeout=args.executor_timeout)
-    judge_adapter = None
-    if args.judge_command:
-        judge_adapter = build_subprocess_judge_adapter(split_command(args.judge_command), timeout=args.judge_timeout)
     cache = FileDTECache(args.cache_path) if args.cache_path else None
     result = run_frontier_search(
         spec,
         nodes,
         executor_adapter=executor_adapter,
-        judge_adapter=judge_adapter,
         cache=cache,
     )
 
@@ -208,9 +200,6 @@ def cmd_strict_run(args: argparse.Namespace) -> None:
     executor_adapter = None
     if args.executor_command:
         executor_adapter = build_subprocess_adapter(split_command(args.executor_command), timeout=args.executor_timeout)
-    judge_adapter = None
-    if args.judge_command:
-        judge_adapter = build_subprocess_judge_adapter(split_command(args.judge_command), timeout=args.judge_timeout)
     try:
         result = strict_run(
             spec=spec,
@@ -218,9 +207,7 @@ def cmd_strict_run(args: argparse.Namespace) -> None:
             out_dir=args.out_dir,
             cache_path=args.cache_path,
             initial_nodes=nodes,
-            judge_adapter=judge_adapter,
-            judge_command=args.judge_command,
-            executor_adapter=executor_adapter,
+                executor_adapter=executor_adapter,
             executor_command=args.executor_command,
             control_path=control_path,
         )
@@ -452,12 +439,6 @@ def build_parser() -> argparse.ArgumentParser:
     allocate.add_argument("--allocation-metric", choices=["ucb", "score"], default="ucb")
     allocate.set_defaults(func=cmd_allocate)
 
-    judge = sub.add_parser("judge-oracle", help="run and validate a Judge oracle command")
-    judge.add_argument("--nodes", required=True)
-    judge.add_argument("--judge-command", required=True)
-    judge.add_argument("--timeout", type=float, default=360.0)
-    judge.set_defaults(func=cmd_judge_oracle)
-
     relation = sub.add_parser("relation-oracle", help="run and validate a relation oracle command")
     relation.add_argument("--nodes", required=True)
     relation.add_argument("--relation-command", required=True)
@@ -482,8 +463,6 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--out-dir", default="artifacts/run", help="directory for report/nodes/traces")
     run.add_argument("--executor-command", help="optional subprocess executor adapter command")
     run.add_argument("--executor-timeout", type=float, default=120.0)
-    run.add_argument("--judge-command", help="optional subprocess Judge oracle command")
-    run.add_argument("--judge-timeout", type=float, default=360.0)
     run.add_argument("--cache-path", help="optional JSON cache path for embeddings and scores")
     run.set_defaults(func=cmd_run)
 
@@ -495,8 +474,6 @@ def build_parser() -> argparse.ArgumentParser:
     strict.add_argument("--cache-path", help="required outside smoke mode")
     strict.add_argument("--executor-command", help="optional subprocess executor adapter command")
     strict.add_argument("--executor-timeout", type=float, default=120.0)
-    strict.add_argument("--judge-command", help="required in real mode")
-    strict.add_argument("--judge-timeout", type=float, default=360.0)
     strict.add_argument(
         "--control-path",
         help="optional operator control JSON path; defaults to <out-dir>/strict_run_control.json",

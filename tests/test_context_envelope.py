@@ -1,4 +1,4 @@
-from dte_backend.cache import embedding_cache_key, judge_cache_key
+from dte_backend.cache import embedding_cache_key
 from dte_backend.context_envelope import normalize_items, normalize_text, semantic_embedding_text
 from dte_backend.models import SearchNode
 
@@ -37,12 +37,6 @@ def test_embedding_key_ignores_parent_confidence_and_order():
     assert embedding_cache_key(first) == embedding_cache_key(second)
 
 
-def test_judge_key_tracks_confidence_but_not_parent_id():
-    first = SearchNode(node_id="a", claim="same", parent_ids=["p1"], confidence=0.2)
-    second = SearchNode(node_id="b", claim="same", parent_ids=["p2"], confidence=0.2)
-    third = SearchNode(node_id="c", claim="same", parent_ids=["p2"], confidence=0.9)
-    assert judge_cache_key(first) == judge_cache_key(second)
-    assert judge_cache_key(first) != judge_cache_key(third)
 
 
 def test_semantic_embedding_text_is_stable_envelope():

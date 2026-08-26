@@ -76,7 +76,10 @@ def test_run_frontier_search_keeps_adapter_inside_mandatory_loop():
 
     assert len(adapter.requests) == 1
     assert result.traces[0].allocations
-    assert result.nodes[0].score is not None
+    assert result.nodes[0].score is None
+    assert result.nodes[0].density is not None
+    assert result.nodes[0].uncertainty is not None
+    assert result.nodes[0].ucb_score is not None
     assert result.nodes[-1].score is None
     assert "DTE Prototype Report" in result.report
 
@@ -116,12 +119,6 @@ def test_executor_child_must_return_to_frontier():
         validate_executor_children(parent, 1, [child])
 
 
-def test_executor_child_cannot_prefill_judge_metrics():
-    parent = completed_node(node_id="p", claim="parent")
-    child = completed_node(node_id="c", claim="bad", parent_ids=["p"], score=0.9)
-
-    with pytest.raises(ValueError, match="metrics"):
-        validate_executor_children(parent, 1, [child])
 
 
 def test_executor_child_cannot_prefill_expansion_budget():

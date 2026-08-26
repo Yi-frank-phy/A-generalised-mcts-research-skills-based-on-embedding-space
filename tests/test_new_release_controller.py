@@ -52,13 +52,6 @@ def node(
     )
 
 
-def test_canonical_controller_text_uses_transition_not_claim_or_judge_score() -> None:
-    left = node("a", "direct construction", claim="topic alpha", score=0.1)
-    right = node("b", "direct construction", claim="totally different topic", score=0.9)
-
-    assert canonical_transition_text(left) == canonical_transition_text(right)
-    assert "topic alpha" not in canonical_transition_text(left)
-    assert "0.1" not in canonical_transition_text(left)
 
 
 def test_active_node_without_completed_transition_fails_closed() -> None:
@@ -89,28 +82,6 @@ def test_single_initial_completed_transition_uses_packaged_reference_atlas() -> 
     assert state.sd_source == "proper_volume_boltzmann_reward"
 
 
-def test_judge_score_is_not_controller_value_before_realized_history() -> None:
-    provider = StubEmbeddingProvider()
-    initial = [
-        node("a", "direct construction", score=0.99),
-        node("b", "invariant rewrite", score=0.01),
-        node("c", "duality change", score=0.80),
-        node("d", "counterexample boundary", score=0.20),
-    ]
-    atlas = freeze_reference_atlas(initial, provider=provider, graph_k=1)
-
-    scored = score_frontier(
-        graph_nodes=initial,
-        live_nodes=initial,
-        atlas=atlas,
-        provider=provider,
-        volume_bandwidth=1.0,
-    )
-
-    assert np.allclose(scored.values, 0.0)
-    assert np.allclose(scored.ucb_scores, scored.standard_deviations)
-    assert scored.value_source == "proper_volume_history"
-    assert scored.sd_source == "proper_volume_boltzmann_reward"
 
 
 def test_realized_parent_child_edge_updates_value_on_frozen_atlas() -> None:

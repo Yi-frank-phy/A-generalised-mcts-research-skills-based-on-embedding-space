@@ -10,20 +10,7 @@ import uuid
 
 from .adapter import ExecutorAdapter, build_subprocess_adapter, validate_search_node_output
 from .episode_commit import EpisodeGraph, commit_episode_result
-from .episode_models import (
-    CommitOutcome,
-    EpisodeRequest,
-    EpisodeResult,
-    ExecutorEpisodeOutput,
-    ExecutorNodeCandidate,
-    JudgeEpisodePayload,
-    JudgeNodeInput,
-    RuntimeDiagnostics,
-    RuntimeLimits,
-    RoleIsolationMode,
-    bind_role_execution_contract,
-    compute_output_hash,
-)
+from .episode_models import CommitOutcome, EpisodeRequest, EpisodeResult, ExecutorEpisodeOutput, ExecutorNodeCandidate, RuntimeDiagnostics, RuntimeLimits, RoleIsolationMode, bind_role_execution_contract, compute_output_hash
 from .models import ExpansionRequest, SearchNode
 from .relation_models import (
     BlindRelationEpisodePayload,
@@ -76,10 +63,6 @@ def build_executor_episode_request(
         if key
         not in {
             "local_embedding",
-            "judge_reasoning",
-            "judge_risks",
-            "judge_uncertainty_evidence",
-            "judge_result_provenance",
             "score",
             "density",
             "uncertainty",
@@ -125,137 +108,6 @@ def build_executor_episode_request(
     )
 
 
-def build_judge_episode_request(
-    graph: EpisodeGraph,
-    nodes: list[SearchNode],
-    *,
-    run_id: str,
-    problem: str,
-    goal: str,
-    constraints: list[str] | None = None,
-    rubric_version: str = "research-potential.v1",
-    native_orchestration_allowed: bool = True,
-    runtime_limits: RuntimeLimits | None = None,
-    tool_policy: Any = None,
-    transport_hints: dict[str, Any] | None = None,
-    isolation_mode: RoleIsolationMode = "legacy_unverified",
-    previous_role_session_ids: list[str] | None = None,
-    purpose: Literal["initial_scoring", "provenance_repair"] = "initial_scoring",
-) -> EpisodeRequest:
-    """Create one bounded observable Judge grant from committed frontier nodes."""
-
-    if not nodes:
-        raise ValueError("Judge grant requires at least one selected node")
-    episode_id = str(uuid.uuid4())
-    attempt_id = str(uuid.uuid4())
-    ordered_nodes = (
-        list(nodes)
-        if isolation_mode == "legacy_unverified"
-        else sorted(
-            nodes,
-            key=lambda item: (
-                hashlib.sha256(
-                    f"{attempt_id}\x1f{item.node_id}".encode("utf-8")
-                ).hexdigest(),
-                item.node_id,
-            ),
-        )
-    )
-    selected_revisions: dict[str, int] = {}
-    selected_inputs: list[JudgeNodeInput] = []
-    canonical_map: dict[str, str] = {}
-    for index, node in enumerate(ordered_nodes, 1):
-        allowed_statuses = (
-            {"frontier"}
-            if purpose == "initial_scoring"
-            else {"frontier", "closed"}
-        )
-        if node.status not in allowed_statuses or node.node_id not in graph.node_revisions:
-            raise ValueError("Judge grants require eligible committed nodes")
-        alias = (
-            node.node_id
-            if isolation_mode == "legacy_unverified"
-            else f"judge-node-{index:04d}"
-        )
-        if alias != node.node_id:
-            canonical_map[alias] = node.node_id
-        selected_revisions[alias] = graph.node_revisions[node.node_id]
-        payload = node.model_dump(
-            mode="json",
-            include={
-                "node_type",
-                "claim",
-                "rationale",
-                "assumptions",
-                "evidence",
-                "risks",
-                "confidence",
-            },
-        )
-        payload["node_id"] = alias
-        selected_inputs.append(
-            JudgeNodeInput.model_validate(payload)
-        )
-    request = EpisodeRequest(
-        episode_id=episode_id,
-        attempt_id=attempt_id,
-        run_id=run_id,
-        role="judge",
-        input_graph_revision=graph.revision,
-        selected_node_revisions=selected_revisions,
-        objective=(
-            f"Judge research potential for: {goal}"
-            if purpose == "initial_scoring"
-            else (
-                "Record structured provenance, evidence references, assumptions, "
-                "limitations, dependencies, and path dispositions for already "
-                "committed material claims; do not rescore or verify them"
-            )
-        ),
-        coverage_requirements=[
-            *(
-                [
-                    "score every granted node exactly once",
-                    "state observable reasoning and material risks",
-                ]
-                if purpose == "initial_scoring"
-                else [
-                    "return no Judge score observations",
-                    "use epistemic_contributions only for the granted committed nodes",
-                    "record inability to supply provenance by leaving a node incomplete; do not manufacture filler",
-                ]
-            ),
-            "submit optional epistemic_contributions only for material assumptions, support gaps, challenges, conditionality, or unresolved dependencies",
-            "use machine references and explicit source_type; do not turn a low score into contradiction or claim backend verification",
-            "do not return controller-owned geometry, allocation, revision, stopping, or synthesis fields",
-        ],
-        allowed_output_types=[],
-        output_schema_version="judge-output.v1",
-        native_orchestration_allowed=native_orchestration_allowed,
-        runtime_limits=runtime_limits or RuntimeLimits(),
-        tool_policy=tool_policy,
-        transport_hints=transport_hints,
-        required_parent_id_on_children=False,
-        judge_payload=JudgeEpisodePayload(
-            purpose=purpose,
-            rubric_version=rubric_version,
-            problem=problem,
-            goal=goal,
-            constraints=constraints or [],
-            selected_frontier_nodes=selected_inputs,
-            required_output_fields=(
-                ["node_id", "score", "reasoning", "risks"]
-                if purpose == "initial_scoring"
-                else []
-            ),
-        ),
-    )
-    request._canonical_node_id_map = canonical_map
-    return bind_role_execution_contract(
-        request,
-        isolation_mode=isolation_mode,
-        previous_role_session_ids=previous_role_session_ids,
-    )
 
 
 def _blind_ref(value: str, *, attempt_id: str, prefix: str) -> str:
@@ -309,14 +161,6 @@ def _legacy_relation_node_input(
         ],
         risks=list(node.risks),
         confidence=node.confidence,
-        judge_reasoning=node.judge_reasoning,
-        judge_risks=list(node.judge_risks),
-        judge_uncertainty_evidence=list(node.judge_uncertainty_evidence),
-        judge_result_provenance=(
-            None
-            if node.judge_result_provenance is None
-            else dict(node.judge_result_provenance)
-        ),
         parent_ids=list(node.parent_ids),
     )
 
@@ -520,11 +364,7 @@ class LegacyExecutorEpisodeAdapter:
                         mode="json",
                         exclude={
                             "local_embedding",
-                            "judge_reasoning",
-                            "judge_risks",
-                            "judge_uncertainty_evidence",
-                            "judge_result_provenance",
-                            "score",
+                                                                                            "score",
                             "density",
                             "uncertainty",
                             "ucb_score",

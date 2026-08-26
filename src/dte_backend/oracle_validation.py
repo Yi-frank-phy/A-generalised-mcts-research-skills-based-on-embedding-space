@@ -1,6 +1,6 @@
 """Validators for observable DTE oracle outputs.
 
-Judge and relation oracles may be performed by subagents. The backend validates
+Relation oracles may be performed by subagents. The backend validates
 what they return before it can affect the DTE graph.
 """
 
@@ -12,7 +12,7 @@ from typing import Any
 from .models import SearchNode
 from .episode_models import EpisodeRequest, EpisodeResult, compute_output_hash
 from .relation_models import RelationEpisodeOutput
-from .oracles import JudgeOracleResult, RelationOracleResult
+from .oracles import RelationOracleResult
 
 
 def parse_json_output(raw_output: str | Any) -> Any:
@@ -21,56 +21,6 @@ def parse_json_output(raw_output: str | Any) -> Any:
     return raw_output
 
 
-def validate_judge_output(nodes: list[SearchNode], raw_output: str | Any) -> list[JudgeOracleResult]:
-    """Validate Judge output: scores and reasoning only, no controller fields."""
-
-    data = parse_json_output(raw_output)
-    results = data.get("results") if isinstance(data, dict) else data
-    if not isinstance(results, list):
-        raise ValueError("judge oracle must return a list or {'results': [...]} object")
-
-    node_ids = [node.node_id for node in nodes]
-    if len(node_ids) != len(set(node_ids)):
-        raise ValueError("judge oracle input contains duplicate node IDs")
-    allowed_ids = set(node_ids)
-    seen: set[str] = set()
-    parsed: list[JudgeOracleResult] = []
-    allowed_fields = {"node_id", "score", "reasoning", "risks"}
-
-    for item in results:
-        if not isinstance(item, dict):
-            raise ValueError("judge oracle result entries must be objects")
-        unexpected = set(item) - allowed_fields
-        if unexpected:
-            raise ValueError(f"judge oracle returned forbidden fields: {sorted(unexpected)}")
-        node_id = str(item.get("node_id", ""))
-        if node_id not in allowed_ids:
-            raise ValueError(f"judge oracle returned unknown node_id: {node_id}")
-        if node_id in seen:
-            raise ValueError(f"judge oracle returned duplicate node_id: {node_id}")
-        reasoning = item.get("reasoning")
-        if not isinstance(reasoning, str) or not reasoning.strip():
-            raise ValueError("judge oracle reasoning must be a non-empty string")
-        score = float(item.get("score"))
-        if not 0.0 <= score <= 1.0:
-            raise ValueError("judge score must be in [0, 1]")
-        risks = item.get("risks", [])
-        if not isinstance(risks, list):
-            raise ValueError("judge risks must be a list")
-        parsed.append(
-            JudgeOracleResult(
-                node_id=node_id,
-                score=score,
-                reasoning=reasoning,
-                risks=[str(r) for r in risks],
-            )
-        )
-        seen.add(node_id)
-
-    missing = allowed_ids - seen
-    if missing:
-        raise ValueError(f"judge oracle omitted node ids: {sorted(missing)}")
-    return parsed
 
 
 def validate_relation_output(nodes: list[SearchNode], raw_output: str | Any) -> RelationOracleResult:

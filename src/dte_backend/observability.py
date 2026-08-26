@@ -22,7 +22,6 @@ from .app_driver import AppRunState, _upgrade_v2_state_payload, _validate_loaded
 from .continuation import count_committed_search_nodes
 from .episode_models import (
     ExecutorEpisodeOutput,
-    JudgeEpisodeOutput,
     RelationEpisodeOutput,
     canonical_json_bytes,
 )
@@ -671,7 +670,7 @@ def _build_episode_records(
                 if isinstance(structured, ExecutorEpisodeOutput):
                     returned_node_count = len(structured.nodes)
                     episode_created.extend(node.node_id for node in structured.nodes)
-                elif isinstance(structured, (JudgeEpisodeOutput, RelationEpisodeOutput)):
+                elif isinstance(structured, RelationEpisodeOutput):
                     returned_observation_count = len(structured.observations)
             if returned_node_count is None:
                 returned_node_count = _attempt_counts_from_events(
@@ -816,31 +815,6 @@ def _committed_attempt(state: AppRunState, episode: Any) -> Any | None:
     )
 
 
-def _committed_judge_observations(
-    state: AppRunState,
-    recoverable: list[str],
-) -> dict[str, tuple[Any, Any, Any]]:
-    """Index authoritative committed Judge observations by node identity."""
-
-    output: dict[str, tuple[Any, Any, Any]] = {}
-    for episode in state.episodes:
-        if episode.role != "judge":
-            continue
-        attempt = _committed_attempt(state, episode)
-        if attempt is None or attempt.committed_result is None:
-            continue
-        structured = attempt.committed_result.structured_output
-        if not isinstance(structured, JudgeEpisodeOutput):
-            continue
-        for observation in structured.observations:
-            if observation.node_id in output:
-                recoverable.append(
-                    "multiple committed Judge observations claim node "
-                    f"{observation.node_id}"
-                )
-                continue
-            output[observation.node_id] = (episode, attempt, observation)
-    return output
 
 
 def _creation_and_children(
@@ -995,7 +969,7 @@ def _build_lineage_and_allocations(
     histories = _allocation_history_by_node(state)
     relation_by_node = _relation_outcomes_by_node(state)
     aliases = _safe_alias_map(state, recoverable)
-    judge_observations = _committed_judge_observations(state, recoverable)
+    judge_observations: dict[str, tuple[Any, Any, Any]] = {}
     selected = set(
         []
         if state.provisional_synthesis_selection is None
@@ -1025,10 +999,10 @@ def _build_lineage_and_allocations(
             judge_attempt_id = None
             if (
                 node.score is not None
-                or node.judge_reasoning is not None
-                or node.judge_risks
-                or node.judge_uncertainty_evidence
-                or node.judge_result_provenance is not None
+                or getattr(node, "judge_reasoning", None) is not None
+                or getattr(node, "judge_risks", [])
+                or getattr(node, "judge_uncertainty_evidence", [])
+                or getattr(node, "judge_result_provenance", None) is not None
             ):
                 recoverable.append(
                     f"node {node.node_id} has Judge-like graph fields without a "
@@ -1046,9 +1020,9 @@ def _build_lineage_and_allocations(
             judge_attempt_id = judge_attempt.attempt_id
             if (
                 node.score != judge_score
-                or node.judge_reasoning != judge_reasoning
-                or node.judge_risks != judge_risks
-                or node.judge_uncertainty_evidence
+                or getattr(node, "judge_reasoning", None) != judge_reasoning
+                or getattr(node, "judge_risks", []) != judge_risks
+                or getattr(node, "judge_uncertainty_evidence", [])
                 != judge_uncertainty_evidence
             ):
                 recoverable.append(

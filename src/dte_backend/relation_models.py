@@ -85,15 +85,11 @@ class RelationNodeInput(DTEBaseModel):
     evidence: list[RelationEvidenceInput] = Field(default_factory=list)
     risks: list[str] = Field(default_factory=list)
     confidence: float = Field(ge=0.0, le=1.0)
-    judge_reasoning: str | None = None
-    judge_risks: list[str] = Field(default_factory=list)
-    judge_uncertainty_evidence: list[str] = Field(default_factory=list)
-    judge_result_provenance: dict[str, str] | None = None
     parent_ids: list[str] = Field(default_factory=list)
 
 
 class BlindRelationNodeInput(DTEBaseModel):
-    """Oracle-visible node material with no Judge or selection metadata."""
+    """Oracle-visible node material with no controller selection metadata."""
 
     node_id: str = Field(min_length=1)
     node_type: Literal["candidate", "evidence", "counterexample", "merge"]

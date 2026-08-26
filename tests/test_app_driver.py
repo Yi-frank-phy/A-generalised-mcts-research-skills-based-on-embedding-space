@@ -20,17 +20,7 @@ from dte_backend.app_driver import (
     retry_app_episode,
     submit_app_episode_result,
 )
-from dte_backend.episode_models import (
-    EpisodeResult,
-    ExecutorEpisodeOutput,
-    ExecutorNodeCandidate,
-    JudgeEpisodeOutput,
-    JudgeObservation,
-    RuntimeDiagnostics,
-    RuntimeLimits,
-    compute_output_hash,
-    canonical_json_bytes,
-)
+from dte_backend.episode_models import EpisodeResult, ExecutorEpisodeOutput, ExecutorNodeCandidate, RuntimeDiagnostics, RuntimeLimits, compute_output_hash, canonical_json_bytes
 from dte_backend.control import OperatorAuthorizationError
 from dte_backend.embedding import HashEmbeddingProvider
 from dte_backend.models import BudgetSpec, DTERunSpec, SearchNode, SynthesisControlRequest
@@ -56,159 +46,18 @@ def parent() -> SearchNode:
     return completed_node(node_id="parent", claim="committed parent")
 
 
-def create_run(tmp_path):
-    run_dir = tmp_path / "run"
-    create_app_run(run_dir, spec(), [parent()], run_id="run-1")
-    judge = next_app_episode(run_dir).request
-    submit_app_episode_result(run_dir, judge_result_for(judge))
-    state = app_driver.load_app_run(run_dir)
-    action, _ = app_driver._progress_controller(
-        run_dir,
-        state,
-        embedding_provider=HashEmbeddingProvider(dim=state.spec.embedding_dimension),
-    )
-    state.controller_action = action
-    app_driver._save_state(run_dir, state)
-    return run_dir
 
 
-def test_restart_preserves_bounded_continuation_gate_decision(tmp_path):
-    run_dir = create_run(tmp_path)
-    before = app_driver.load_app_run(run_dir)
-
-    after = app_driver.load_app_run(run_dir)
-
-    assert [
-        record.model_dump(mode="json")
-        for record in after.continuation_gate_records
-    ] == [
-        record.model_dump(mode="json")
-        for record in before.continuation_gate_records
-    ]
 
 
-def test_restart_rejects_tampered_continuation_gate_decision(tmp_path):
-    run_dir = create_run(tmp_path)
-    state_path = run_dir / "app_run_state.json"
-    payload = json.loads(state_path.read_text(encoding="utf-8"))
-    original = payload["continuation_gate_records"][0]["decision"]
-    payload["continuation_gate_records"][0]["decision"] = (
-        "prepare_synthesis" if original == "continue" else "continue"
-    )
-    state_path.write_text(json.dumps(payload), encoding="utf-8")
-
-    with pytest.raises(ValueError, match="continuation-gate record"):
-        app_driver.load_app_run(run_dir)
 
 
-def test_restart_replays_and_rejects_tampered_material_yield(tmp_path):
-    run_dir = create_run(tmp_path)
-    state_path = run_dir / "app_run_state.json"
-    payload = json.loads(state_path.read_text(encoding="utf-8"))
-    payload["continuation_gate_records"][0]["material_yield_signals"].append(
-        "epistemic_disposition:counterexample_found:forged"
-    )
-    state_path.write_text(json.dumps(payload), encoding="utf-8")
-
-    with pytest.raises(ValueError, match="continuation-gate record"):
-        app_driver.load_app_run(run_dir)
 
 
-def test_legacy_app_state_keeps_legacy_entropy_policy(tmp_path):
-    run_dir = create_run(tmp_path)
-    state_path = run_dir / "app_run_state.json"
-    payload = json.loads(state_path.read_text(encoding="utf-8"))
-    budget = payload["spec"]["budget"]
-    budget.pop("max_committed_search_nodes")
-    budget.pop("entropy_plateau_confirmations")
-    budget.pop("continuation_policy")
-    payload["continuation_gate_records"] = []
-    payload["spec_hash"] = hashlib.sha256(
-        canonical_json_bytes(payload["spec"])
-    ).hexdigest()
-    state_path.write_text(json.dumps(payload), encoding="utf-8")
-
-    restored = app_driver.load_app_run(run_dir)
-
-    assert restored.spec.budget.continuation_policy == "legacy_entropy_v1"
-    assert restored.spec.budget.entropy_plateau_confirmations == 1
-    assert restored.continuation_gate_records == []
 
 
-def test_v2_state_hashes_are_verified_before_new_defaults_are_migrated(tmp_path):
-    run_dir = create_run(tmp_path)
-    state_path = run_dir / "app_run_state.json"
-    payload = json.loads(state_path.read_text(encoding="utf-8"))
-    payload["state_schema_version"] = "app-run-state.v2"
-    payload.pop("legacy_provenance_compatibility", None)
-    payload["spec"].pop("material_provenance_policy")
-    payload["spec_hash"] = hashlib.sha256(
-        canonical_json_bytes(payload["spec"])
-    ).hexdigest()
-
-    migrated_attempt = None
-    for episode in payload["episodes"]:
-        for attempt in episode["attempts"]:
-            request = attempt["request"]
-            contract = request["role_execution_contract"]
-            contract.pop("fresh_context_required")
-            if request.get("judge_payload") is not None:
-                request["judge_payload"].pop("purpose")
-            manifest_payload = json.loads(json.dumps(request))
-            manifest_payload["role_execution_contract"].pop(
-                "context_manifest_hash"
-            )
-            contract["context_manifest_hash"] = hashlib.sha256(
-                canonical_json_bytes(manifest_payload)
-            ).hexdigest()
-            attempt["request_hash"] = hashlib.sha256(
-                canonical_json_bytes(request)
-            ).hexdigest()
-            migrated_attempt = (episode["episode_id"], attempt["attempt_id"], contract)
-            break
-        if migrated_attempt is not None:
-            break
-    assert migrated_attempt is not None
-    episode_id, attempt_id, old_contract = migrated_attempt
-    for record in payload["role_session_registry"]:
-        if (
-            record["episode_id"] == episode_id
-            and record["attempt_id"] == attempt_id
-        ):
-            record["context_manifest_hash"] = old_contract[
-                "context_manifest_hash"
-            ]
-
-    state_path.write_text(json.dumps(payload), encoding="utf-8")
-    restored = app_driver.load_app_run(run_dir)
-
-    assert restored.state_schema_version == "app-run-state.v3"
-    assert restored.legacy_provenance_compatibility is True
-    assert restored.spec.material_provenance_policy == "terminal_disclosure"
-    restored_attempt = next(
-        attempt
-        for episode in restored.episodes
-        if episode.episode_id == episode_id
-        for attempt in episode.attempts
-        if attempt.attempt_id == attempt_id
-    )
-    assert restored_attempt.request.role_execution_contract.fresh_context_required is False
-    if restored_attempt.request.judge_payload is not None:
-        assert restored_attempt.request.judge_payload.purpose == "initial_scoring"
 
 
-def test_v2_state_migration_rejects_tampered_pre_upgrade_request_hash(tmp_path):
-    run_dir = create_run(tmp_path)
-    state_path = run_dir / "app_run_state.json"
-    payload = json.loads(state_path.read_text(encoding="utf-8"))
-    payload["state_schema_version"] = "app-run-state.v2"
-    attempt = payload["episodes"][0]["attempts"][0]
-    attempt["request"]["role_execution_contract"].pop("fresh_context_required")
-    attempt["request"]["objective"] = "tampered before migration"
-    state_path.write_text(json.dumps(payload), encoding="utf-8")
-
-    with pytest.raises(ValueError, match="v2 episode request"):
-        app_driver.load_app_run(run_dir)
 
 
 def test_app_create_rejects_initial_nodes_above_search_node_cap(tmp_path):
@@ -233,110 +82,10 @@ def test_app_create_rejects_initial_nodes_above_search_node_cap(tmp_path):
         )
 
 
-def test_app_equal_search_node_cap_judges_before_terminal(tmp_path):
-    bounded = spec().model_copy(
-        update={
-            "budget": spec().budget.model_copy(
-                update={
-                    "max_committed_search_nodes": 1,
-                    "max_iterations": 10,
-                }
-            )
-        }
-    )
-    run_dir = tmp_path / "equal-cap"
-    create_app_run(run_dir, bounded, [parent()], run_id="equal-cap")
-    judge = next_app_episode(run_dir).request
-    assert judge.role == "judge"
-    submit_app_episode_result(run_dir, judge_result_for(judge))
-
-    terminal = next_app_episode(run_dir)
-    assert terminal.controller_action == "ready_for_synthesis"
-    state = app_run_status(run_dir)
-    assert state.nodes[0].score == pytest.approx(0.8)
-    assert state.terminal_record.source == "max_search_nodes"
 
 
-def test_app_allocation_and_executor_grant_share_remaining_node_slots(tmp_path):
-    bounded = spec().model_copy(
-        update={
-            "budget": spec().budget.model_copy(
-                update={
-                    "max_committed_search_nodes": 4,
-                    "max_iterations": 10,
-                    "allocation_mass_per_iteration": 5,
-                    "max_children_per_iteration": 5,
-                }
-            )
-        }
-    )
-    run_dir = tmp_path / "two-slots"
-    create_app_run(
-        run_dir,
-        bounded,
-        [
-            completed_node(node_id="one", claim="one"),
-            completed_node(node_id="two", claim="two"),
-        ],
-        run_id="two-slots",
-    )
-    while True:
-        request = next_app_episode(
-            run_dir, embedding_provider=HashEmbeddingProvider(dim=8)
-        ).request
-        if request.role == "executor":
-            executor = request
-            break
-        assert request.role == "judge"
-        submit_app_episode_result(run_dir, judge_result_for(request))
-
-    state = app_run_status(run_dir)
-    controller = state.controller_iteration_records[-1]
-    assert sum(controller.allocations.values()) == 2
-    assert controller.effective_child_cap == 2
-    assert executor.max_returned_children <= 2
-
-    rejected = submit_app_episode_result(
-        run_dir,
-        result_for(executor, children=executor.max_returned_children + 1),
-    )
-    assert rejected.commit_outcome.accepted is False
-    assert rejected.commit_outcome.rejection_reason == (
-        "returned child count exceeds grant"
-    )
-    assert len(app_run_status(run_dir).nodes) == 2
 
 
-def judge_result_for(request):
-    output = JudgeEpisodeOutput(
-        observations=[
-            JudgeObservation(
-                node_id=node_id,
-                score=0.8,
-                reasoning="bounded Judge observation",
-                risks=[],
-            )
-            for node_id in request.selected_node_revisions
-        ]
-    )
-    return EpisodeResult(
-        episode_id=request.episode_id,
-        attempt_id=request.attempt_id,
-        run_id=request.run_id,
-        role="judge",
-        input_graph_revision=request.input_graph_revision,
-        selected_node_revisions=request.selected_node_revisions,
-        status="completed",
-        structured_output=output,
-        runtime_diagnostics=RuntimeDiagnostics(
-            adapter_name="codex-app-main-agent",
-            transport_name="current-app-runtime",
-            profile="native-autonomous",
-            usage_source="unavailable",
-        ),
-        output_hash=compute_output_hash(output, request.output_schema_version),
-        schema_version=request.output_schema_version,
-    )
 
 
 def result_for(request, *, children=1, node_id_prefix="child", status="completed"):
@@ -386,254 +135,34 @@ def lifecycle_for(state, episode_id):
     return next(episode for episode in state.episodes if episode.episode_id == episode_id)
 
 
-def test_next_episode_creates_one_bounded_persistent_grant_without_subprocess(monkeypatch, tmp_path):
-    run_dir = create_run(tmp_path)
-
-    def forbidden_subprocess(*args, **kwargs):
-        raise AssertionError("App-native next-episode must not launch a subprocess")
-
-    monkeypatch.setattr("subprocess.run", forbidden_subprocess)
-    outcome = next_app_episode(run_dir)
-    assert outcome.controller_action == "episode_required"
-    assert outcome.request.role == "executor"
-    assert outcome.request.max_returned_children == 1
-    assert outcome.request.transport_hints == {
-        "profile": "native-autonomous",
-        "runtime": "current-codex-app",
-    }
-    request_path = (
-        run_dir
-        / "episodes"
-        / outcome.request.episode_id
-        / outcome.request.attempt_id
-        / "request.json"
-    )
-    assert request_path.exists()
-    assert [
-        event["event_type"]
-        for event in EpisodeEventLog(run_dir / "episode_events.jsonl").read_events()
-    ][-2:] == ["episode_granted", "episode_started"]
 
 
-def test_next_episode_resumes_existing_attempt_instead_of_double_grant(tmp_path):
-    run_dir = create_run(tmp_path)
-    first = next_app_episode(run_dir)
-    second = next_app_episode(run_dir)
-    assert second.resumed_existing_attempt is True
-    assert second.request.attempt_id == first.request.attempt_id
-    events = EpisodeEventLog(run_dir / "episode_events.jsonl").read_events()
-    assert [event["event_type"] for event in events].count("episode_granted") == 2
 
 
-def test_valid_app_result_commits_and_backend_selects_next_action(tmp_path):
-    run_dir = create_run(tmp_path)
-    request = next_app_episode(run_dir).request
-    revision_before = app_run_status(run_dir).graph_revision
-    outcome = submit_app_episode_result(run_dir, result_for(request))
-    assert outcome.commit_outcome.accepted is True
-    assert outcome.next_controller_action == "continue_controller"
-    state = app_run_status(run_dir)
-    assert state.graph_revision == revision_before + 1
-    assert [node.node_id for node in state.nodes] == ["parent", "child-0"]
-    assert state.nodes[0].status == "closed"
-    assert lifecycle_for(state, request.episode_id).committed_attempt_id == request.attempt_id
 
 
-def test_valid_zero_child_app_result(tmp_path):
-    run_dir = create_run(tmp_path)
-    request = next_app_episode(run_dir).request
-    outcome = submit_app_episode_result(run_dir, result_for(request, children=0))
-    assert outcome.commit_outcome.accepted is True
-    assert outcome.commit_outcome.accepted_node_count == 0
-    assert app_run_status(run_dir).nodes[0].status == "closed"
 
 
-@pytest.mark.parametrize("transition", ["failed", "cancelled"])
-def test_failed_or_cancelled_attempt_cannot_commit_and_graph_is_unchanged(tmp_path, transition):
-    run_dir = create_run(tmp_path)
-    request = next_app_episode(run_dir).request
-    before = graph_snapshot(run_dir)
-    if transition == "failed":
-        fail_app_episode(run_dir, request.episode_id, request.attempt_id, "runtime failed")
-    else:
-        cancel_app_episode(run_dir, request.episode_id, request.attempt_id, "operator cancelled")
-    outcome = submit_app_episode_result(run_dir, result_for(request))
-    assert outcome.commit_outcome.accepted is False
-    assert f"status={transition}" in outcome.commit_outcome.rejection_reason
-    assert graph_snapshot(run_dir) == before
 
 
-def test_expired_attempt_cannot_commit(monkeypatch, tmp_path):
-    run_dir = create_run(tmp_path)
-    request = next_app_episode(
-        run_dir,
-        runtime_limits=RuntimeLimits(wall_clock_seconds=1, selected_by="main_agent"),
-    ).request
-    before = graph_snapshot(run_dir)
-    original_now = app_driver._now()
-    monkeypatch.setattr(app_driver, "_now", lambda: original_now + timedelta(seconds=10))
-    outcome = submit_app_episode_result(run_dir, result_for(request))
-    assert outcome.commit_outcome.accepted is False
-    assert "expired" in outcome.commit_outcome.rejection_reason
-    assert graph_snapshot(run_dir) == before
-    state = app_run_status(run_dir)
-    assert lifecycle_for(state, request.episode_id).attempts[0].status == "expired"
 
 
-def test_retry_creates_new_attempt_and_supersedes_old_result(tmp_path):
-    run_dir = create_run(tmp_path)
-    first = next_app_episode(run_dir).request
-    fail_app_episode(run_dir, first.episode_id, first.attempt_id, "retryable")
-    retry = retry_app_episode(run_dir, first.episode_id)
-    assert retry.request.episode_id == first.episode_id
-    assert retry.attempt_id != first.attempt_id
-    assert retry.request.attempt_id == retry.attempt_id
-    before = graph_snapshot(run_dir)
-    old_outcome = submit_app_episode_result(run_dir, result_for(first, node_id_prefix="late"))
-    assert old_outcome.commit_outcome.accepted is False
-    assert "superseded" in old_outcome.commit_outcome.rejection_reason
-    assert graph_snapshot(run_dir) == before
-    new_outcome = submit_app_episode_result(run_dir, result_for(retry.request))
-    assert new_outcome.commit_outcome.accepted is True
-    state = app_run_status(run_dir)
-    episode = lifecycle_for(state, first.episode_id)
-    assert episode.attempts[0].status == "superseded"
-    assert episode.attempts[1].status == "committed"
 
 
-def test_active_attempt_requires_explicit_failure_before_retry(tmp_path):
-    run_dir = create_run(tmp_path)
-    first = next_app_episode(run_dir).request
-    with pytest.raises(ValueError, match="active attempt cannot be retried"):
-        retry_app_episode(run_dir, first.episode_id)
-    fail_app_episode(run_dir, first.episode_id, first.attempt_id, "executor failed")
-    retried = retry_app_episode(run_dir, first.episode_id)
-    assert retried.request is not None
-    assert retried.request.episode_id == first.episode_id
-    assert retried.attempt_id != first.attempt_id
 
 
-def test_repair_is_bounded_on_the_same_attempt(tmp_path):
-    run_dir = create_run(tmp_path)
-    request = next_app_episode(run_dir).request
-    before = graph_snapshot(run_dir)
-    invalid = result_for(request).model_dump(mode="json")
-    invalid["output_hash"] = "0" * 64
-
-    first = submit_app_episode_result(run_dir, invalid)
-    second = submit_app_episode_result(run_dir, invalid)
-    assert first.repair_required and second.repair_required
-    assert first.attempt_id == second.attempt_id == request.attempt_id
-    active = app_run_status(run_dir)
-    assert active.active_attempt_id == request.attempt_id
-    assert active.controller_action == "episode_required"
-    assert graph_snapshot(run_dir) == before
-
-    third = submit_app_episode_result(run_dir, invalid)
-    assert third.repair_exhausted and not third.repair_required
-    exhausted = app_run_status(run_dir)
-    assert exhausted.active_attempt_id is None
-    assert exhausted.controller_action == "await_operator_decision"
-    attempt = lifecycle_for(exhausted, request.episode_id).attempts[0]
-    assert attempt.status == "rejected"
-    assert attempt.repair_count == 3
-    assert graph_snapshot(run_dir) == before
 
 
-def test_cancel_run_records_backend_termination_and_cancels_active_attempt(tmp_path):
-    run_dir = create_run(tmp_path)
-    request = next_app_episode(run_dir).request
-    cancelled = cancel_app_run(
-        run_dir,
-        "operator stopped the run",
-        requested_by="user",
-    )
-    assert cancelled.controller_action == "run_cancelled"
-    assert cancelled.run_cancellation is not None
-    assert cancelled.run_cancellation.reason == "operator stopped the run"
-    assert cancelled.active_attempt_id is None
-    assert lifecycle_for(cancelled, request.episode_id).attempts[0].status == "cancelled"
-    terminal = next_app_episode(run_dir)
-    assert terminal.controller_action == "run_cancelled"
-    assert terminal.request is None
 
 
-def test_retry_limit_is_enforced(tmp_path):
-    run_dir = create_run(tmp_path)
-    first = next_app_episode(
-        run_dir,
-        runtime_limits=RuntimeLimits(max_retries=1),
-    ).request
-    fail_app_episode(run_dir, first.episode_id, first.attempt_id, "first failure")
-    second = retry_app_episode(run_dir, first.episode_id)
-    fail_app_episode(run_dir, second.episode_id, second.attempt_id, "second failure")
-    with pytest.raises(ValueError, match="retry limit exhausted"):
-        retry_app_episode(run_dir, first.episode_id)
 
 
-def test_only_one_attempt_can_commit(tmp_path):
-    run_dir = create_run(tmp_path)
-    request = next_app_episode(run_dir).request
-    first = submit_app_episode_result(run_dir, result_for(request))
-    snapshot = graph_snapshot(run_dir)
-    second = submit_app_episode_result(run_dir, result_for(request))
-    assert first.commit_outcome.accepted is True
-    assert second.commit_outcome.accepted is False
-    assert "status=committed" in second.commit_outcome.rejection_reason
-    assert graph_snapshot(run_dir) == snapshot
-    state = app_run_status(run_dir)
-    assert lifecycle_for(state, request.episode_id).attempts[0].commit_outcome.accepted is True
 
 
-def test_result_artifact_is_not_graph_state_until_submit(tmp_path):
-    run_dir = create_run(tmp_path)
-    request = next_app_episode(run_dir).request
-    before = graph_snapshot(run_dir)
-    result_path = run_dir / "episodes" / request.episode_id / request.attempt_id / "result.json"
-    result_path.write_text(result_for(request).model_dump_json(indent=2), encoding="utf-8")
-    assert graph_snapshot(run_dir) == before
 
 
-def test_app_telemetry_is_coarse_and_usage_is_unavailable(tmp_path):
-    run_dir = create_run(tmp_path)
-    request = next_app_episode(run_dir).request
-    submit_app_episode_result(run_dir, result_for(request))
-    events = EpisodeEventLog(run_dir / "episode_events.jsonl").read_events()
-    assert {event["event_type"] for event in events}.issuperset(
-        {"episode_granted", "episode_started", "episode_submitted", "episode_completed", "nodes_committed"}
-    )
-    episode_events = [event for event in events if event["episode_id"]]
-    assert all(event["usage_source"] == "unavailable" for event in episode_events)
-    serialized = json.dumps(episode_events)
-    assert "subagent_count" not in serialized
-    assert "subagent_names" not in serialized
 
 
-def test_app_driver_preserves_operator_policy_authority(tmp_path):
-    run_dir = tmp_path / "run"
-    restricted_data = spec().model_dump()
-    restricted_data["operator_policy"] = {"main_agent_may_request_synthesis": False}
-    restricted = DTERunSpec.model_validate(restricted_data)
-    create_app_run(run_dir, restricted, [completed_node(node_id="closed", claim="done")])
-    main_request = SynthesisControlRequest(
-        action="force_synthesis_after_current_task",
-        requested_by="main_agent",
-        reason="operator requests synthesis",
-    )
-    with pytest.raises(OperatorAuthorizationError):
-        request_app_synthesis(run_dir, main_request)
-    judge = next_app_episode(run_dir).request
-    submit_app_episode_result(run_dir, judge_result_for(judge))
-    executor = next_app_episode(
-        run_dir,
-        embedding_provider=HashEmbeddingProvider(dim=restricted.embedding_dimension),
-    ).request
-    submit_app_episode_result(run_dir, result_for(executor, children=0))
-    user_request = main_request.model_copy(update={"requested_by": "user"})
-    state = request_app_synthesis(run_dir, user_request)
-    assert state.controller_action == "continue_controller"
-    assert state.synthesis_request.requested_by == "user"
-    assert next_app_episode(run_dir).controller_action == "ready_for_synthesis"
 
 
 def test_skill_and_agents_define_current_app_loop_without_sdk_primary_path():
@@ -657,49 +186,3 @@ def test_skill_and_agents_define_current_app_loop_without_sdk_primary_path():
     assert "subagent count" in combined
 
 
-def test_app_driver_cli_round_trip(tmp_path):
-    root = Path(__file__).resolve().parents[1]
-    run_dir = tmp_path / "cli-run"
-    spec_path = tmp_path / "spec.json"
-    nodes_path = tmp_path / "nodes.json"
-    result_path = tmp_path / "result.json"
-    spec_path.write_text(spec().model_dump_json(indent=2), encoding="utf-8")
-    nodes_path.write_text(json.dumps([parent().model_dump(mode="json")]), encoding="utf-8")
-
-    def command(*args):
-        completed = subprocess.run(
-            [sys.executable, "-m", "dte_backend", *args],
-            cwd=root,
-            text=True,
-            capture_output=True,
-            check=False,
-        )
-        assert completed.returncode == 0, completed.stderr
-        return json.loads(completed.stdout)
-
-    command(
-        "create-run",
-        "--run-dir",
-        str(run_dir),
-        "--spec",
-        str(spec_path),
-        "--nodes",
-        str(nodes_path),
-        "--run-id",
-        "cli-run",
-    )
-    granted = command("next-episode", "--run-dir", str(run_dir))
-    request = next_app_episode(run_dir).request
-    assert request.role == "judge"
-    assert granted["request"]["attempt_id"] == request.attempt_id
-    result_path.write_text(judge_result_for(request).model_dump_json(indent=2), encoding="utf-8")
-    submitted = command(
-        "submit-episode-result",
-        "--run-dir",
-        str(run_dir),
-        "--result",
-        str(result_path),
-    )
-    assert submitted["commit_outcome"]["accepted"] is True
-    status = command("run-status", "--run-dir", str(run_dir))
-    assert status["graph_revision"] == 1

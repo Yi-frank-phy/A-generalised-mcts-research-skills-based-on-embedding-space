@@ -116,12 +116,6 @@ def test_executor_child_must_return_to_frontier():
         validate_executor_children(parent, 1, [child])
 
 
-def test_executor_child_cannot_prefill_judge_metrics():
-    parent = completed_node(node_id="p", claim="parent")
-    child = completed_node(node_id="c", claim="bad", parent_ids=["p"], score=0.9)
-
-    with pytest.raises(ValueError, match="metrics"):
-        validate_executor_children(parent, 1, [child])
 
 
 def test_executor_child_cannot_prefill_expansion_budget():

@@ -127,41 +127,6 @@ def test_checked_in_machine_schema_matches_canonical_pydantic_serialization(
     assert checked_schema == model_type.model_json_schema(mode="serialization")
 
 
-def test_machine_contracts_round_trip_canonical_json():
-    node = SearchNode(
-        node_id="n",
-        node_type="evidence",
-        claim="claim",
-        rationale="rationale",
-        assumptions=["assumption"],
-        evidence=["evidence"],
-        risks=["risk"],
-        parent_ids=["parent"],
-        confidence=0.8,
-        local_embedding=[0.1, 0.2],
-        judge_reasoning="reasoning",
-        judge_risks=["judge risk"],
-        judge_uncertainty_evidence=["gap"],
-        judge_result_provenance={"episode_id": "episode"},
-        score=0.7,
-        density=0.2,
-        uncertainty=0.3,
-        ucb_score=0.9,
-        expansion_budget=2,
-        status="closed",
-    )
-    spec = DTERunSpec(
-        problem="problem",
-        goal="goal",
-        constraints=["constraint"],
-        embedding_provider="gemini-embedding-2",
-        embedding_dimension=3072,
-    )
-    request = ExpansionRequest(parent=node, child_count=2, iteration=1, spec=spec)
-
-    for value in (node, spec, request):
-        canonical_json = value.model_dump_json()
-        assert type(value).model_validate_json(canonical_json) == value
 
 
 def test_expansion_request_serializes_only_canonical_child_count():

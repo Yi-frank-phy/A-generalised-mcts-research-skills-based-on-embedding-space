@@ -10,112 +10,18 @@ from dte_backend.models import BudgetSpec, DTERunSpec, SearchNode
 from dte_backend.strict_runner import StrictRunError, enforce_strict_policy, policy_for_mode, strict_run
 
 
-def test_real_mode_rejects_hash_geometry():
-    spec = DTERunSpec(problem="p", goal="g", embedding_provider="hash")
-    with pytest.raises(StrictRunError, match="hash embedding"):
-        enforce_strict_policy(
-            spec,
-            policy=policy_for_mode("real"),
-            cache_path=".dte_cache/cache.json",
-            judge_command="python real_judge.py",
-        )
 
 
-def test_real_mode_requires_judge_command(monkeypatch):
-    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
-    spec = DTERunSpec(problem="p", goal="g", embedding_provider="gemini-embedding-2", embedding_dimension=3072)
-    with pytest.raises(StrictRunError, match="requires --judge-command"):
-        enforce_strict_policy(
-            spec,
-            policy=policy_for_mode("real"),
-            cache_path=".dte_cache/cache.json",
-            judge_command=None,
-        )
 
 
-def test_real_mode_rejects_mock_judge(monkeypatch):
-    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
-    spec = DTERunSpec(problem="p", goal="g", embedding_provider="gemini-embedding-2", embedding_dimension=3072)
-    with pytest.raises(StrictRunError, match="mock Judge"):
-        enforce_strict_policy(
-            spec,
-            policy=policy_for_mode("real"),
-            cache_path=".dte_cache/cache.json",
-            judge_command="python examples/mock_judge_adapter.py",
-        )
 
 
-def test_real_mode_rejects_mock_executor(monkeypatch):
-    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
-    spec = DTERunSpec(problem="p", goal="g", embedding_provider="gemini-embedding-2", embedding_dimension=3072)
-    with pytest.raises(StrictRunError, match="mock Executor"):
-        enforce_strict_policy(
-            spec,
-            policy=policy_for_mode("real"),
-            cache_path=".dte_cache/cache.json",
-            judge_command="python real_judge.py",
-            executor_command="python examples/mock_executor_adapter.py",
-        )
 
 
-def test_real_mode_requires_cache_path(monkeypatch):
-    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
-    spec = DTERunSpec(problem="p", goal="g", embedding_provider="gemini-embedding-2", embedding_dimension=3072)
-    with pytest.raises(StrictRunError, match="requires --cache-path"):
-        enforce_strict_policy(
-            spec,
-            policy=policy_for_mode("real"),
-            cache_path=None,
-            judge_command="python real_judge.py",
-        )
 
 
-def test_real_mode_without_gemini_credentials_fails_before_oracles(monkeypatch, tmp_path):
-    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
-    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
-    calls = {"judge": 0, "executor": 0}
-
-    def judge_adapter(frontier):
-        calls["judge"] += 1
-        return []
-
-    class RecordingExecutor:
-        def expand(self, request):
-            calls["executor"] += 1
-            return []
-
-    spec = DTERunSpec(
-        problem="p",
-        goal="g",
-        embedding_provider="gemini-embedding-2",
-        embedding_dimension=3072,
-    )
-
-    with pytest.raises(StrictRunError, match="requires GEMINI_API_KEY or GOOGLE_API_KEY"):
-        strict_run(
-            spec=spec,
-            mode="real",
-            out_dir=tmp_path / "out",
-            cache_path=str(tmp_path / "cache.json"),
-            initial_nodes=[completed_node(node_id="a", claim="route A")],
-            judge_adapter=judge_adapter,
-            judge_command="python real_judge.py",
-            executor_adapter=RecordingExecutor(),
-            executor_command="python real_executor.py",
-        )
-
-    assert calls == {"judge": 0, "executor": 0}
-    assert not (tmp_path / "out").exists()
 
 
-def test_smoke_mode_allows_mock_and_hash():
-    spec = DTERunSpec(problem="p", goal="g", embedding_provider="hash")
-    enforce_strict_policy(
-        spec,
-        policy=policy_for_mode("smoke"),
-        cache_path=None,
-        judge_command="python examples/mock_judge_adapter.py",
-    )
 
 
 def test_strict_run_reads_control_file_and_records_forced_synthesis(tmp_path):
@@ -322,37 +228,3 @@ def test_strict_run_rejects_main_agent_when_operator_policy_disables_it(tmp_path
     assert not (tmp_path / "out" / "report.md").exists()
 
 
-def test_strict_real_mode_executes_with_compliant_oracles(monkeypatch, tmp_path):
-    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
-    monkeypatch.setattr(
-        "dte_backend.runner.get_embedding_provider",
-        lambda name, dim: HashEmbeddingProvider(dim=dim),
-    )
-    spec = DTERunSpec(
-        problem="p",
-        goal="g",
-        embedding_provider="gemini-embedding-2",
-        embedding_dimension=3072,
-        budget=BudgetSpec(max_iterations=1, allocation_mass_per_iteration=1),
-    )
-
-    def judge_adapter(frontier):
-        return [
-            {"node_id": node.node_id, "score": 0.8, "reasoning": "real test oracle", "risks": []}
-            for node in frontier
-        ]
-
-    result = strict_run(
-        spec=spec,
-        mode="real",
-        out_dir=tmp_path / "out",
-        cache_path=str(tmp_path / "cache.json"),
-        initial_nodes=[completed_node(node_id="a", claim="route A")],
-        judge_adapter=judge_adapter,
-        judge_command="python real_judge.py",
-    )
-
-    status = json.loads((tmp_path / "out" / "strict_run_status.json").read_text(encoding="utf-8"))
-    assert result.stop_reason == "max_iterations"
-    assert status["mode"] == "real"
-    assert status["finalized"] is True

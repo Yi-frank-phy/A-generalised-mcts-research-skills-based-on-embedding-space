@@ -44,7 +44,8 @@ def replace_exact(text: str, old: str, new: str, label: str, *, count: int = 1) 
 
 def delete_between(text: str, start: str, end: str, label: str) -> str:
     require_count(text, start, 1, f"{label} start")
-    require_count(text, end, 1, f"{label} end")
+    if end not in text:
+        raise RuntimeError(f"{label} end: marker not found")
     i = text.index(start)
     j = text.index(end, i)
     if j <= i:
@@ -65,7 +66,7 @@ def remove_top_levels(text: str, names: set[str], label: str) -> str:
         raise RuntimeError(f"{label}: missing top-level objects {sorted(missing)}")
     lines = text.splitlines(keepends=True)
     ranges = sorted(
-        ((node.lineno - 1, node.end_lineno or node.lineno) for node in found.values()),
+        ((min([node.lineno, *[item.lineno for item in getattr(node, "decorator_list", [])]]) - 1, node.end_lineno or node.lineno) for node in found.values()),
         reverse=True,
     )
     for start, end in ranges:
@@ -308,8 +309,7 @@ def migrate_cli() -> None:
         "    if args.judge_command:\n"
         "        judge_adapter = build_subprocess_judge_adapter(split_command(args.judge_command), timeout=args.judge_timeout)\n"
     )
-    text = replace_exact(text, run_block, "", "CLI flexible-run Judge adapter")
-    text = replace_exact(text, run_block, "", "CLI strict-run Judge adapter")
+    text = replace_exact(text, run_block, "", "CLI Judge adapter blocks", count=2)
     text = text.replace("        judge_adapter=judge_adapter,\n", "")
     text = text.replace("            judge_adapter=judge_adapter,\n", "")
     text = text.replace("            judge_command=args.judge_command,\n", "")

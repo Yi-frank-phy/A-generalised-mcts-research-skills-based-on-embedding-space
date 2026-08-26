@@ -17,7 +17,7 @@ from .relation_models import (
 )
 
 
-EpisodeRole = Literal["executor", "seed", "judge", "relation", "synthesis"]
+EpisodeRole = Literal["executor", "seed", "relation", "synthesis"]
 EpisodeStatus = Literal["completed", "failed", "timed_out", "cancelled"]
 ComparisonProfile = Literal["legacy-explicit", "native-guided", "native-autonomous"]
 UsageSource = Literal["provider_reported", "estimated", "unavailable"]
@@ -210,51 +210,12 @@ class ExecutorEpisodeOutput(DTEBaseModel):
     epistemic_contributions: EpistemicContributionBundle | None = None
 
 
-class JudgeNodeInput(DTEBaseModel):
-    """Producer-visible Judge input with no controller mutation authority."""
-
-    node_id: str = Field(min_length=1)
-    node_type: Literal["candidate", "evidence", "counterexample", "merge"] = "candidate"
-    claim: str = Field(min_length=1)
-    rationale: str = ""
-    assumptions: list[str] = Field(default_factory=list)
-    evidence: list[str] = Field(default_factory=list)
-    risks: list[str] = Field(default_factory=list)
-    confidence: float = Field(default=0.5, ge=0.0, le=1.0)
 
 
-class JudgeEpisodePayload(DTEBaseModel):
-    purpose: Literal["initial_scoring", "provenance_repair"] = "initial_scoring"
-    rubric_version: str = Field(min_length=1)
-    problem: str = Field(min_length=1)
-    goal: str = Field(min_length=1)
-    constraints: list[str] = Field(default_factory=list)
-    selected_frontier_nodes: list[JudgeNodeInput] = Field(min_length=1)
-    required_output_fields: list[
-        Literal["node_id", "score", "reasoning", "risks", "uncertainty_evidence"]
-    ] = Field(default_factory=lambda: ["node_id", "score", "reasoning", "risks"])
-
-    @model_validator(mode="after")
-    def validate_selected_nodes(self) -> "JudgeEpisodePayload":
-        node_ids = [node.node_id for node in self.selected_frontier_nodes]
-        if len(node_ids) != len(set(node_ids)):
-            raise ValueError("Judge payload selected node IDs must be unique")
-        if len(self.required_output_fields) != len(set(self.required_output_fields)):
-            raise ValueError("Judge required_output_fields must be unique")
-        return self
 
 
-class JudgeObservation(DTEBaseModel):
-    node_id: str = Field(min_length=1)
-    score: float = Field(ge=0.0, le=1.0)
-    reasoning: str = Field(min_length=1)
-    risks: list[str]
-    uncertainty_evidence: list[str] = Field(default_factory=list)
 
 
-class JudgeEpisodeOutput(DTEBaseModel):
-    observations: list[JudgeObservation] = Field(default_factory=list)
-    epistemic_contributions: EpistemicContributionBundle | None = None
 
 
 class RuntimeDiagnostics(DTEBaseModel):
@@ -339,7 +300,6 @@ class EpisodeRequest(DTEBaseModel):
     max_returned_children: int | None = Field(default=None, ge=0, le=50)
     required_parent_id_on_children: bool = True
     executor_payload: ExecutorEpisodePayload | None = None
-    judge_payload: JudgeEpisodePayload | None = None
     relation_payload: RelationEpisodePayload | BlindRelationEpisodePayload | None = None
     role_execution_contract: RoleExecutionContract = Field(
         default_factory=lambda: RoleExecutionContract(
@@ -368,28 +328,6 @@ class EpisodeRequest(DTEBaseModel):
                 raise ValueError("selected_node_revisions must include the assigned parent revision")
             if not self.required_parent_id_on_children:
                 raise ValueError("Executor request must require the assigned parent ID on children")
-            if self.judge_payload is not None:
-                raise ValueError("judge_payload requires role='judge'")
-            if self.relation_payload is not None:
-                raise ValueError("relation_payload requires role='relation'")
-        elif self.role == "judge":
-            if self.judge_payload is None:
-                raise ValueError("judge request is missing judge_payload")
-            executor_fields = (
-                self.parent_node_id,
-                self.parent_node_revision,
-                self.max_returned_children,
-                self.executor_payload,
-            )
-            if any(value is not None for value in executor_fields):
-                raise ValueError("executor-specific fields require role='executor'")
-            if self.required_parent_id_on_children:
-                raise ValueError("Judge request must not grant child-parent authority")
-            selected_ids = [node.node_id for node in self.judge_payload.selected_frontier_nodes]
-            if set(selected_ids) != set(self.selected_node_revisions):
-                raise ValueError("Judge payload nodes must exactly match selected_node_revisions")
-            if self.allowed_output_types:
-                raise ValueError("Judge request must not grant graph output types")
             if self.relation_payload is not None:
                 raise ValueError("relation_payload requires role='relation'")
         elif self.role == "relation":
@@ -403,8 +341,6 @@ class EpisodeRequest(DTEBaseModel):
             )
             if any(value is not None for value in executor_fields):
                 raise ValueError("executor-specific fields require role='executor'")
-            if self.judge_payload is not None:
-                raise ValueError("judge_payload requires role='judge'")
             if self.required_parent_id_on_children:
                 raise ValueError("Relation request must not grant child-parent authority")
             if self.allowed_output_types:
@@ -425,8 +361,6 @@ class EpisodeRequest(DTEBaseModel):
             )
         ):
             raise ValueError("executor-specific fields require role='executor'")
-        elif self.judge_payload is not None:
-            raise ValueError("judge_payload requires role='judge'")
         elif self.relation_payload is not None:
             raise ValueError("relation_payload requires role='relation'")
         if len(set(self.allowed_output_types)) != len(self.allowed_output_types):
@@ -442,7 +376,7 @@ class EpisodeResult(DTEBaseModel):
     input_graph_revision: int = Field(ge=0)
     selected_node_revisions: dict[str, int]
     status: EpisodeStatus
-    structured_output: ExecutorEpisodeOutput | JudgeEpisodeOutput | RelationEpisodeOutput | None
+    structured_output: ExecutorEpisodeOutput | RelationEpisodeOutput | None
     runtime_diagnostics: RuntimeDiagnostics
     output_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     schema_version: str = Field(min_length=1)
@@ -536,7 +470,7 @@ def bind_role_execution_contract(
 
 
 def compute_output_hash(
-    output: ExecutorEpisodeOutput | JudgeEpisodeOutput | RelationEpisodeOutput | None,
+    output: ExecutorEpisodeOutput | RelationEpisodeOutput | None,
     schema_version: str,
 ) -> str:
     payload = {

@@ -7,35 +7,14 @@ import subprocess
 from collections.abc import Callable, Sequence
 
 from .models import SearchNode
-from .oracle_validation import validate_judge_output, validate_relation_output
-from .oracles import JudgeOracleResult, RelationOracleResult, make_judge_task, make_relation_task
+from .oracle_validation import validate_relation_output
+from .oracles import RelationOracleResult, make_relation_task
 
-JudgeAdapter = Callable[[list[SearchNode]], list[JudgeOracleResult]]
 RelationAdapter = Callable[[list[SearchNode]], RelationOracleResult]
 
 
-def run_subprocess_judge(command: Sequence[str], nodes: list[SearchNode], timeout: float = 360.0) -> list[JudgeOracleResult]:
-    task = make_judge_task(nodes)
-    payload = {"task": task.__dict__, "nodes": [node.model_dump() for node in nodes]}
-    completed = subprocess.run(
-        list(command),
-        input=json.dumps(payload),
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=timeout,
-    )
-    if completed.returncode != 0:
-        raise RuntimeError(f"judge oracle failed: {completed.stderr.strip()}")
-    return validate_judge_output(nodes, completed.stdout)
 
 
-def build_subprocess_judge_adapter(command: Sequence[str], timeout: float = 360.0) -> JudgeAdapter:
-    def adapter(nodes: list[SearchNode]) -> list[JudgeOracleResult]:
-        return run_subprocess_judge(command, nodes, timeout=timeout)
-
-    return adapter
 
 
 def run_subprocess_relation(command: Sequence[str], nodes: list[SearchNode], timeout: float = 360.0) -> RelationOracleResult:

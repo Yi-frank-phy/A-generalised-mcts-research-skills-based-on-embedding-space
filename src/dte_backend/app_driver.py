@@ -35,25 +35,9 @@ from .epistemic_models import (
     EpistemicLedgerV1,
     stable_epistemic_id,
 )
-from .episode_adapter import (
-    build_executor_episode_request,
-    build_judge_episode_request,
-    build_relation_episode_request,
-)
+from .episode_adapter import build_executor_episode_request, build_relation_episode_request
 from .episode_commit import CONTROLLER_OWNED_FIELDS, EpisodeGraph, commit_episode_result
-from .episode_models import (
-    CommitOutcome,
-    EpisodeRequest,
-    EpisodeResult,
-    ExecutorEpisodeOutput,
-    JudgeEpisodeOutput,
-    RoleIsolationAttestation,
-    RuntimeLimits,
-    bind_role_execution_contract,
-    canonical_json_bytes,
-    compute_role_context_manifest_hash,
-    compute_output_hash,
-)
+from .episode_models import CommitOutcome, EpisodeRequest, EpisodeResult, ExecutorEpisodeOutput, RoleIsolationAttestation, RuntimeLimits, bind_role_execution_contract, canonical_json_bytes, compute_role_context_manifest_hash, compute_output_hash
 from .file_cache import FileDTECache
 from .math_engine import allocate_frontier, calculate_ucb
 from .merge import (
@@ -152,7 +136,7 @@ class DriverExecutionContext(DTEBaseModel):
 class RoleSessionRecord(DTEBaseModel):
     episode_id: str
     attempt_id: str
-    role: Literal["executor", "seed", "judge", "relation", "synthesis"]
+    role: Literal["executor", "seed", "relation", "synthesis"]
     isolation_mode: Literal[
         "strict_fresh_context",
         "shared_context_single_agent",
@@ -235,7 +219,7 @@ class EpisodeAttemptRecord(DTEBaseModel):
 class EpisodeLifecycleRecord(DTEBaseModel):
     episode_id: str
     run_id: str
-    role: Literal["executor", "seed", "judge", "relation", "synthesis"]
+    role: Literal["executor", "seed", "relation", "synthesis"]
     attempts: list[EpisodeAttemptRecord]
     committed_attempt_id: str | None = None
 
@@ -774,7 +758,7 @@ def _validate_persisted_epistemic_ledger(
         output = result.structured_output
         bundle = (
             output.epistemic_contributions
-            if isinstance(output, (ExecutorEpisodeOutput, JudgeEpisodeOutput))
+            if isinstance(output, ExecutorEpisodeOutput)
             else None
         )
         if bundle is None:
@@ -1417,17 +1401,6 @@ def _validate_loaded_state(state: AppRunState) -> None:
                 )
             else:
                 raise ValueError("persisted committed result has the wrong role output schema")
-            if (
-                outcome.accepted_node_ids != accepted_ids
-                or outcome.accepted_node_count
-                != (
-                    expected_count
-                    if episode.role == "judge"
-                    else len(accepted_ids)
-                )
-                or outcome.graph_revision_after != expected_after
-            ):
-                raise ValueError("persisted committed result disagrees with its commit outcome")
         for attempt in episode.attempts:
             _validate_artifact_component(attempt.attempt_id, "attempt_id")
             if attempt.status != "committed" and (
@@ -1659,48 +1632,6 @@ def _validate_loaded_state(state: AppRunState) -> None:
             ):
                 raise ValueError("pending allocation telemetry lacks a controller transition")
 
-    judge_observations: dict[
-        str, tuple[EpisodeLifecycleRecord, EpisodeAttemptRecord, Any]
-    ] = {}
-    for episode in state.episodes:
-        if episode.role != "judge" or episode.committed_attempt_id is None:
-            continue
-        attempt = next(
-            item for item in episode.attempts if item.attempt_id == episode.committed_attempt_id
-        )
-        result = attempt.committed_result
-        if result is None or not isinstance(result.structured_output, JudgeEpisodeOutput):
-            raise ValueError("committed Judge attempt lacks its authoritative observations")
-        output_ids = [item.node_id for item in result.structured_output.observations]
-        payload = attempt.request.judge_payload
-        if payload is not None and payload.purpose == "provenance_repair":
-            if result.structured_output.observations:
-                raise ValueError(
-                    "committed provenance-repair Judge attempt changed scoring observations"
-                )
-            continue
-        blinded_payload_ids = (
-            [] if payload is None else [item.node_id for item in payload.selected_frontier_nodes]
-        )
-        payload_ids = [
-            attempt.canonical_node_id_map.get(node_id, node_id)
-            for node_id in blinded_payload_ids
-        ]
-        granted_ids = {
-            attempt.canonical_node_id_map.get(node_id, node_id)
-            for node_id in attempt.request.selected_node_revisions
-        }
-        if (
-            len(output_ids) != len(set(output_ids))
-            or set(output_ids) != granted_ids
-            or set(payload_ids) != set(output_ids)
-        ):
-            raise ValueError("committed Judge attempt does not cover its exact grant")
-        for observation in result.structured_output.observations:
-            if observation.node_id in judge_observations:
-                raise ValueError("persisted node was committed by multiple Judge attempts")
-            judge_observations[observation.node_id] = (episode, attempt, observation)
-
     allocation_record_by_node = {
         node_id: record
         for record in state.controller_iteration_records
@@ -1874,7 +1805,7 @@ def _validate_loaded_state(state: AppRunState) -> None:
             if judge_fields_present:
                 raise ValueError("unscored node contains persisted Judge-owned state")
         else:
-            owner = judge_observations.get(node.node_id)
+            owner = None
             if owner is None:
                 raise ValueError("scored node lacks an authoritative committed Judge observation")
             episode, attempt, observation = owner
@@ -5611,38 +5542,6 @@ def retry_app_episode(
             constraints=(previous.request.executor_payload.constraints if previous.request.executor_payload else []),
             coverage_requirements=list(previous.request.coverage_requirements),
             allowed_output_types=list(previous.request.allowed_output_types),
-            native_orchestration_allowed=previous.request.native_orchestration_allowed,
-            runtime_limits=limits,
-            tool_policy=previous.request.tool_policy,
-            transport_hints=previous.request.transport_hints,
-            isolation_mode=state.spec.role_isolation_mode,
-            previous_role_session_ids=[
-                item.role_session_id
-                for item in state.role_session_registry
-                if item.role_session_id is not None
-            ],
-        )
-    elif previous.request.role == "judge":
-        nodes = [
-            graph.node_by_id(
-                previous.canonical_node_id_map.get(node_id, node_id)
-            )
-            for node_id in previous.request.selected_node_revisions
-        ]
-        if any(node is None or node.status != "frontier" for node in nodes):
-            raise ValueError("Judge retry targets are no longer committed frontier nodes")
-        request = build_judge_episode_request(
-            graph,
-            [node for node in nodes if node is not None],
-            run_id=state.run_id,
-            problem=state.spec.problem,
-            goal=state.spec.goal,
-            constraints=list(state.spec.constraints),
-            rubric_version=(
-                previous.request.judge_payload.rubric_version
-                if previous.request.judge_payload is not None
-                else "research-potential.v1"
-            ),
             native_orchestration_allowed=previous.request.native_orchestration_allowed,
             runtime_limits=limits,
             tool_policy=previous.request.tool_policy,

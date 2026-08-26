@@ -31,7 +31,6 @@ from .file_cache import FileDTECache
 from .guards import enforce_run_spec_guard
 from .models import DTERunSpec, SearchNode
 from .runner import RunResult, run_frontier_search
-from .subprocess_oracles import JudgeAdapter
 from .synthesis import synthesize_report
 from .telemetry import EpisodeEventLog
 
@@ -50,7 +49,6 @@ class StrictRunPolicy:
     mode: StrictMode
     allow_mock: bool
     allow_hash_geometry: bool
-    allow_heuristic_judge: bool
     require_cache_path: bool
     require_gemini_key: bool
 
@@ -61,7 +59,6 @@ def policy_for_mode(mode: StrictMode) -> StrictRunPolicy:
             mode=mode,
             allow_mock=True,
             allow_hash_geometry=True,
-            allow_heuristic_judge=True,
             require_cache_path=False,
             require_gemini_key=False,
         )
@@ -70,7 +67,6 @@ def policy_for_mode(mode: StrictMode) -> StrictRunPolicy:
             mode=mode,
             allow_mock=False,
             allow_hash_geometry=True,
-            allow_heuristic_judge=True,
             require_cache_path=True,
             require_gemini_key=False,
         )
@@ -79,7 +75,6 @@ def policy_for_mode(mode: StrictMode) -> StrictRunPolicy:
             mode=mode,
             allow_mock=False,
             allow_hash_geometry=False,
-            allow_heuristic_judge=False,
             require_cache_path=True,
             require_gemini_key=True,
         )
@@ -92,7 +87,6 @@ def _is_mock_command(command: str | None) -> bool:
     lowered = command.replace("\\", "/").casefold()
     mock_adapters = [
         "examples/mock_executor_adapter.py",
-        "examples/mock_judge_adapter.py",
         "examples/mock_relation_adapter.py",
     ]
     return any(adapter in lowered for adapter in mock_adapters)
@@ -106,7 +100,6 @@ def enforce_strict_policy(
     spec: DTERunSpec,
     policy: StrictRunPolicy,
     cache_path: str | None,
-    judge_command: str | None,
     executor_command: str | None = None,
 ) -> None:
     """Fail before a non-compliant slash-command run can start."""
@@ -124,12 +117,6 @@ def enforce_strict_policy(
 
     if policy.require_gemini_key and spec.embedding_provider == "gemini-embedding-2" and not _has_gemini_key():
         raise StrictRunError("real strict-run with Gemini geometry requires GEMINI_API_KEY or GOOGLE_API_KEY")
-
-    if not policy.allow_heuristic_judge and not judge_command:
-        raise StrictRunError("real strict-run requires --judge-command for a real Judge oracle")
-
-    if _is_mock_command(judge_command) and not policy.allow_mock:
-        raise StrictRunError("mock Judge adapter is smoke-only and forbidden in this mode")
 
     if _is_mock_command(executor_command) and not policy.allow_mock:
         raise StrictRunError("mock Executor adapter is smoke-only and forbidden in this mode")
@@ -214,8 +201,6 @@ def strict_run(
     out_dir: str | Path,
     cache_path: str | None,
     initial_nodes: list[SearchNode] | None = None,
-    judge_adapter: JudgeAdapter | None = None,
-    judge_command: str | None = None,
     executor_adapter: ExecutorAdapter | None = None,
     episode_adapter: AgentEpisodeAdapter | None = None,
     executor_command: str | None = None,
@@ -228,7 +213,6 @@ def strict_run(
         spec,
         policy=policy,
         cache_path=cache_path,
-        judge_command=judge_command,
         executor_command=executor_command,
     )
 
@@ -261,7 +245,6 @@ def strict_run(
         initial_nodes,
         executor_adapter=executor_adapter,
         episode_adapter=episode_adapter,
-        judge_adapter=judge_adapter,
         cache=cache,
         control_callback=control_callback if control_path is not None else None,
         checkpoint_callback=checkpoint_callback,

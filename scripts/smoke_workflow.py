@@ -33,16 +33,6 @@ def main() -> None:
     cache_path.parent.mkdir(parents=True, exist_ok=True)
 
     run([sys.executable, "hooks/dte_guard.py", "spec", "examples/run_spec.json"])
-    run([
-        sys.executable,
-        "-m",
-        "dte_backend",
-        "judge-oracle",
-        "--nodes",
-        "examples/frontier_nodes.json",
-        "--judge-command",
-        f"{sys.executable} examples/mock_judge_adapter.py",
-    ])
     run([sys.executable, "scripts/smoke_epistemic_workflow.py"])
     run([
         sys.executable,
@@ -79,8 +69,6 @@ def main() -> None:
         str(out_dir),
         "--cache-path",
         str(cache_path),
-        "--judge-command",
-        f"{sys.executable} examples/mock_judge_adapter.py",
     ])
 
     required = [

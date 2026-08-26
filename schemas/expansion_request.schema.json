@@ -367,47 +367,6 @@
           "default": null,
           "title": "Local Embedding"
         },
-        "judge_reasoning": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Judge Reasoning"
-        },
-        "judge_risks": {
-          "items": {
-            "type": "string"
-          },
-          "title": "Judge Risks",
-          "type": "array"
-        },
-        "judge_uncertainty_evidence": {
-          "items": {
-            "type": "string"
-          },
-          "title": "Judge Uncertainty Evidence",
-          "type": "array"
-        },
-        "judge_result_provenance": {
-          "anyOf": [
-            {
-              "additionalProperties": {
-                "type": "string"
-              },
-              "type": "object"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Judge Result Provenance"
-        },
         "score": {
           "anyOf": [
             {

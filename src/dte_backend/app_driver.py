@@ -2541,12 +2541,8 @@ def _validate_loaded_state(state: AppRunState) -> None:
             or state.relation_readiness_status != "evaluated"
         ):
             raise ValueError("terminal App state lacks evaluated synthesis readiness")
-        if any(
-            node.expansion_budget > 0
-            or (node.status == "frontier" and node.score is None)
-            for node in state.nodes
-        ):
-            raise ValueError("terminal App state retains authorized or unjudged work")
+        if any(node.expansion_budget > 0 for node in state.nodes):
+            raise ValueError("terminal App state retains authorized expansion work")
         degraded_terminal = (
             state.terminal_record is not None
             and state.terminal_record.completeness == "degraded"

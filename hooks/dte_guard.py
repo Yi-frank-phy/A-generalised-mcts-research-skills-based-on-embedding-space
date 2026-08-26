@@ -15,7 +15,6 @@ from dte_backend.adapter import validate_adapter_output
 from dte_backend.guards import enforce_run_spec_guard
 from dte_backend.models import DTERunSpec, SearchNode
 from dte_backend.oracle_validation import (
-    validate_judge_output,
     validate_relation_episode_output,
     validate_relation_output,
 )
@@ -38,11 +37,6 @@ def cmd_executor(args: argparse.Namespace) -> None:
     print("DTE guard ok: executor output")
 
 
-def cmd_judge(args: argparse.Namespace) -> None:
-    nodes = [SearchNode.model_validate(item) for item in load_json(args.nodes)]
-    raw_output = load_json(args.output)
-    validate_judge_output(nodes, raw_output)
-    print("DTE guard ok: judge output")
 
 
 def cmd_relation(args: argparse.Namespace) -> None:
@@ -71,11 +65,6 @@ def build_parser() -> argparse.ArgumentParser:
     executor.add_argument("--output", required=True)
     executor.add_argument("--child-count", type=int, required=True)
     executor.set_defaults(func=cmd_executor)
-
-    judge = sub.add_parser("judge")
-    judge.add_argument("--nodes", required=True)
-    judge.add_argument("--output", required=True)
-    judge.set_defaults(func=cmd_judge)
 
     relation = sub.add_parser("relation")
     relation.add_argument("--nodes")

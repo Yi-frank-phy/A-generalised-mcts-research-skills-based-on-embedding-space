@@ -142,6 +142,9 @@ def write_inputs(tmp_path: Path) -> tuple[Path, Path]:
                     "node_id": "seed-a",
                     "claim": "Candidate A",
                     "rationale": "seed",
+                    "retrospective_method": "initial candidate framing",
+                    "epistemic_change_kind": "sharper_unknown",
+                    "epistemic_change": "Established the initial bounded candidate for investigation.",
                     "status": "frontier",
                 }
             ]

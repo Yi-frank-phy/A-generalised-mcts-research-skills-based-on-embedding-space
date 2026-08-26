@@ -96,7 +96,7 @@ def test_installed_copy_runs_pinned_hook_driver_and_detects_tampering(tmp_path):
     nodes_path = tmp_path / "nodes.json"
     spec_path.write_text(json.dumps(spec), encoding="utf-8")
     nodes_path.write_text(
-        json.dumps([{"node_id": "seed", "claim": "installed copy probe"}]),
+        json.dumps([{"node_id": "seed", "claim": "installed copy probe", "retrospective_method": "installed-copy initialization", "epistemic_change_kind": "sharper_unknown", "epistemic_change": "Established the installed-copy probe as an active completed transition."}]),
         encoding="utf-8",
     )
     initialized = subprocess.run(

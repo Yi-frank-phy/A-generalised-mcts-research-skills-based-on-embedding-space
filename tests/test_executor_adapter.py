@@ -76,7 +76,10 @@ def test_run_frontier_search_keeps_adapter_inside_mandatory_loop():
 
     assert len(adapter.requests) == 1
     assert result.traces[0].allocations
-    assert result.nodes[0].score is not None
+    assert result.nodes[0].score is None
+    assert result.nodes[0].density is not None
+    assert result.nodes[0].uncertainty is not None
+    assert result.nodes[0].ucb_score is not None
     assert result.nodes[-1].score is None
     assert "DTE Prototype Report" in result.report
 

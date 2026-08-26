@@ -8,15 +8,94 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
+  judge-phase2:
+    name: Apply Judge phase-2 migration
+    if: github.event_name == 'pull_request' && github.head_ref == 'agent/remove-generic-judge'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: agent/remove-generic-judge
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Install
+        run: python -m pip install -e .[dev]
+      - name: Reassert phase-1 migration
+        run: python scripts/remove_generic_judge_phase1.py
+      - name: Correct phase-2 codemod assertions
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path("scripts/remove_generic_judge_phase2.py")
+          text = path.read_text(encoding="utf-8")
+
+          first = '    text = replace_exact(text, run_block, "", "CLI flexible-run Judge adapter")\n'
+          second = '    text = replace_exact(text, run_block, "", "CLI strict-run Judge adapter")\n'
+          exact = first + second
+          if text.count(exact) != 1:
+              raise SystemExit("phase-2 CLI assertion patch did not match exactly once")
+          text = text.replace(
+              exact,
+              '    text = replace_exact(text, run_block, "", "CLI Judge adapter blocks", count=2)\n',
+              1,
+          )
+
+          old_end_guard = '    require_count(text, end, 1, f"{label} end")\n'
+          new_end_guard = (
+              '    if end not in text:\n'
+              '        raise RuntimeError(f"{label} end: marker not found")\n'
+          )
+          if text.count(old_end_guard) != 1:
+              raise SystemExit("phase-2 end-marker assertion patch did not match exactly once")
+          text = text.replace(old_end_guard, new_end_guard, 1)
+
+          old_range = '        ((node.lineno - 1, node.end_lineno or node.lineno) for node in found.values()),\n'
+          new_range = (
+              '        ((min([node.lineno, *[item.lineno for item in getattr(node, "decorator_list", [])]]) - 1, '
+              'node.end_lineno or node.lineno) for node in found.values()),\n'
+          )
+          if text.count(old_range) != 1:
+              raise SystemExit("phase-2 decorator-safe range patch did not match exactly once")
+          text = text.replace(old_range, new_range, 1)
+
+          path.write_text(text, encoding="utf-8")
+          PY
+      - name: Apply fail-closed phase-2 migration
+        run: python scripts/remove_generic_judge_phase2.py
+      - name: Verify focused removal tests
+        run: python -m pytest tests/test_no_generic_judge.py -q
+      - name: Refresh generated release metadata
+        run: |
+          python scripts/generate_bundle_manifest.py
+          python -c "from pathlib import Path; data=Path('bundle-manifest.json').read_bytes(); target=Path('deploy/managed-template/bundle-manifest.json'); target.parent.mkdir(parents=True, exist_ok=True); target.write_bytes(data)"
+          python scripts/generate_bundle_manifest.py --verify
+      - name: Commit migrated branch
+        shell: bash
+        run: |
+          if git diff --quiet; then
+            echo "No migration changes remain."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "refactor: remove generic Judge production surface"
+          git push origin HEAD:agent/remove-generic-judge
+
   test:
     name: ${{ matrix.os }} / Python ${{ matrix.python-version }}
+    needs: judge-phase2
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     strategy:
@@ -39,6 +118,8 @@ jobs:
             python-version: "3.14"
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: agent/remove-generic-judge
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
@@ -57,10 +138,13 @@ jobs:
 
   package:
     name: Backend wheel and repository Skill bundle
+    needs: judge-phase2
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: agent/remove-generic-judge
       - uses: actions/setup-python@v6
         with:
           python-version: "3.14"

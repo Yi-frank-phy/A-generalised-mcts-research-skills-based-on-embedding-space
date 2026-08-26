@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   judge-phase2:
-    name: Repair Judge-removal observability residue
+    name: Repair remaining Judge-removal residue
     if: github.event_name == 'pull_request' && github.head_ref == 'agent/remove-generic-judge'
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -28,22 +28,22 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
-      - name: Repair observability residue
+      - name: Repair residual production references
         shell: bash
         run: |
           python - <<'PY'
           import ast
           from pathlib import Path
 
+          # Observability may keep its public v1 Judge-shaped report fields for legacy
+          # readability, but it must not import or depend on the removed production type.
           path = Path("src/dte_backend/observability.py")
           text = path.read_text(encoding="utf-8")
-
           text = text.replace("    JudgeEpisodeOutput,\n", "")
           text = text.replace(
               "elif isinstance(structured, (JudgeEpisodeOutput, RelationEpisodeOutput)):",
               "elif isinstance(structured, RelationEpisodeOutput):",
           )
-
           tree = ast.parse(text)
           target = next(
               (
@@ -58,7 +58,6 @@ jobs:
               lines = text.splitlines(keepends=True)
               del lines[target.lineno - 1 : target.end_lineno or target.lineno]
               text = "".join(lines)
-
           text = text.replace(
               "    judge_observations = _committed_judge_observations(state, recoverable)\n",
               "    judge_observations: dict[str, tuple[Any, Any, Any]] = {}\n",
@@ -73,8 +72,43 @@ jobs:
               "node.judge_result_provenance",
               'getattr(node, "judge_result_provenance", None)',
           )
-
           ast.parse(text, filename=str(path))
+          path.write_text(text, encoding="utf-8")
+
+          # SearchNode no longer owns Judge metadata, so the new-run producer boundary
+          # must not inspect fields that no longer exist on the model.
+          path = Path("src/dte_backend/app_driver.py")
+          text = path.read_text(encoding="utf-8")
+          for line in (
+              '            "judge_reasoning",\n',
+              '            "judge_result_provenance",\n',
+          ):
+              text = text.replace(line, "", 1)
+          text = text.replace(
+              '        if node.judge_risks:\n            polluted.append("judge_risks")\n',
+              "",
+              1,
+          )
+          text = text.replace(
+              '        if node.judge_uncertainty_evidence:\n            polluted.append("judge_uncertainty_evidence")\n',
+              "",
+              1,
+          )
+          ast.parse(text, filename=str(path))
+          path.write_text(text, encoding="utf-8")
+
+          # Remove the stale App-native instruction that still required a generic
+          # Judge episode. Keep the surrounding controller ownership statement.
+          path = Path("SKILL.md")
+          text = path.read_text(encoding="utf-8")
+          stale = (
+              "Judge every granted node exactly once and return only observable score, reasoning, risks, and optional uncertainty evidence. "
+              "After a valid Judge submit, call `next-episode` again:"
+          )
+          replacement = "After each valid episode submit, call `next-episode` again:"
+          if stale not in text:
+              raise SystemExit("stale App-native Judge instruction not found exactly once")
+          text = text.replace(stale, replacement, 1)
           path.write_text(text, encoding="utf-8")
           PY
       - name: Install
@@ -96,7 +130,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
-          git commit -m "fix: remove residual Judge observability dependency"
+          git commit -m "fix: remove residual generic Judge dependencies"
           git push origin HEAD:agent/remove-generic-judge
 
   test:

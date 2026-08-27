@@ -22,25 +22,34 @@ jobs:
           from pathlib import Path
 
           path = Path("src/dte_backend/app_driver.py")
-          text = path.read_text(encoding="utf-8")
-          old = '''    next_frontier, kde_state = estimate_frontier_kde_state(
-              next_nodes,
-              cache=FileDTECache(_app_cache_path(run_dir)),
-              provider=provider,
-              expected_dimension=state.spec.embedding_dimension,
-          )'''
-          new = '''    next_frontier, kde_state = estimate_frontier_kde_state(
-              next_nodes,
-              cache=FileDTECache(_app_cache_path(run_dir)),
-              provider=provider,
-              expected_dimension=state.spec.embedding_dimension,
-              graph_k=state.spec.budget.controller_graph_k,
-              volume_bandwidth=state.spec.budget.volume_bandwidth,
-          )'''
-          count = text.count(old)
-          if count != 1:
-              raise SystemExit(f"expected exactly one App scoring call, found {count}")
-          path.write_text(text.replace(old, new), encoding="utf-8")
+          lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+          starts = [
+              i
+              for i, line in enumerate(lines)
+              if line.strip() == "next_frontier, kde_state = estimate_frontier_kde_state("
+          ]
+          if len(starts) != 1:
+              raise SystemExit(f"expected exactly one App scoring call, found {len(starts)}")
+          start = starts[0]
+          window_end = min(len(lines), start + 16)
+          if any("graph_k=state.spec.budget.controller_graph_k" in line for line in lines[start:window_end]):
+              raise SystemExit("App geometry wiring is already present")
+          expected = next(
+              (
+                  i
+                  for i in range(start, window_end)
+                  if lines[i].strip() == "expected_dimension=state.spec.embedding_dimension,"
+              ),
+              None,
+          )
+          if expected is None:
+              raise SystemExit("could not locate App expected_dimension argument")
+          indent = lines[expected][: len(lines[expected]) - len(lines[expected].lstrip())]
+          lines[expected + 1:expected + 1] = [
+              f"{indent}graph_k=state.spec.budget.controller_graph_k,\n",
+              f"{indent}volume_bandwidth=state.spec.budget.volume_bandwidth,\n",
+          ]
+          path.write_text("".join(lines), encoding="utf-8")
           Path(".github/workflows/one-shot-app-controller-audit-fix.yml").unlink()
           PY
       - name: Refresh deterministic bundle metadata

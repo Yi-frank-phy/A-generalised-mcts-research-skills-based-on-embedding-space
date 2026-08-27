@@ -172,6 +172,8 @@ def run_frontier_search(
             cache=cache,
             provider=embedding_provider,
             expected_dimension=spec.embedding_dimension,
+            graph_k=spec.budget.controller_graph_k,
+            volume_bandwidth=spec.budget.volume_bandwidth,
         )
         for node, uncertainty in zip(frontier, kde_state.uncertainty):
             node.uncertainty = uncertainty

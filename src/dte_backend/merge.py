@@ -276,6 +276,12 @@ def apply_relation_equivalent_merge(
     if canonical.node_id in canonical.parent_ids:
         raise ValueError("equivalent merge would create a canonical self-parent")
     canonical.confidence = max(node.confidence for node in active)
+    # Relation similarity uses SearchNode.local_embedding, whose semantic
+    # payload includes assumptions/evidence/risks.  The merge mutates those
+    # fields, so keeping the old vector would route later Relation work using
+    # stale pre-merge semantics.  Clearing it forces the normal cache/provider
+    # path to derive the vector from the merged content on the next scoring pass.
+    canonical.local_embedding = None
     node_revisions[canonical.node_id] += 1
     for node in absorbed:
         node.status = "merged"

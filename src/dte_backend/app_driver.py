@@ -3184,6 +3184,8 @@ def _progress_controller(
         cache=FileDTECache(_app_cache_path(run_dir)),
         provider=provider,
         expected_dimension=state.spec.embedding_dimension,
+        graph_k=state.spec.budget.controller_graph_k,
+        volume_bandwidth=state.spec.budget.volume_bandwidth,
     )
     for node, log_density, uncertainty in zip(
         next_frontier,

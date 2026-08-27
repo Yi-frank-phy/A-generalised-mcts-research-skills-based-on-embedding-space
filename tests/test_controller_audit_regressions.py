@@ -1,5 +1,6 @@
 import pytest
 
+import dte_backend.app_driver as app_driver
 import dte_backend.runner as runner
 from dte_backend.embedding import HashEmbeddingProvider
 from dte_backend.merge import apply_relation_equivalent_merge
@@ -85,8 +86,8 @@ def test_relation_equivalent_merge_invalidates_stale_semantic_embedding():
     assert "evidence-a" in merged.evidence
 
 
-def test_runner_forwards_run_spec_geometry_knobs(monkeypatch):
-    spec = DTERunSpec(
+def _geometry_spec() -> DTERunSpec:
+    return DTERunSpec(
         problem="verify controller configuration wiring",
         goal="stop immediately after observing scoring arguments",
         budget=BudgetSpec(
@@ -97,6 +98,16 @@ def test_runner_forwards_run_spec_geometry_knobs(monkeypatch):
         embedding_provider="hash",
         embedding_dimension=8,
     )
+
+
+def _assert_geometry_kwargs(captured):
+    assert captured["expected_dimension"] == 8
+    assert captured["graph_k"] == 7
+    assert captured["volume_bandwidth"] == 0.25
+
+
+def test_runner_forwards_run_spec_geometry_knobs(monkeypatch):
+    spec = _geometry_spec()
     initial = [completed_node(node_id="seed", claim="seed")]
     captured = {}
 
@@ -112,6 +123,30 @@ def test_runner_forwards_run_spec_geometry_knobs(monkeypatch):
     with pytest.raises(ScoringObserved):
         runner.run_frontier_search(spec, initial_nodes=initial)
 
-    assert captured["expected_dimension"] == 8
-    assert captured["graph_k"] == 7
-    assert captured["volume_bandwidth"] == 0.25
+    _assert_geometry_kwargs(captured)
+
+
+def test_app_controller_forwards_run_spec_geometry_knobs(tmp_path, monkeypatch):
+    spec = _geometry_spec()
+    initial = [completed_node(node_id="seed", claim="seed")]
+    run_dir = tmp_path / "app-geometry-wiring"
+    state = app_driver.create_app_run(run_dir, spec, initial)
+    captured = {}
+
+    class ScoringObserved(RuntimeError):
+        pass
+
+    def fake_estimate(nodes, cache=None, provider=None, **kwargs):
+        captured.update(kwargs)
+        raise ScoringObserved
+
+    monkeypatch.setattr(app_driver, "estimate_frontier_kde_state", fake_estimate)
+
+    with pytest.raises(ScoringObserved):
+        app_driver._progress_controller(
+            run_dir,
+            state,
+            embedding_provider=HashEmbeddingProvider(dim=8),
+        )
+
+    _assert_geometry_kwargs(captured)

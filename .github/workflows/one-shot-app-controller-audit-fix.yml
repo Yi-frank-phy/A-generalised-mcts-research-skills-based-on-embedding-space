@@ -1,0 +1,56 @@
+name: One-shot App controller audit fix
+
+on:
+  push:
+    branches:
+      - agent/fix-controller-audit-bugs
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+      - name: Apply audited App geometry wiring
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("src/dte_backend/app_driver.py")
+          text = path.read_text(encoding="utf-8")
+          old = '''    next_frontier, kde_state = estimate_frontier_kde_state(
+              next_nodes,
+              cache=FileDTECache(_app_cache_path(run_dir)),
+              provider=provider,
+              expected_dimension=state.spec.embedding_dimension,
+          )'''
+          new = '''    next_frontier, kde_state = estimate_frontier_kde_state(
+              next_nodes,
+              cache=FileDTECache(_app_cache_path(run_dir)),
+              provider=provider,
+              expected_dimension=state.spec.embedding_dimension,
+              graph_k=state.spec.budget.controller_graph_k,
+              volume_bandwidth=state.spec.budget.volume_bandwidth,
+          )'''
+          count = text.count(old)
+          if count != 1:
+              raise SystemExit(f"expected exactly one App scoring call, found {count}")
+          path.write_text(text.replace(old, new), encoding="utf-8")
+          Path(".github/workflows/one-shot-app-controller-audit-fix.yml").unlink()
+          PY
+      - name: Refresh deterministic bundle metadata
+        run: |
+          python scripts/generate_bundle_manifest.py > /dev/null
+          cp bundle-manifest.json deploy/managed-template/bundle-manifest.json
+      - name: Commit audited patch and self-remove
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/dte_backend/app_driver.py bundle-manifest.json deploy/managed-template/bundle-manifest.json .github/workflows/one-shot-app-controller-audit-fix.yml
+          git commit -m "fix: wire App controller geometry knobs"
+          git push origin HEAD:${GITHUB_REF_NAME}

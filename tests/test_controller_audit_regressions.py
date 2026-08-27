@@ -1,8 +1,10 @@
 import pytest
 
 import dte_backend.runner as runner
+from dte_backend.embedding import HashEmbeddingProvider
 from dte_backend.merge import apply_relation_equivalent_merge
 from dte_backend.models import BudgetSpec, DTERunSpec
+from dte_backend.novelty import estimate_frontier_kde_state
 from dte_backend.reference_atlas import combined_reference_nodes, packaged_reference_nodes
 from tests.helpers import completed_node
 
@@ -27,6 +29,27 @@ def test_combined_reference_nodes_deduplicates_exact_transition_cells():
     assert len(combined) == len(packaged) + 1
     assert combined[-1].node_id == "distinct-root"
     assert all(node.node_id != "duplicate-root" for node in combined)
+
+
+def test_singleton_matching_packaged_cell_has_feasible_entropy_match():
+    packaged = packaged_reference_nodes()
+    root = completed_node(
+        node_id="matching-root",
+        claim="singleton matching one packaged transition cell",
+        retrospective_method=packaged[0].retrospective_method,
+        epistemic_change_kind=packaged[0].epistemic_change_kind,
+        epistemic_change=packaged[0].epistemic_change,
+    )
+
+    frontier, state = estimate_frontier_kde_state(
+        [root],
+        provider=HashEmbeddingProvider(dim=8),
+        expected_dimension=8,
+    )
+
+    assert [node.node_id for node in frontier] == ["matching-root"]
+    assert state.occupancy_fractions[0] == pytest.approx(1.0)
+    assert state.standard_deviations[0] >= 0.0
 
 
 def test_relation_equivalent_merge_invalidates_stale_semantic_embedding():

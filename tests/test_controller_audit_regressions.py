@@ -13,12 +13,14 @@ def test_combined_reference_nodes_deduplicates_exact_transition_cells():
     packaged = packaged_reference_nodes()
     duplicate = completed_node(
         node_id="duplicate-root",
+        claim="duplicate packaged transition",
         retrospective_method=packaged[0].retrospective_method,
         epistemic_change_kind=packaged[0].epistemic_change_kind,
         epistemic_change=packaged[0].epistemic_change,
     )
     distinct = completed_node(
         node_id="distinct-root",
+        claim="distinct run-specific transition",
         retrospective_method="a run-specific method not present in the packaged atlas",
         epistemic_change_kind="sharper_unknown",
         epistemic_change="isolated a run-specific unresolved assumption",

@@ -1,6 +1,6 @@
 # Tasks
 
-> The list below records the original PR #48 migration plan. Those tasks are historical. The current continuum geometry work is tracked in issue #54 and the active repair PR/branch. See [`../../PROPER_VOLUME_GEOMETRY.md`](../../PROPER_VOLUME_GEOMETRY.md).
+> The list below records the original PR #48 migration plan. Those tasks are historical. Current continuum geometry work is tracked in issue #54 and PR #55. See [`../../PROPER_VOLUME_GEOMETRY.md`](../../PROPER_VOLUME_GEOMETRY.md).
 
 ## Original PR #48 tasks — completed/historical
 
@@ -19,9 +19,11 @@
 1. Remove hard nearest-reference anchoring from authoritative live/query geometry while keeping the legacy helper only for diagnostics/compatibility.
 2. Preserve every frozen reference-vertex graph distance exactly under the replacement estimator.
 3. Add off-atlas tests showing that motion inside an old nearest cell is nonzero and that crossing an old Voronoi boundary no longer produces a finite jump.
-4. Route realized proper-volume return, historical value regression, occupancy and Boltzmann reward SD through the same continuous query geometry.
-5. Lock the definition: proper volume is `Omega(metric ball)`, not inverse sample density/KDE or empirical cosine calibration.
-6. Preserve equal-weight atlas cells as the default declared quadrature measure; keep supplied density correction optional/numerical only.
-7. Run full CI on the repair PR.
-8. Separately test graph-distance convergence and finite measure/common-volume-gauge convergence under atlas refinement/resampling.
-9. Only after those numerical checks, decide whether issue #54 can close; do not reopen the proper-volume definition unless falsification evidence requires it.
+4. Detect and remove the separate finite self-cell jump caused by hard off-atlas cell inclusion.
+5. Preserve each frozen reference-source proper-volume profile exactly and continuously interpolate those scalar profiles for arbitrary sources.
+6. Route realized proper-volume return, historical value regression, occupancy, and Boltzmann reward SD through the same continuous proper-volume field.
+7. Lock the definition: proper volume is `Omega(metric ball)`, not inverse sample density/KDE or empirical cosine calibration.
+8. Preserve equal-weight atlas cells as the default declared quadrature measure; keep supplied density correction optional/numerical only.
+9. Run full CI and package/release-metadata verification on PR #55.
+10. Separately test graph-distance convergence, volume-gauge convergence, interpolation locality/stability, and downstream controller convergence under atlas refinement/resampling.
+11. Only after those numerical checks, decide whether issue #54 can close; do not reopen the proper-volume definition unless falsification evidence requires it.

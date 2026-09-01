@@ -5,22 +5,32 @@ from collections.abc import Sequence
 import numpy as np
 from .controller_atlas import FrozenReferenceAtlas
 from .models import SearchNode
-from .space_geometry import nearest_reference_indices, query_geodesic_distance, reference_radii_for_queries
+from .space_geometry import (
+    query_geodesic_distance,
+    query_geodesic_distance_matrix,
+    reference_radii_for_queries,
+)
 from .space_measure import intrinsic_cell_volumes, intrinsic_proper_volume_at_radius
 from .transition_state import embed_transition_nodes, require_completed_transition
 
 
 def proper_volume_distance_matrix(sources: np.ndarray, targets: np.ndarray, atlas: FrozenReferenceAtlas) -> np.ndarray:
-    source_anchors = nearest_reference_indices(sources, atlas.embeddings)
-    target_anchors = nearest_reference_indices(targets, atlas.embeddings)
+    """Source-centred proper-volume displacement for arbitrary off-atlas queries."""
+    source_radii = reference_radii_for_queries(
+        sources, atlas.embeddings, atlas.geodesic_distances
+    )
+    move_radii = query_geodesic_distance_matrix(
+        sources, targets, atlas.embeddings, atlas.geodesic_distances
+    )
     volumes = intrinsic_cell_volumes(atlas.reference_density)
     result = np.zeros((len(sources), len(targets)), dtype=float)
-    for i, raw_source in enumerate(source_anchors):
-        source = int(raw_source)
-        radii = atlas.geodesic_distances[source]
-        for j, raw_target in enumerate(target_anchors):
-            radius = float(atlas.geodesic_distances[source, int(raw_target)])
-            result[i, j] = intrinsic_proper_volume_at_radius(radii, volumes, radius)
+    for i in range(len(sources)):
+        for j in range(len(targets)):
+            result[i, j] = intrinsic_proper_volume_at_radius(
+                source_radii[i],
+                volumes,
+                float(move_radii[i, j]),
+            )
     return result
 
 
@@ -50,10 +60,21 @@ def historical_parent_returns(
             except ValueError:
                 continue
             parent_embedding = embed_transition_nodes([parent], provider)[0]
-            radii = reference_radii_for_queries(parent_embedding[None, :], atlas.embeddings, atlas.geodesic_distances)[0]
-            radius = query_geodesic_distance(parent_embedding, child_embedding, atlas.embeddings, atlas.geodesic_distances)
+            radii = reference_radii_for_queries(
+                parent_embedding[None, :],
+                atlas.embeddings,
+                atlas.geodesic_distances,
+            )[0]
+            radius = query_geodesic_distance(
+                parent_embedding,
+                child_embedding,
+                atlas.embeddings,
+                atlas.geodesic_distances,
+            )
             parents.append(parent)
-            returns.append(intrinsic_proper_volume_at_radius(radii, volumes, radius))
+            returns.append(
+                intrinsic_proper_volume_at_radius(radii, volumes, radius)
+            )
     if not parents:
         return np.empty((0, atlas.embeddings.shape[1])), np.asarray([], dtype=float)
     return embed_transition_nodes(parents, provider), np.asarray(returns, dtype=float)
@@ -68,7 +89,9 @@ def regress_values(
 ) -> np.ndarray:
     if len(realized_returns) == 0:
         return np.zeros(len(live_embeddings), dtype=float)
-    distance = proper_volume_distance_matrix(live_embeddings, history_embeddings, atlas)
+    distance = proper_volume_distance_matrix(
+        live_embeddings, history_embeddings, atlas
+    )
     weights = np.exp(-distance / float(volume_bandwidth))
     mass = np.sum(weights, axis=1)
     return np.divide(

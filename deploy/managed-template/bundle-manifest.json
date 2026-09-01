@@ -138,13 +138,13 @@
     },
     {
       "path": "src/dte_backend/controller_state.py",
-      "size": 3624,
-      "sha256": "ecbcf2613b69ce2af67acce71d2d89581b5c52880cdb35c2166cde5bfac2140b"
+      "size": 3784,
+      "sha256": "2a0230ff369914ea7dd1e2d4188280dbb4df9a02f414b721c314060eb9bf8e07"
     },
     {
       "path": "src/dte_backend/controller_value.py",
-      "size": 4751,
-      "sha256": "a3fa219d25b0b70244791b823084a723d51ad12a6afe55d7a3eff28e421177c1"
+      "size": 4974,
+      "sha256": "9d8532236fcf42c22f81638c305a94148780c8ee743edf01b9f0a217f6bfaa27"
     },
     {
       "path": "src/dte_backend/embedding.py",
@@ -318,8 +318,8 @@
     },
     {
       "path": "src/dte_backend/space_geometry.py",
-      "size": 7349,
-      "sha256": "e824737857441fd46be73769171d41075ee3d56ffabceaa515af6e2d3e8d61a0"
+      "size": 9138,
+      "sha256": "b108370a83b3e906612abd1c72edb65c08b8fe0631f7d934011f76da92129a27"
     },
     {
       "path": "src/dte_backend/space_measure.py",
@@ -367,5 +367,5 @@
       "sha256": "b7c578325f60737a6feda3660fd6c53b4d15782a3c931cf2a5e6718591ce4092"
     }
   ],
-  "bundle_sha256": "91df4f18bc0d34088b38d0f9ec5cd7468610299090fdb33737931e09788f0ff5"
+  "bundle_sha256": "5dae6873603d7017b10d21ff1d31d723b0a1107ced5bd337a912a1729e0de447"
 }

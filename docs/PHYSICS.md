@@ -62,17 +62,49 @@ For an off-atlas query \(x\), use continuous Shepard partition-of-unity weights 
 
 Thus reference-vertex distances are unchanged exactly, while off-atlas query geometry varies continuously instead of being piecewise constant over Voronoi cells. At finite atlas size \(\widehat d\) is a landmark-induced pseudometric estimator; graph-refinement convergence remains a numerical question rather than a new controller semantic.
 
-The source-centred radii used by proper-volume quadrature are the components of \(\widehat\Phi(x)\).
-
-## Proper-volume quadrature
-
-Finite code estimates the continuum ball measure by atlas quadrature,
+The components of \(\widehat\Phi(x)\) are also exactly the finite query-to-reference radii. For reference landmark \(b\),
 
 \[
-D_x(r)\approx \sum_{a:\,0<\widehat d(x,a)\le r}\Delta\Omega_a,
+\widehat d(x,b)=\widehat\Phi_b(x).
 \]
 
-with interpolation between sampled radii. \(D_x(r)\) is not divided by the node-local accessible total and may exceed one.
+The inequality \(\widehat d(x,b)\le\widehat\Phi_b(x)\) follows from the graph triangle inequality, while equality is attained in coordinate \(b\).
+
+## Proper-volume quadrature and continuous source field
+
+For a frozen reference source \(a\), finite atlas quadrature defines the reference cumulative proper-volume profile
+
+\[
+D_a^{\mathcal A}(r)
+=
+\sum_{b:\,0<G_{ab}\le r}\Delta\Omega_b,
+\]
+
+with the existing interpolation between sampled radii. This is the discrete numerical approximation of the continuum ball measure at reference source \(a\).
+
+A second zero-order artifact would arise if an off-atlas source simply re-ran the hard cell-inclusion sum using its interpolated radii: a source exactly on a reference vertex excludes the zero-radius self cell, while an infinitesimal displacement can make that whole cell suddenly positive-radius mass. Therefore arbitrary sources use the same partition of unity to interpolate the **proper-volume profiles themselves**:
+
+\[
+\widehat D_x(r)
+=
+\sum_a \lambda_a(x)D_a^{\mathcal A}(r).
+\]
+
+This finite field is continuous in \(x\) and \(r\), monotone in \(r\), satisfies \(\widehat D_x(0)=0\), and exactly recovers the original reference profile at every atlas vertex. Realized displacement and live occupancy use
+
+\[
+R_{x\to y}=\widehat D_x(\widehat d(x,y)),
+\qquad
+D_{xy}=\widehat D_x(\widehat d(x,y)).
+\]
+
+For a Boltzmann atlas cell \(b\), the reward variable is likewise
+
+\[
+A_{xb}=\widehat D_x(\widehat d(x,b)),
+\]
+
+so value, occupancy, and controller SD all use the same continuous finite proper-volume field.
 
 The default frozen reference measure assigns equal atlas-cell weights. Caller-supplied positive `reference_density` values are **optional numerical quadrature correction only**; relative cell weights are then inverse to that supplied sampling density. Automatic reference-KDE correction is not part of the controller definition.
 
@@ -80,7 +112,8 @@ Consequently:
 
 - proper volume is the measure of a ball, not an observed-point-density transform;
 - atlas density is not automatically interpreted as embedding compression;
-- the finite atlas supplies landmarks and quadrature cells, not an ontology of research states.
+- the finite atlas supplies landmarks, reference volume profiles, and quadrature cells, not an ontology of research states;
+- continuity is obtained by extending the finite distance and proper-volume fields, not by inventing a new geometric ontology.
 
 The current finite implementation freezes one common atlas-wide multiplicative volume gauge for a run. Atlas-refinement invariance of that gauge/measure is a separate numerical-consistency target and must not be confused with the definition of proper volume.
 
@@ -100,7 +133,7 @@ No history gives `V_i=0`. Judge scores remain research observations but are not 
 For current live transitions,
 
 \[
-D_{ij}=D_i(\widehat d(i,j)),\qquad
+D_{ij}=\widehat D_i(\widehat d(i,j)),\qquad
 \rho_i=\frac1N\sum_j e^{-D_{ij}/h_V},\qquad
 S_i=-\log\rho_i.
 \]
@@ -117,7 +150,7 @@ p_{ia}(T)=\frac{\Delta\Omega_a e^{-r_{ia}/T}}{Z_i(T)},
 H_i(T)=-\sum_a p_{ia}(T)\log\frac{p_{ia}(T)}{\Delta\Omega_a},
 \]
 
-and solve `H_i(T_i)=S_i`. Push that Boltzmann mass through the **same** reward observable `A_ia=D_i(r_ia)` and define
+and solve `H_i(T_i)=S_i`. Push that Boltzmann mass through the **same** reward observable `A_ia=\widehat D_i(r_ia)` and define
 
 \[
 SD_i=\sqrt{\sum_a p_{ia}(T_i)(A_{ia}-\langle A_i\rangle)^2}.

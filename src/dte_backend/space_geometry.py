@@ -95,12 +95,20 @@ def query_reference_weights(
     query_embeddings: np.ndarray,
     reference_embeddings: np.ndarray,
     *,
+    neighbor_count: int | None = None,
     power: float = 2.0,
 ) -> np.ndarray:
-    """Continuous partition-of-unity weights over the frozen reference atlas.
+    """Continuous local partition-of-unity weights over the frozen atlas.
 
-    Classical Shepard inverse-distance weights are used off atlas. At an exact
-    reference location the corresponding reference row is recovered exactly.
+    Off atlas this uses a compact-support modified Shepard construction. The
+    support radius is just outside the requested local-neighbour radius, so a
+    landmark entering or leaving support does so with vanishing weight. This
+    avoids both hard kNN membership jumps and the near-uniform global Shepard
+    weights caused by high-dimensional angular concentration.
+
+    At an exact reference location the corresponding reference row is recovered
+    exactly. ``neighbor_count=None`` retains all references for compatibility;
+    the authoritative controller supplies a local count tied to frozen graph k.
     """
     query = _normalized(query_embeddings, "query_embeddings")
     reference = _normalized(reference_embeddings, "reference_embeddings")
@@ -110,21 +118,46 @@ def query_reference_weights(
     if not np.isfinite(exponent) or exponent <= 0.0:
         raise ValueError("power must be finite and positive")
 
+    n_reference = len(reference)
+    if neighbor_count is None:
+        support_count = n_reference
+    else:
+        support_count = int(neighbor_count)
+        if support_count < 1:
+            raise ValueError("neighbor_count must be positive")
+        support_count = min(support_count, n_reference)
+
     cosine = np.clip(query @ reference.T, -1.0, 1.0)
     angular = np.arccos(cosine)
-    # Detect an actually coincident normalized reference by chord distance,
-    # rather than trusting arccos(1-eps), which can be around 1e-8.
+    # Detect actual coincident normalized references by chord distance rather
+    # than trusting arccos(1-eps), which can be around 1e-8.
     chord = np.linalg.norm(query[:, None, :] - reference[None, :, :], axis=2)
     coincident = chord <= 1e-12
 
     weights = np.zeros_like(angular)
+    eps = np.finfo(float).eps
     for row in range(len(query)):
         exact = np.flatnonzero(coincident[row])
         if len(exact):
             weights[row, exact] = 1.0 / float(len(exact))
             continue
-        inverse = np.power(np.maximum(angular[row], np.finfo(float).eps), -exponent)
-        weights[row] = inverse / np.sum(inverse)
+
+        local_radius = float(
+            np.partition(angular[row], support_count - 1)[support_count - 1]
+        )
+        support_radius = max(
+            local_radius * (1.0 + 1e-6),
+            local_radius + 1e-12,
+            eps,
+        )
+        inside = angular[row] < support_radius
+        distances = np.maximum(angular[row, inside], eps)
+        taper = np.maximum(support_radius - angular[row, inside], 0.0) / support_radius
+        raw = np.power(taper / distances, exponent)
+        mass = float(np.sum(raw))
+        if not np.isfinite(mass) or mass <= 0.0:
+            raise ValueError("could not construct continuous query interpolation weights")
+        weights[row, inside] = raw / mass
     return weights
 
 
@@ -132,17 +165,17 @@ def reference_radii_for_queries(
     query_embeddings: np.ndarray,
     reference_embeddings: np.ndarray,
     geodesic_distances: np.ndarray,
+    *,
+    neighbor_count: int | None = None,
 ) -> np.ndarray:
-    """Continuously extend atlas geodesic distance profiles to arbitrary queries.
-
-    Each reference vertex i is represented by its full graph-distance row
-    G[i, :]. A query receives a continuous partition-of-unity interpolation of
-    those landmark profiles. On every reference vertex this exactly recovers
-    the original graph row; off atlas it avoids nearest-cell quantization.
-    """
+    """Continuously extend atlas geodesic distance profiles to arbitrary queries."""
     reference = _normalized(reference_embeddings, "reference_embeddings")
     geodesic = _validate_geodesic(geodesic_distances, len(reference))
-    weights = query_reference_weights(query_embeddings, reference_embeddings)
+    weights = query_reference_weights(
+        query_embeddings,
+        reference_embeddings,
+        neighbor_count=neighbor_count,
+    )
     return np.asarray(weights @ geodesic, dtype=float)
 
 
@@ -151,6 +184,8 @@ def query_geodesic_distance_matrix(
     query_b: np.ndarray,
     reference_embeddings: np.ndarray,
     geodesic_distances: np.ndarray,
+    *,
+    neighbor_count: int | None = None,
 ) -> np.ndarray:
     """Pairwise continuous extension of the frozen graph metric.
 
@@ -160,10 +195,16 @@ def query_geodesic_distance_matrix(
     geodesic for reference vertices.
     """
     profile_a = reference_radii_for_queries(
-        query_a, reference_embeddings, geodesic_distances
+        query_a,
+        reference_embeddings,
+        geodesic_distances,
+        neighbor_count=neighbor_count,
     )
     profile_b = reference_radii_for_queries(
-        query_b, reference_embeddings, geodesic_distances
+        query_b,
+        reference_embeddings,
+        geodesic_distances,
+        neighbor_count=neighbor_count,
     )
     return np.max(
         np.abs(profile_a[:, None, :] - profile_b[None, :, :]),
@@ -176,11 +217,14 @@ def query_geodesic_distance(
     query_b: np.ndarray,
     reference_embeddings: np.ndarray,
     geodesic_distances: np.ndarray,
+    *,
+    neighbor_count: int | None = None,
 ) -> float:
     pair = query_geodesic_distance_matrix(
         np.asarray(query_a, dtype=float)[None, :],
         np.asarray(query_b, dtype=float)[None, :],
         reference_embeddings,
         geodesic_distances,
+        neighbor_count=neighbor_count,
     )
     return float(pair[0, 0])

@@ -69,6 +69,12 @@ def all_pairs_geodesic_distances(embeddings: np.ndarray, k: int) -> np.ndarray:
 
 
 def nearest_reference_indices(query_embeddings: np.ndarray, reference_embeddings: np.ndarray) -> np.ndarray:
+    """Legacy zero-order query quantization helper.
+
+    The authoritative proper-volume geometry no longer uses this function for
+    live/query distances. It remains available for compatibility and explicit
+    nearest-neighbour diagnostics.
+    """
     query = _normalized(query_embeddings, "query_embeddings")
     reference = _normalized(reference_embeddings, "reference_embeddings")
     if query.shape[1] != reference.shape[1]:
@@ -85,17 +91,96 @@ def _validate_geodesic(values: np.ndarray, count: int) -> np.ndarray:
     return matrix
 
 
-def reference_radii_for_queries(query_embeddings: np.ndarray, reference_embeddings: np.ndarray, geodesic_distances: np.ndarray) -> np.ndarray:
+def _query_reference_weights(
+    query_embeddings: np.ndarray,
+    reference_embeddings: np.ndarray,
+    *,
+    power: float = 2.0,
+) -> np.ndarray:
+    """Continuous partition-of-unity weights over the frozen reference atlas.
+
+    Classical Shepard inverse-distance weights are used off atlas. At an exact
+    reference location the corresponding reference row is recovered exactly.
+    """
+    query = _normalized(query_embeddings, "query_embeddings")
     reference = _normalized(reference_embeddings, "reference_embeddings")
-    geodesic = _validate_geodesic(geodesic_distances, len(reference))
-    return geodesic[nearest_reference_indices(query_embeddings, reference_embeddings)].copy()
+    if query.shape[1] != reference.shape[1]:
+        raise ValueError("query and reference embeddings must have the same dimension")
+    exponent = float(power)
+    if not np.isfinite(exponent) or exponent <= 0.0:
+        raise ValueError("power must be finite and positive")
+
+    cosine = np.clip(query @ reference.T, -1.0, 1.0)
+    angular = np.arccos(cosine)
+    # Detect an actually coincident normalized reference by chord distance,
+    # rather than trusting arccos(1-eps), which can be around 1e-8.
+    chord = np.linalg.norm(query[:, None, :] - reference[None, :, :], axis=2)
+    coincident = chord <= 1e-12
+
+    weights = np.zeros_like(angular)
+    for row in range(len(query)):
+        exact = np.flatnonzero(coincident[row])
+        if len(exact):
+            weights[row, exact] = 1.0 / float(len(exact))
+            continue
+        inverse = np.power(np.maximum(angular[row], np.finfo(float).eps), -exponent)
+        weights[row] = inverse / np.sum(inverse)
+    return weights
 
 
-def query_geodesic_distance(query_a: np.ndarray, query_b: np.ndarray, reference_embeddings: np.ndarray, geodesic_distances: np.ndarray) -> float:
+def reference_radii_for_queries(
+    query_embeddings: np.ndarray,
+    reference_embeddings: np.ndarray,
+    geodesic_distances: np.ndarray,
+) -> np.ndarray:
+    """Continuously extend atlas geodesic distance profiles to arbitrary queries.
+
+    Each reference vertex i is represented by its full graph-distance row
+    G[i, :]. A query receives a continuous partition-of-unity interpolation of
+    those landmark profiles. On every reference vertex this exactly recovers
+    the original graph row; off atlas it avoids nearest-cell quantization.
+    """
     reference = _normalized(reference_embeddings, "reference_embeddings")
     geodesic = _validate_geodesic(geodesic_distances, len(reference))
-    anchors = nearest_reference_indices(
-        np.vstack([np.asarray(query_a, dtype=float), np.asarray(query_b, dtype=float)]),
-        reference_embeddings,
+    weights = _query_reference_weights(query_embeddings, reference_embeddings)
+    return np.asarray(weights @ geodesic, dtype=float)
+
+
+def query_geodesic_distance_matrix(
+    query_a: np.ndarray,
+    query_b: np.ndarray,
+    reference_embeddings: np.ndarray,
+    geodesic_distances: np.ndarray,
+) -> np.ndarray:
+    """Pairwise continuous extension of the frozen graph metric.
+
+    The atlas metric is embedded isometrically into L-infinity by its distance
+    profiles. Interpolated query profiles are compared in that same norm. This
+    is a continuous pseudometric off atlas and exactly equals the frozen graph
+    geodesic for reference vertices.
+    """
+    profile_a = reference_radii_for_queries(
+        query_a, reference_embeddings, geodesic_distances
     )
-    return float(geodesic[int(anchors[0]), int(anchors[1])])
+    profile_b = reference_radii_for_queries(
+        query_b, reference_embeddings, geodesic_distances
+    )
+    return np.max(
+        np.abs(profile_a[:, None, :] - profile_b[None, :, :]),
+        axis=2,
+    )
+
+
+def query_geodesic_distance(
+    query_a: np.ndarray,
+    query_b: np.ndarray,
+    reference_embeddings: np.ndarray,
+    geodesic_distances: np.ndarray,
+) -> float:
+    pair = query_geodesic_distance_matrix(
+        np.asarray(query_a, dtype=float)[None, :],
+        np.asarray(query_b, dtype=float)[None, :],
+        reference_embeddings,
+        geodesic_distances,
+    )
+    return float(pair[0, 0])

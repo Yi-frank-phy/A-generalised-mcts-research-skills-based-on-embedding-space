@@ -143,8 +143,8 @@
     },
     {
       "path": "src/dte_backend/controller_value.py",
-      "size": 4945,
-      "sha256": "51375244bb21c5884c6af088c2355bdc93edc83065550a9703c4ba6fb968d7aa"
+      "size": 4751,
+      "sha256": "a3fa219d25b0b70244791b823084a723d51ad12a6afe55d7a3eff28e421177c1"
     },
     {
       "path": "src/dte_backend/embedding.py",
@@ -323,8 +323,8 @@
     },
     {
       "path": "src/dte_backend/space_measure.py",
-      "size": 2714,
-      "sha256": "a796f617d587fba66eae1920fb17d2e0530f1519de2061d4cbd64ba93648d6e6"
+      "size": 3212,
+      "sha256": "7ee44d5a0ad7424075f0d2d5c185b9ead18a299f34a2d6928ffdf90fb7de8ffb"
     },
     {
       "path": "src/dte_backend/strict_runner.py",
@@ -367,5 +367,5 @@
       "sha256": "b7c578325f60737a6feda3660fd6c53b4d15782a3c931cf2a5e6718591ce4092"
     }
   ],
-  "bundle_sha256": "47ea3bbae28374ad31695dd8d52bbd7ce9bf4281838c851797976e970a6e7b6c"
+  "bundle_sha256": "91df4f18bc0d34088b38d0f9ec5cd7468610299090fdb33737931e09788f0ff5"
 }

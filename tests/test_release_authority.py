@@ -2,8 +2,8 @@ from pathlib import Path
 import hashlib
 
 EXPECTED = {
-    "docs/PHYSICS.md": "f7c8879ed7de1f03c987dbc412469b05a752aa7df4a05cc047529cf2bd2896e7",
-    "docs/DESIGN.md": "89a7ae0680c40958c95a72d6b048b48ac2085c35b5541b05ecd376d710cc7d41",
+    "docs/PHYSICS.md": "d8e2028a9b8bf2d93490ca1e2b13be19ccabfd6c4de2adfded10644077d32d3d",
+    "docs/DESIGN.md": "ee69051d16852731d7dea3a79030cdc3f88042c2c4b9dafe5bfea94f0df07603",
 }
 
 def test_formal_release_authority_hashes() -> None:

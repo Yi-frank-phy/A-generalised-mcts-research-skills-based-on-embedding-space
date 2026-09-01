@@ -16,9 +16,11 @@ The `new` release ships a problem-independent geometry-only atlas spanning canon
 
 The graph starts from the configured kNN degree and increases `k` only as needed to obtain one connected frozen graph; the resolved `k` is part of atlas identity. The atlas may be cached only when provider/model/dimension, configured graph degree, and initial canonical transitions match exactly. Raw parent→child transition evidence is remeasured on the current atlas rather than reusing numeric returns from another atlas.
 
+The atlas is a numerical landmark/quadrature structure, not a discrete ontology of live/query states. Frozen reference vertices retain their exact shortest-path graph metric. Arbitrary off-atlas live/query embeddings are represented by a continuous interpolation of reference distance-to-landmark profiles and are compared in that profile space; hard nearest-reference rounding is legacy/diagnostic only.
+
 ## Runtime controller
 
-The production `dte_backend` path on `new` owns the proper-volume implementation; `dte_nextgen` is removed after migration. Each iteration embeds completed transitions, anchors them to the frozen atlas, reconstructs proper-volume historical returns and local `V`, computes live occupancy and entropy-matched reward `SD`, forms `U=V+SD`, entropy-matches the one-action Boltzmann allocator under hard budgets, executes the selected continuation, commits completed children, retires consumed parents, and repeats.
+The production `dte_backend` path on `new` owns the proper-volume implementation; `dte_nextgen` is removed after migration. Each iteration embeds completed transitions, evaluates their continuous off-atlas geometry against the frozen reference metric, reconstructs proper-volume historical returns and local `V`, computes live occupancy and entropy-matched reward `SD`, forms `U=V+SD`, entropy-matches the one-action Boltzmann allocator under hard budgets, executes the selected continuation, commits completed children, retires consumed parents, and repeats.
 
 Judge remains an observable research-assessment role for provenance/risk/synthesis support. Its score is not controller value on `new`.
 

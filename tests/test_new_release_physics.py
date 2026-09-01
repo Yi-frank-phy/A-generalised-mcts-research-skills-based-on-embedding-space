@@ -1,7 +1,13 @@
 import numpy as np
 
 from dte_backend.space_distribution import node_reward_sd_from_occupancy
-from dte_backend.space_geometry import all_pairs_geodesic_distances, query_geodesic_distance, reference_radii_for_queries
+from dte_backend.space_geometry import (
+    all_pairs_geodesic_distances,
+    nearest_reference_indices,
+    query_geodesic_distance,
+    query_geodesic_distance_matrix,
+    reference_radii_for_queries,
+)
 from dte_backend.space_measure import intrinsic_cell_volumes, intrinsic_proper_volume_at_radius, volume_reward_statistics
 
 
@@ -37,6 +43,37 @@ def test_sparse_angular_graph_recovers_chain_geodesic() -> None:
     assert np.isclose(geodesic[0, 4], 1.2, atol=1e-10)
     assert np.allclose(reference_radii_for_queries(reference[[0]], reference, geodesic)[0], geodesic[0])
     assert np.isclose(query_geodesic_distance(reference[0], reference[2], reference, geodesic), 0.6, atol=1e-10)
+
+
+def test_continuous_query_extension_is_exact_on_reference_atlas() -> None:
+    reference = _circle([0.0, 0.3, 0.6, 0.9, 1.2])
+    geodesic = all_pairs_geodesic_distances(reference, k=1)
+    profiles = reference_radii_for_queries(reference, reference, geodesic)
+    pairwise = query_geodesic_distance_matrix(reference, reference, reference, geodesic)
+    assert np.allclose(profiles, geodesic, atol=1e-12)
+    assert np.allclose(pairwise, geodesic, atol=1e-12)
+
+
+def test_continuous_query_extension_resolves_motion_inside_old_nearest_cell() -> None:
+    reference = _circle([0.0, 0.3, 0.6, 0.9, 1.2])
+    geodesic = all_pairs_geodesic_distances(reference, k=1)
+    queries = _circle([0.05, 0.10])
+    assert np.array_equal(nearest_reference_indices(queries, reference), [0, 0])
+    distance = query_geodesic_distance(queries[0], queries[1], reference, geodesic)
+    assert 0.0 < distance < 0.3
+
+
+def test_continuous_query_extension_removes_old_voronoi_boundary_jump() -> None:
+    reference = _circle([0.0, 0.3, 0.6, 0.9, 1.2])
+    geodesic = all_pairs_geodesic_distances(reference, k=1)
+    epsilon = 1e-4
+    queries = _circle([0.15 - epsilon, 0.15 + epsilon])
+    old_anchors = nearest_reference_indices(queries, reference)
+    assert old_anchors[0] != old_anchors[1]
+    distance = query_geodesic_distance(queries[0], queries[1], reference, geodesic)
+    profiles = reference_radii_for_queries(queries, reference, geodesic)
+    assert distance < 0.01
+    assert np.max(np.abs(profiles[0] - profiles[1])) < 0.01
 
 
 def test_lower_occupancy_produces_larger_reward_uncertainty_on_same_atlas() -> None:

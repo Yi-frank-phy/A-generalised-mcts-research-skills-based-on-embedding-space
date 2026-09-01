@@ -21,19 +21,13 @@ D_x(r) = Omega({y : 0 < d(x,y) <= r}).
 
 It is **not** defined by observed sample density, KDE, cosine-percentile calibration, or a literal microstate count.
 
-For an executed parent -> child:
+For an executed parent -> child, the finite controller evaluates the continuous proper-volume field at the continuous query separation:
 
 ```text
-R = D_parent(d(parent, child)).
+R = D_hat_parent(d_hat(parent, child)).
 ```
 
-Historical realized proper-volume returns define `V`. Current-frontier occupancy is computed in the same proper-volume coordinate; entropy matching produces a radial Boltzmann distribution; that distribution is pushed through the same `D_x(r)` reward and its ordinary SD becomes controller uncertainty. Therefore:
-
-```text
-U = V + SD
-```
-
-uses one common observable rather than an empirical scale bridge.
+Historical realized proper-volume returns define `V`. Current-frontier occupancy uses the same `D_hat`; entropy matching produces a radial Boltzmann distribution; that distribution is pushed through the same continuous reward field and its ordinary SD becomes controller uncertainty. Therefore `U = V + SD` uses one common observable rather than an empirical scale bridge.
 
 ## Finite geometry realization
 
@@ -43,19 +37,27 @@ The frozen atlas remains a numerical landmark/quadrature structure:
 2. use angular local edge length `arccos(cosine)`;
 3. build a symmetric kNN-union graph;
 4. compute shortest-path graph geodesics between reference vertices;
-5. continuously extend the graph metric to arbitrary live/query points with interpolated distance-to-landmark profiles.
+5. represent each reference vertex by its full distance-to-landmark profile;
+6. continuously interpolate those profiles for arbitrary live/query points;
+7. compare interpolated profiles in the L-infinity norm.
 
-Nearest-reference anchoring is now legacy/diagnostic only. The current continuum repair represents reference vertex `a` by its full graph-distance profile `Phi(a)=G[a,:]`, continuously interpolates those profiles for off-atlas queries, and measures query-query separation with the L-infinity distance between interpolated profiles. The construction preserves every frozen reference-vertex graph distance exactly while removing Voronoi-cell aliasing/jumps for off-atlas queries.
+This preserves every frozen reference-vertex graph distance exactly while removing nearest-cell aliasing/jumps. For a reference landmark `b`, component `b` of an interpolated query profile is exactly the finite query-to-`b` distance.
 
 No tangent vectors, metric tensor, inverse metric, Jacobian, explicit manifold dimension, or value-gradient field is required.
 
-## Proper-volume quadrature
+## Proper-volume quadrature and source interpolation
 
-Finite code estimates `D_x(r)` by accumulating atlas cell volumes inside the estimated source-centred radius and interpolating between sampled radii.
+For each frozen reference source `a`, finite quadrature plus radius interpolation defines its cumulative proper-volume profile `D_a^A(r)`. Default quadrature uses equal frozen atlas-cell weights. Positive caller-supplied `reference_density` values remain optional numerical quadrature correction only; automatic reference-KDE correction is not authoritative controller behaviour.
 
-Default quadrature uses equal frozen atlas-cell weights. Positive caller-supplied `reference_density` values remain optional numerical quadrature correction only. Automatic reference-KDE correction is not authoritative controller behaviour, and atlas density must not be silently interpreted as embedding compression.
+Arbitrary off-atlas sources do **not** re-run a hard cell-centroid inclusion sum. That would reintroduce a finite self-cell discontinuity when a source leaves an atlas vertex. Instead the same continuous partition of unity extends the proper-volume profiles themselves:
 
-The frozen atlas-wide volume gauge is still a finite numerical convention. Refinement/resampling consistency of that gauge is a separate convergence question, not a redefinition of proper volume.
+```text
+D_hat_x(r) = sum_a lambda_a(x) D_a^A(r).
+```
+
+The resulting field is continuous in source and radius, monotone in radius, zero at radius zero, and exact at every reference source. Realized return, live occupancy, value regression, and Boltzmann reward SD all use this same field.
+
+Atlas density must not be silently interpreted as embedding compression. The frozen atlas-wide volume gauge remains a finite numerical convention; refinement/resampling consistency is a separate convergence question, not a redefinition of proper volume.
 
 ## Stateful execution loop
 
@@ -71,9 +73,14 @@ Already-numeric returns from another atlas are not silently reused. Persist raw 
 
 ## Geometry issue resolved vs still open
 
-### Continuum query bug repaired
+### Finite-grid continuity bugs repaired in PR #55
 
-The PR #48 implementation snapped every arbitrary live/query embedding to one nearest reference vertex. That zero-order approximation made same-cell queries identical and produced finite jumps across old Voronoi boundaries. The `new` release now uses a continuous off-atlas extension instead while retaining exact on-atlas graph geometry.
+PR #48 contained two zero-order artifacts:
+
+- hard nearest-reference snapping of arbitrary live/query sources;
+- hard off-atlas cell inclusion, which could turn a whole finite self-cell on after an infinitesimal displacement from a reference vertex.
+
+PR #55 replaces both with continuous partition-of-unity extensions while preserving the original reference graph metric and reference proper-volume profiles exactly.
 
 ### Numerical convergence work still required
 
@@ -81,6 +88,7 @@ The following remain falsification/refinement questions:
 
 - sparse angular graph-distance convergence under atlas refinement/resampling;
 - finite measure/common volume-gauge convergence under atlas refinement;
+- locality/stability of the partition-of-unity extensions as atlas sampling changes;
 - stability of `D`, occupancy, entropy, SD, UCB ranking and allocation for fixed off-atlas queries as the atlas is refined.
 
 These questions are tracked in issue #54. They do not authorize returning to automatic density calibration or differential-geometric machinery.
@@ -98,6 +106,6 @@ The following are historical, diagnostic, or falsification baselines rather than
 - automatic q-density/KDE correction;
 - free-volume or canonical W1 replacement;
 - inverse-metric/tangent machinery;
-- hard nearest-reference query anchoring.
+- hard nearest-reference query anchoring and hard off-atlas cell inclusion.
 
 Passing unit/CI contracts establishes implementation consistency only. Research effectiveness still requires matched equal-budget falsification against simpler controllers.

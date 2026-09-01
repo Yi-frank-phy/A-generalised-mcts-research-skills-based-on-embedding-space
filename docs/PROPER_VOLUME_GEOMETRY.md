@@ -1,6 +1,6 @@
 # Proper-volume geometry — canonical reconstruction and continuum repair
 
-This note is the durable companion to [`PHYSICS.md`](PHYSICS.md). Its purpose is to prevent the proper-volume controller from being repeatedly re-derived from superseded calibration branches.
+This note is the durable companion to [`PHYSICS.md`](PHYSICS.md). Its purpose is to prevent the proper-volume controller from being repeatedly re-derived from superseded calibration branches or finite-grid implementation details.
 
 ## 1. Canonical definition
 
@@ -77,9 +77,13 @@ PR #48 publicly implemented the resulting structure:
 - equal-weight frozen reference measure by default;
 - density correction only as optional numerical quadrature machinery.
 
-## 4. The finite-grid bug that survived PR #48
+## 4. Two finite-grid artifacts that survived PR #48
 
-The core `D_i(r)` observable was already conceptually continuous in radius and the finite code interpolated between sampled radii. The grid artifact came from a different layer:
+The continuum definition was sound, but two zero-order finite approximations made live/query behaviour discrete.
+
+### 4.1 Hard source/query anchoring
+
+The implementation did:
 
 ```text
 arbitrary live/query embedding
@@ -87,15 +91,17 @@ arbitrary live/query embedding
 -> use that vertex's graph-distance row
 ```
 
-This made the *source/query identity* piecewise constant over Voronoi cells. Consequences:
+This made source/query identity piecewise constant over Voronoi cells. Different off-atlas queries inside one cell became geometrically identical, while an arbitrarily small move across a cell boundary could create a finite graph-distance jump.
 
-- different off-atlas queries in one cell became geometrically identical;
-- a tiny move across a cell boundary could produce a finite graph-distance jump;
-- the continuous proper-volume derivation was therefore evaluated through a zero-order query quantizer.
+### 4.2 Hard off-atlas cell inclusion
 
-Nearest anchoring was an implementation shortcut, not part of the proper-volume definition.
+After replacing nearest anchoring with continuous query-to-reference radii, directly re-running the finite cumulative cell sum exposed a second jump. At a source exactly equal to reference vertex `a`, the zero-radius self cell is excluded. Moving the source by an infinitesimal amount makes that cell acquire a positive radius, so the entire finite cell volume can suddenly reappear in `D_x(r)`.
 
-## 5. Continuum repair: landmark distance-profile extension
+In a simple equal-cell chain, moving a source by `1e-6` could therefore change the same realized proper-volume return from `2` to `3`, despite the distance itself changing continuously.
+
+This is not a failure of the continuum definition `D_x(r)=Omega(B_x(r))`; a continuum point has zero volume. It is a failure of treating a finite quadrature cell as if all its mass lived at its centroid.
+
+## 5. Continuum distance repair: landmark distance-profile extension
 
 Let the frozen atlas graph metric be `G_ab`. Represent every reference vertex by its full distance-to-landmarks profile:
 
@@ -124,7 +130,15 @@ A query exactly coincident with a reference vertex receives that vertex's profil
 d_hat(x,y) = ||Phi_hat(x) - Phi_hat(y)||_infinity.
 ```
 
-Properties of this repair:
+For any reference landmark `b`, the `b`th component is exactly the query-to-landmark distance:
+
+```text
+d_hat(x,b) = Phi_hat_b(x).
+```
+
+Triangle inequality gives the upper bound, and coordinate `b` attains equality.
+
+Properties:
 
 - continuous in the query embeddings away from ordinary numerical singularities;
 - exact on all frozen reference vertices;
@@ -132,11 +146,43 @@ Properties of this repair:
 - symmetric, non-negative, and triangle-respecting as a profile-space pseudometric;
 - no tangent space, manifold dimension, metric tensor, or semantic taxonomy is introduced.
 
-The source-centred proper-volume radii are simply the components of `Phi_hat(x)`, and the existing cumulative-volume interpolation is then reused unchanged.
+## 6. Continuum proper-volume repair: interpolate the maps themselves
 
-This is a finite estimator of the existing theory, not a new definition of proper volume.
+For each frozen reference source `a`, retain the existing finite cumulative proper-volume profile
 
-## 6. Definition versus quadrature
+```text
+D_a^A(r) = sum_{b: 0 < G_ab <= r} DeltaOmega_b
+```
+
+with interpolation between sampled radii. This is the finite approximation of the continuum ball measure at source `a`.
+
+For an off-atlas source `x`, do **not** rebuild `D_x` by hard membership of finite cell centroids. Instead use the same partition of unity to extend the already-defined scalar maps:
+
+```text
+D_hat_x(r) = sum_a lambda_a(x) D_a^A(r).
+```
+
+This construction is:
+
+- continuous in `x` and `r`;
+- monotone in `r` because it is a positive weighted sum of monotone profiles;
+- zero at `r=0`;
+- exact on every frozen reference source;
+- free of the finite self-cell on/off jump.
+
+The controller then consistently uses
+
+```text
+R(x -> y) = D_hat_x(d_hat(x,y))
+D_xy       = D_hat_x(d_hat(x,y))
+A_xb       = D_hat_x(d_hat(x,b))
+```
+
+for realized return, occupancy/value geometry, and Boltzmann reward values respectively. Thus `V` and `SD` remain the mean and standard deviation of one continuous finite proper-volume observable.
+
+This realizes the simple principle that motivated the repair: the discrete atlas already supplied usable distance and proper-volume maps, so arbitrary queries should receive a continuous extension of those maps rather than be rounded to grid points or hard cell memberships.
+
+## 7. Definition versus finite estimator
 
 Keep these layers separate:
 
@@ -144,44 +190,54 @@ Keep these layers separate:
 continuum definition:
     D_x(r) = integral over the metric ball of dOmega
 
-finite geometry estimator:
-    graph metric + continuous landmark-profile extension
+reference geometry estimator:
+    angular kNN graph -> graph metric G
 
-finite measure estimator:
+continuous distance extension:
+    interpolate distance-to-landmark profiles -> d_hat
+
+reference measure estimator:
     atlas cell weights DeltaOmega_a
 
-finite cumulative evaluation:
-    sort/interpolate radii and accumulate DeltaOmega_a
+reference proper-volume profiles:
+    quadrature + radius interpolation -> D_a^A(r)
+
+continuous proper-volume extension:
+    interpolate D_a^A(r) over source x -> D_hat_x(r)
 ```
 
 Equal cell weights are a valid declared finite measure convention; they do not mean that observed point density is the definition of volume. If atlas sampling is known to be biased relative to the intended measure, caller-supplied density can correct quadrature. The controller must not infer "embedding compression" from point density by itself.
 
-## 7. What is fixed now, and what is still numerical research
+## 8. What is fixed now, and what is still numerical research
 
-### Fixed by the continuum query repair
+### Fixed by the continuum repair
 
 - live/query points are no longer rounded to one atlas vertex for authoritative geometry;
 - on-atlas graph distances are preserved exactly;
 - same-cell off-atlas motion is observable;
-- old Voronoi-boundary jumps are removed from the query extension;
+- old Voronoi-boundary jumps are removed;
+- leaving an atlas vertex no longer turns one whole finite self-cell on discontinuously;
+- reference proper-volume profiles are preserved exactly;
 - value, occupancy and uncertainty continue to use one proper-volume observable.
 
 ### Still to test under atlas refinement
 
 1. **Graph convergence:** does the sparse angular kNN shortest-path metric stabilize toward a useful continuum separation as the atlas is refined/resampled?
 2. **Measure/gauge convergence:** does the chosen finite atlas measure/common volume gauge stabilize or admit a consistent rescaling as atlas size changes?
-3. **End-to-end convergence:** do `D`, occupancy, entropy, SD, UCB ranking and allocation stabilize for fixed off-atlas queries under refined/resampled atlases?
+3. **Interpolation convergence/locality:** do the chosen partition-of-unity extensions remain local/stable as atlas size and sampling geometry change?
+4. **End-to-end convergence:** do `D`, occupancy, entropy, SD, UCB ranking and allocation stabilize for fixed off-atlas queries under refined/resampled atlases?
 
 These are numerical-consistency/falsification questions. They must not be used to reopen the settled definition of proper volume or to resurrect automatic density calibration without evidence.
 
-## 8. Retrieval pointers
+## 9. Retrieval pointers
 
 When reconstructing this history, use these sources in this order:
 
 1. `docs/PHYSICS.md` — current normative mathematics;
 2. this file — canonical lineage and continuum implementation distinction;
-3. public PR #48 — proper-volume implementation migration;
-4. private `deep-think-evolving` PR #135 — historical theory audit only;
-5. public PR #42 — earlier empirical angular-calibration branch only.
+3. public PR #55 — current continuum repair;
+4. public PR #48 — original proper-volume implementation migration;
+5. private `deep-think-evolving` PR #135 — historical theory audit only;
+6. public PR #42 — earlier empirical angular-calibration branch only.
 
-Public issue #54 tracks the continuum repair/refinement work. Any future note that describes proper volume as *fundamentally an inverse-density transform* should be treated as superseded unless `PHYSICS.md` is intentionally changed with falsification evidence.
+Public issue #54 tracks the remaining refinement/convergence work. Any future note that describes proper volume as *fundamentally an inverse-density transform* should be treated as superseded unless `PHYSICS.md` is intentionally changed with falsification evidence.

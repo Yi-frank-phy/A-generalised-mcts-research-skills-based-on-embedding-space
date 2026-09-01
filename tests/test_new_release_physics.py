@@ -11,6 +11,7 @@ from dte_backend.space_geometry import (
     nearest_reference_indices,
     query_geodesic_distance,
     query_geodesic_distance_matrix,
+    query_reference_weights,
     reference_radii_for_queries,
 )
 from dte_backend.space_measure import (
@@ -62,11 +63,15 @@ def test_sparse_angular_graph_recovers_chain_geodesic() -> None:
     geodesic = all_pairs_geodesic_distances(reference, k=1)
     assert np.isclose(geodesic[0, 4], 1.2, atol=1e-10)
     assert np.allclose(
-        reference_radii_for_queries(reference[[0]], reference, geodesic)[0],
+        reference_radii_for_queries(
+            reference[[0]], reference, geodesic, neighbor_count=2
+        )[0],
         geodesic[0],
     )
     assert np.isclose(
-        query_geodesic_distance(reference[0], reference[2], reference, geodesic),
+        query_geodesic_distance(
+            reference[0], reference[2], reference, geodesic, neighbor_count=2
+        ),
         0.6,
         atol=1e-10,
     )
@@ -75,10 +80,23 @@ def test_sparse_angular_graph_recovers_chain_geodesic() -> None:
 def test_continuous_query_extension_is_exact_on_reference_atlas() -> None:
     reference = _circle([0.0, 0.3, 0.6, 0.9, 1.2])
     geodesic = all_pairs_geodesic_distances(reference, k=1)
-    profiles = reference_radii_for_queries(reference, reference, geodesic)
-    pairwise = query_geodesic_distance_matrix(reference, reference, reference, geodesic)
+    profiles = reference_radii_for_queries(
+        reference, reference, geodesic, neighbor_count=2
+    )
+    pairwise = query_geodesic_distance_matrix(
+        reference, reference, reference, geodesic, neighbor_count=2
+    )
     assert np.allclose(profiles, geodesic, atol=1e-12)
     assert np.allclose(pairwise, geodesic, atol=1e-12)
+
+
+def test_modified_shepard_support_stays_local() -> None:
+    reference = _circle([0.0, 0.2, 0.4, 0.6, 0.8, 1.0])
+    query = _circle([0.13])
+    weights = query_reference_weights(query, reference, neighbor_count=2)[0]
+    assert np.isclose(np.sum(weights), 1.0)
+    assert np.count_nonzero(weights > 0.0) == 2
+    assert np.all(weights[3:] == 0.0)
 
 
 def test_continuous_query_extension_resolves_motion_inside_old_nearest_cell() -> None:
@@ -86,7 +104,9 @@ def test_continuous_query_extension_resolves_motion_inside_old_nearest_cell() ->
     geodesic = all_pairs_geodesic_distances(reference, k=1)
     queries = _circle([0.05, 0.10])
     assert np.array_equal(nearest_reference_indices(queries, reference), [0, 0])
-    distance = query_geodesic_distance(queries[0], queries[1], reference, geodesic)
+    distance = query_geodesic_distance(
+        queries[0], queries[1], reference, geodesic, neighbor_count=2
+    )
     assert 0.0 < distance < 0.3
 
 
@@ -97,8 +117,12 @@ def test_continuous_query_extension_removes_old_voronoi_boundary_jump() -> None:
     queries = _circle([0.15 - epsilon, 0.15 + epsilon])
     old_anchors = nearest_reference_indices(queries, reference)
     assert old_anchors[0] != old_anchors[1]
-    distance = query_geodesic_distance(queries[0], queries[1], reference, geodesic)
-    profiles = reference_radii_for_queries(queries, reference, geodesic)
+    distance = query_geodesic_distance(
+        queries[0], queries[1], reference, geodesic, neighbor_count=2
+    )
+    profiles = reference_radii_for_queries(
+        queries, reference, geodesic, neighbor_count=2
+    )
     assert distance < 0.01
     assert np.max(np.abs(profiles[0] - profiles[1])) < 0.01
 
@@ -132,7 +156,9 @@ def test_boltzmann_reward_values_use_same_continuous_proper_volume_field() -> No
     geodesic = all_pairs_geodesic_distances(reference, k=1)
     atlas = _atlas(reference, geodesic)
     sources = _circle([0.0, 1e-6])
-    radii = reference_radii_for_queries(sources, reference, geodesic)
+    radii = reference_radii_for_queries(
+        sources, reference, geodesic, neighbor_count=2
+    )
     rewards = proper_volume_values_for_queries(sources, radii, atlas)
     assert np.allclose(rewards[0], [0.0, 1.0, 2.0, 3.0, 4.0], atol=1e-12)
     assert np.max(np.abs(rewards[1] - rewards[0])) < 1e-5

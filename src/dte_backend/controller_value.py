@@ -9,7 +9,7 @@ from .space_geometry import (
     query_geodesic_distance_matrix,
     query_reference_weights,
 )
-from .space_measure import intrinsic_cell_volumes, intrinsic_proper_volume_at_radius
+from .space_measure import intrinsic_cell_volumes, intrinsic_proper_volume_at_radii
 from .transition_state import embed_transition_nodes, require_completed_transition
 
 
@@ -46,16 +46,10 @@ def proper_volume_values_for_queries(
             if weight <= 0.0:
                 continue
             reference_radii = atlas.geodesic_distances[reference_index]
-            values = np.asarray(
-                [
-                    intrinsic_proper_volume_at_radius(
-                        reference_radii,
-                        volumes,
-                        float(radius),
-                    )
-                    for radius in radii[source_index]
-                ],
-                dtype=float,
+            values = intrinsic_proper_volume_at_radii(
+                reference_radii,
+                volumes,
+                radii[source_index],
             )
             result[source_index] += float(weight) * values
     return result

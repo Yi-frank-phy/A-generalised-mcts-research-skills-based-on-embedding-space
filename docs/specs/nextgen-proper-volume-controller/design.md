@@ -1,6 +1,6 @@
 # Design
 
-> **Historical PR #48 implementation plan.** This file records the original migration design and is retained for provenance. Its `nearest-reference anchoring` step was later identified as a finite-grid bug and is superseded by the continuous off-atlas estimator in [`../../PHYSICS.md`](../../PHYSICS.md) and [`../../PROPER_VOLUME_GEOMETRY.md`](../../PROPER_VOLUME_GEOMETRY.md). `new` is now a standalone release line with production code under `src/dte_backend/**`.
+> **Historical PR #48 implementation plan.** This file records the original migration design and is retained for provenance. Its `nearest-reference anchoring` and hard off-atlas cell-inclusion steps were later identified as finite-grid bugs and are superseded by the continuous estimators in [`../../PHYSICS.md`](../../PHYSICS.md) and [`../../PROPER_VOLUME_GEOMETRY.md`](../../PROPER_VOLUME_GEOMETRY.md). `new` is now a standalone release line with production code under `src/dte_backend/**`.
 
 ## Original module boundary
 
@@ -25,26 +25,30 @@ One session freezes the reference atlas and computes its sparse geodesic matrix 
 For each scoring pass:
 
 1. embed current completed-transition frontier;
-2. estimate continuous live/query geometry relative to the frozen atlas;
-3. compute source-centred cumulative proper-volume separations `D_ij`;
+2. estimate continuous live/query distance and proper-volume fields from the frozen atlas;
+3. compute source-centred proper-volume separations `D_ij`;
 4. estimate `rho_i` from current live mass only;
 5. set `S_i=-log(rho_i)`;
 6. invert each node's radial Boltzmann entropy;
-7. push Boltzmann cell mass through `A_ia=D_i(r_ia)`;
-8. use `SD[A_i]` as controller uncertainty;
+7. push Boltzmann cell mass through the same continuous proper-volume reward field;
+8. use the resulting ordinary reward SD as controller uncertainty;
 9. regress historical realized proper-volume returns locally to obtain `V_i`;
-10. score `U_i=V_i+SD[A_i]`;
+10. score `U_i=V_i+SD_i`;
 11. use mean node entropy as the target entropy for one-action Boltzmann allocation.
 
 After external execution returns one completed child, measure parent->child proper-volume return on the same frozen estimator, record it against the retired parent, replace the parent slot with the child, and recompute on the next pass.
 
 ## Continuum repair addendum
 
-The original step 2 rounded a live/query point to one nearest atlas vertex. That zero-order interpolation is no longer authoritative.
+The original finite implementation contained two zero-order approximations.
 
-Current `dte_backend.space_geometry` instead embeds each frozen reference vertex by its full graph-distance row, continuously interpolates those distance profiles for arbitrary queries with Shepard partition-of-unity weights, and compares profiles with the L-infinity norm. This preserves the graph metric exactly on reference vertices while removing old Voronoi-cell aliasing and boundary jumps.
+First, arbitrary live/query embeddings were rounded to one nearest atlas vertex. Current `dte_backend.space_geometry` instead represents each frozen reference vertex by its full graph-distance row, continuously interpolates those distance profiles with Shepard partition-of-unity weights, and compares profiles with the L-infinity norm. This preserves the graph metric exactly on reference vertices while removing old Voronoi-cell aliasing and boundary jumps.
 
-The finite atlas remains a numerical landmark/quadrature device. Proper volume remains `Omega(metric ball)` and is not redefined by the interpolation scheme.
+Second, directly accumulating finite cells from interpolated off-atlas radii causes a self-cell discontinuity: the exact reference source excludes its zero-radius cell, while an infinitesimally displaced source can suddenly include that entire finite cell. Current `dte_backend.controller_value` therefore preserves the reference cumulative proper-volume profiles and extends the **profiles themselves** with the same partition of unity:
+
+`D_hat_x(r) = sum_a lambda_a(x) D_a^A(r)`.
+
+Realized return, occupancy/value separation, and Boltzmann reward values all use this same continuous field. The finite atlas remains a numerical landmark/quadrature device; proper volume remains `Omega(metric ball)` and is not redefined by either interpolation scheme.
 
 ## Failure boundaries
 
@@ -54,4 +58,4 @@ Default runtime never auto-fits a sampling-density correction. Experimental corr
 
 ## Compatibility
 
-Legacy RBF geometry, MMD helpers, empirical angular calibration, and explicit nearest-neighbour diagnostics remain available where useful for preregistered falsification/backwards compatibility. They do not define current `new` proper-volume geometry.
+Legacy RBF geometry, MMD helpers, empirical angular calibration, explicit nearest-neighbour diagnostics, and the hard off-atlas cell-centroid approximation remain useful only for preregistered falsification/backwards compatibility/history. They do not define current `new` proper-volume geometry.

@@ -74,10 +74,15 @@ def score_frontier(
         np.finfo(float).tiny,
         1.0,
     )
+    interpolation_neighbors = min(
+        len(atlas.embeddings),
+        max(2, int(atlas.graph_k) + 1),
+    )
     radii = reference_radii_for_queries(
         live_embeddings,
         atlas.embeddings,
         atlas.geodesic_distances,
+        neighbor_count=interpolation_neighbors,
     )
     reward_values = proper_volume_values_for_queries(
         live_embeddings,

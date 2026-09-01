@@ -1,12 +1,14 @@
 # Design
 
-## Module boundary
+> **Historical PR #48 implementation plan.** This file records the original migration design and is retained for provenance. Its `nearest-reference anchoring` step was later identified as a finite-grid bug and is superseded by the continuous off-atlas estimator in [`../../PHYSICS.md`](../../PHYSICS.md) and [`../../PROPER_VOLUME_GEOMETRY.md`](../../PROPER_VOLUME_GEOMETRY.md). `new` is now a standalone release line with production code under `src/dte_backend/**`.
 
-The proper-volume implementation stays inside `dte_nextgen.thought_space` and does not modify production `dte_backend` controller semantics.
+## Original module boundary
 
-Planned modules:
+The initial proper-volume prototype was isolated inside `dte_nextgen.thought_space` before PR #49 promoted the `new` release implementation into `dte_backend`.
 
-- `geometry.py`: angular kNN graph, shortest-path geodesic, nearest-reference anchoring;
+Original planned modules:
+
+- `geometry.py`: angular kNN graph, shortest-path geodesic, originally nearest-reference anchoring;
 - `proper_volume.py`: atlas cell volumes, radius->cumulative proper volume, occupancy entropy, radial Boltzmann inversion, reward statistics;
 - `occupancy.py`: live-live source-centred proper-volume displacement and soft occupancy;
 - `controller.py`: retain legacy RBF functions and add proper-volume scoring from radii/embeddings;
@@ -14,16 +16,16 @@ Planned modules:
 - `history.py`: run-local realized-return evidence store;
 - `session.py`: frozen-atlas stateful score/select/complete loop.
 
-Existing `transition.py` remains the canonical `(method, epistemic change)` serializer and existing `allocation.py` remains the one-action Boltzmann scheduler.
+The `(method, epistemic change)` serializer and one-action Boltzmann scheduler were retained.
 
-## Data flow
+## Original data flow — still conceptually valid
 
 One session freezes the reference atlas and computes its sparse geodesic matrix once.
 
 For each scoring pass:
 
 1. embed current completed-transition frontier;
-2. map live transitions onto the frozen atlas;
+2. estimate continuous live/query geometry relative to the frozen atlas;
 3. compute source-centred cumulative proper-volume separations `D_ij`;
 4. estimate `rho_i` from current live mass only;
 5. set `S_i=-log(rho_i)`;
@@ -34,14 +36,22 @@ For each scoring pass:
 10. score `U_i=V_i+SD[A_i]`;
 11. use mean node entropy as the target entropy for one-action Boltzmann allocation.
 
-After external execution returns one completed child, measure parent->child proper-volume return on the same frozen atlas, record it against the retired parent, replace the parent slot with the child, and recompute on the next pass.
+After external execution returns one completed child, measure parent->child proper-volume return on the same frozen estimator, record it against the retired parent, replace the parent slot with the child, and recompute on the next pass.
+
+## Continuum repair addendum
+
+The original step 2 rounded a live/query point to one nearest atlas vertex. That zero-order interpolation is no longer authoritative.
+
+Current `dte_backend.space_geometry` instead embeds each frozen reference vertex by its full graph-distance row, continuously interpolates those distance profiles for arbitrary queries with Shepard partition-of-unity weights, and compares profiles with the L-infinity norm. This preserves the graph metric exactly on reference vertices while removing old Voronoi-cell aliasing and boundary jumps.
+
+The finite atlas remains a numerical landmark/quadrature device. Proper volume remains `Omega(metric ball)` and is not redefined by the interpolation scheme.
 
 ## Failure boundaries
 
-Reject zero-norm/nonfinite embeddings, invalid graph `k`, disconnected reference graphs, nonpositive quadrature weights, invalid occupancy, reference atlases smaller than the live frontier, and nonempty pre-numeric history that cannot prove atlas identity.
+Reject zero-norm/nonfinite embeddings, invalid graph `k`, disconnected reference graphs, nonpositive quadrature weights, invalid occupancy, undersized reference atlases, and nonempty pre-numeric history that cannot prove atlas identity.
 
 Default runtime never auto-fits a sampling-density correction. Experimental correction requires explicit positive `reference_density` input.
 
 ## Compatibility
 
-Legacy RBF geometry and MMD helpers remain importable for preregistered falsification and backwards compatibility. They are not used by `ProperVolumeTransitionSession`.
+Legacy RBF geometry, MMD helpers, empirical angular calibration, and explicit nearest-neighbour diagnostics remain available where useful for preregistered falsification/backwards compatibility. They do not define current `new` proper-volume geometry.

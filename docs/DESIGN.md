@@ -16,9 +16,11 @@ The `new` release ships a problem-independent geometry-only atlas spanning canon
 
 The graph starts from the configured kNN degree and increases `k` only as needed to obtain one connected frozen graph; the resolved `k` is part of atlas identity. The atlas may be cached only when provider/model/dimension, configured graph degree, and initial canonical transitions match exactly. Raw parent→child transition evidence is remeasured on the current atlas rather than reusing numeric returns from another atlas.
 
+The atlas is a numerical landmark/quadrature structure, not a discrete ontology of live/query states. Frozen reference vertices retain their exact shortest-path graph metric and their finite cumulative proper-volume profiles. Arbitrary off-atlas live/query embeddings use one continuous partition of unity to interpolate both distance-to-landmark profiles and proper-volume profiles. Query separation is measured in distance-profile space, while realized return, occupancy, and reward SD use the interpolated proper-volume field. Hard nearest-reference rounding and hard off-atlas cell-inclusion are legacy zero-order approximations only.
+
 ## Runtime controller
 
-The production `dte_backend` path on `new` owns the proper-volume implementation; `dte_nextgen` is removed after migration. Each iteration embeds completed transitions, anchors them to the frozen atlas, reconstructs proper-volume historical returns and local `V`, computes live occupancy and entropy-matched reward `SD`, forms `U=V+SD`, entropy-matches the one-action Boltzmann allocator under hard budgets, executes the selected continuation, commits completed children, retires consumed parents, and repeats.
+The production `dte_backend` path on `new` owns the proper-volume implementation; `dte_nextgen` is removed after migration. Each iteration embeds completed transitions, evaluates their continuous off-atlas distance and proper-volume fields against the frozen atlas, reconstructs proper-volume historical returns and local `V`, computes live occupancy and entropy-matched reward `SD` from that same continuous reward field, forms `U=V+SD`, entropy-matches the one-action Boltzmann allocator under hard budgets, executes the selected continuation, commits completed children, retires consumed parents, and repeats.
 
 Judge remains an observable research-assessment role for provenance/risk/synthesis support. Its score is not controller value on `new`.
 

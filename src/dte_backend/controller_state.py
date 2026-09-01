@@ -5,7 +5,12 @@ from dataclasses import dataclass
 from collections.abc import Sequence
 import numpy as np
 from .controller_atlas import FrozenReferenceAtlas
-from .controller_value import historical_parent_returns, proper_volume_distance_matrix, regress_values
+from .controller_value import (
+    historical_parent_returns,
+    proper_volume_distance_matrix,
+    proper_volume_values_for_queries,
+    regress_values,
+)
 from .models import SearchNode
 from .space_distribution import node_reward_sd_from_occupancy
 from .space_geometry import reference_radii_for_queries
@@ -64,9 +69,35 @@ def score_frontier(
     values = regress_values(live_embeddings, history_embeddings, realized, atlas, scale)
     live_distance = proper_volume_distance_matrix(live_embeddings, live_embeddings, atlas)
     np.fill_diagonal(live_distance, 0.0)
-    occupancy = np.clip(np.mean(np.exp(-live_distance / scale), axis=1), np.finfo(float).tiny, 1.0)
-    radii = reference_radii_for_queries(live_embeddings, atlas.embeddings, atlas.geodesic_distances)
-    stats = [node_reward_sd_from_occupancy(radii[i], atlas.reference_density, float(occupancy[i])) for i in range(len(live_nodes))]
+    occupancy = np.clip(
+        np.mean(np.exp(-live_distance / scale), axis=1),
+        np.finfo(float).tiny,
+        1.0,
+    )
+    interpolation_neighbors = min(
+        len(atlas.embeddings),
+        max(2, int(atlas.graph_k) + 1),
+    )
+    radii = reference_radii_for_queries(
+        live_embeddings,
+        atlas.embeddings,
+        atlas.geodesic_distances,
+        neighbor_count=interpolation_neighbors,
+    )
+    reward_values = proper_volume_values_for_queries(
+        live_embeddings,
+        radii,
+        atlas,
+    )
+    stats = [
+        node_reward_sd_from_occupancy(
+            radii[i],
+            atlas.reference_density,
+            float(occupancy[i]),
+            reward_values=reward_values[i],
+        )
+        for i in range(len(live_nodes))
+    ]
     sd = np.asarray([float(item["volume_reward_sd"]) for item in stats])
     entropies = np.asarray([float(item["target_entropy"]) for item in stats])
     return FrontierControllerState(

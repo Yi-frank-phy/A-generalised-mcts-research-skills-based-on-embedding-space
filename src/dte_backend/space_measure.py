@@ -42,12 +42,41 @@ def _volume_profile(radii: np.ndarray, volumes: np.ndarray) -> tuple[np.ndarray,
     )
 
 
-def intrinsic_proper_volume_at_radius(radii: np.ndarray, cell_volumes: np.ndarray, query_radius: float) -> float:
-    query = float(query_radius)
-    if not np.isfinite(query) or query < 0.0:
-        raise ValueError("query_radius must be finite and non-negative")
+def intrinsic_proper_volume_at_radii(
+    radii: np.ndarray,
+    cell_volumes: np.ndarray,
+    query_radii: np.ndarray,
+) -> np.ndarray:
+    """Evaluate one frozen-source cumulative proper-volume profile in batch."""
+    query = np.asarray(query_radii, dtype=float)
+    if not np.isfinite(query).all() or np.any(query < 0.0):
+        raise ValueError("query_radii must be finite and non-negative")
     profile_r, profile_v = _volume_profile(radii, cell_volumes)
-    return float(np.interp(query, profile_r, profile_v, left=0.0, right=float(profile_v[-1])))
+    return np.asarray(
+        np.interp(
+            query,
+            profile_r,
+            profile_v,
+            left=0.0,
+            right=float(profile_v[-1]),
+        ),
+        dtype=float,
+    )
+
+
+def intrinsic_proper_volume_at_radius(
+    radii: np.ndarray,
+    cell_volumes: np.ndarray,
+    query_radius: float,
+) -> float:
+    query = float(query_radius)
+    return float(
+        intrinsic_proper_volume_at_radii(
+            radii,
+            cell_volumes,
+            np.asarray([query], dtype=float),
+        )[0]
+    )
 
 
 def volume_reward_statistics(radii: np.ndarray, cell_volumes: np.ndarray, probabilities: np.ndarray) -> dict[str, np.ndarray | float]:
@@ -56,8 +85,7 @@ def volume_reward_statistics(radii: np.ndarray, cell_volumes: np.ndarray, probab
     if len(p) != len(r) or np.any(p < 0.0) or np.sum(p) <= 0.0:
         raise ValueError("probabilities must be non-negative and align with radii")
     p = p / np.sum(p)
-    profile_r, profile_v = _volume_profile(r, v)
-    reward = np.interp(r, profile_r, profile_v, left=0.0, right=float(profile_v[-1]))
+    reward = intrinsic_proper_volume_at_radii(r, v, r)
     mean = float(np.sum(p * reward))
     sd = float(np.sqrt(np.sum(p * (reward - mean) ** 2)))
     return {"reward_values": reward, "mean": mean, "sd": sd}

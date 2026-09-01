@@ -1,24 +1,24 @@
-# Requirements
+# Proper-volume controller requirements
 
-Normative scope: isolated `src/dte_nextgen/thought_space/**`; production `src/dte_backend/**` is unchanged.
+> **Current geometry authority:** [`../../PHYSICS.md`](../../PHYSICS.md). This file has been refreshed after the continuum query repair. The original PR #48 requirement of nearest-reference anchoring is superseded.
 
 ## Value observable
 
 The completed search coordinate remains the canonical `(method, epistemic change)` transition. Source question/context is excluded from the scoring embedding.
 
-Raw embedding angle or sparse-graph geodesic radius is only a coordinate separation. On one frozen reference atlas, node `i` defines cumulative crossed proper volume
+Proper volume is the measure of a source-centred research-space metric ball:
 
-`D_i(r) = integral over 0 < d_g(i,x) <= r of dOmega(x)`.
+`D_x(r) = integral over 0 < d(x,y) <= r of dOmega(y)`.
 
-Finite-sample code evaluates this by quadrature over atlas cells. `D_i(r)` is not divided by the node-local accessible total and is not a literal microstate count.
+It is not a reciprocal-density/KDE transform and is not a literal microstate count. Finite code estimates the measure by atlas quadrature.
 
-For executed parent -> completed child, `R_i = D_i(d_g(parent, child))`. Historical expected realized proper-volume return is `V_i`.
+For executed parent -> completed child, `R = D_parent(d(parent, child))`. Historical expected realized proper-volume return is `V`.
 
 ## Uncertainty
 
-Live occupancy uses only current live-frontier mass on the frozen atlas:
+Live occupancy uses the same proper-volume observable:
 
-`D_ij = D_i(d_g(i,j))`
+`D_ij = D_i(d(i,j))`
 
 `rho_i = mean_j exp(-D_ij / h_V)`
 
@@ -32,13 +32,26 @@ Entropy matching produces a radial Boltzmann distribution over frozen-atlas cell
 
 Geometric `T_i log 2` may remain diagnostic but is not added directly to `V_i`.
 
-## Geometry and measure
+## Geometry
 
-Use L2-normalized embeddings, angular edge length `arccos(cosine)`, a symmetric k-nearest-neighbour union graph, shortest-path geodesic distance, and nearest-reference anchoring for live/query embeddings.
+The finite geometry estimator SHALL:
 
-No tangent vectors, metric tensor, inverse metric, Jacobian, explicit manifold dimension, or value-gradient field is required.
+1. L2-normalize frozen reference embeddings;
+2. use angular local edge length `arccos(cosine)`;
+3. build a symmetric k-nearest-neighbour union graph and shortest-path metric on reference vertices;
+4. preserve those reference-vertex graph distances exactly;
+5. extend the graph metric continuously to arbitrary live/query embeddings without hard nearest-cell snapping;
+6. introduce no required tangent vectors, metric tensor, inverse metric, Jacobian, explicit manifold dimension, or value-gradient field.
 
-Default quadrature gives equal weight to frozen reference cells. Optional caller-supplied positive reference-density weights are experimental numerical quadrature correction only. Automatic live-frontier or automatic reference-KDE correction is not authoritative runtime behaviour.
+The current implementation satisfies 4–5 by interpolating reference distance-to-landmark profiles with continuous Shepard partition-of-unity weights and measuring profile separation in the L-infinity norm.
+
+`nearest_reference_indices(...)` may remain only as an explicit legacy/diagnostic helper. It MUST NOT define authoritative live/query distance, realized return, value regression, occupancy, or controller SD.
+
+## Measure and quadrature
+
+Default quadrature gives equal weight to frozen reference cells. Optional caller-supplied positive `reference_density` values are experimental numerical quadrature correction only. Automatic live-frontier or reference-KDE density correction is not authoritative runtime behaviour.
+
+The finite atlas is a landmark/quadrature device, not a discrete ontology. Changing atlas resolution should ultimately change approximation error rather than controller semantics.
 
 ## Stateful run
 
@@ -48,10 +61,25 @@ The active frontier changes by replacement only: the executed parent leaves the 
 
 Before realized evidence exists, `V_i = 0`. Later `V_i` is a local proper-volume kernel regression over run-local historical realized returns. Historical evidence affects `V` only and never defines UCB uncertainty.
 
-Already-numeric return history from a different frozen atlas must not be silently reused. Cross-run reuse requires raw transition evidence to be remeasured on the new atlas.
+Already-numeric return history from a different frozen atlas must not be silently reused. Cross-run reuse requires raw transition evidence to be remeasured on the new estimator/atlas.
+
+## Continuum acceptance tests
+
+The finite estimator SHALL be falsified under atlas refinement/resampling. At minimum test:
+
+- exact preservation of on-atlas graph distances;
+- nonzero response to motion inside an old nearest-reference cell;
+- removal of finite jumps across old Voronoi boundaries;
+- pairwise proper-volume displacement convergence;
+- occupancy/entropy/SD convergence;
+- frontier ranking/allocation stability;
+- graph-distance sensitivity to atlas refinement;
+- finite measure/common volume-gauge sensitivity to atlas refinement.
+
+The latter two remain numerical-consistency questions and do not reopen the proper-volume definition.
 
 ## Compatibility
 
-Existing RBF-KDE `SD=1/sqrt(N rho)` and one-replacement MMD return remain callable only as compatibility/falsification baselines in the isolated next-generation package.
+Existing RBF-KDE `SD=1/sqrt(N rho)`, one-replacement MMD return, empirical angular calibration, and hard nearest-reference anchoring remain callable only as compatibility/falsification/history where applicable. They are not current `new` controller authority.
 
 Unit and synthetic tests establish implementation contracts only; research effectiveness remains an equal-budget experiment gate.

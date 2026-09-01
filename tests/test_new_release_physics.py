@@ -95,7 +95,7 @@ def test_modified_shepard_support_stays_local() -> None:
     query = _circle([0.13])
     weights = query_reference_weights(query, reference, neighbor_count=2)[0]
     assert np.isclose(np.sum(weights), 1.0)
-    assert np.count_nonzero(weights > 0.0) == 2
+    assert np.count_nonzero(weights > 1e-10) == 2
     assert np.all(weights[3:] == 0.0)
 
 

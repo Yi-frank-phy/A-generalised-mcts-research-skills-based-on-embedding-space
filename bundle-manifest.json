@@ -1,1 +1,371 @@
-PLACEHOLDER
+{
+  "schema_version": "dte-skill-bundle.v1",
+  "files": [
+    {
+      "path": "SKILL.md",
+      "size": 29155,
+      "sha256": "7d33854c27f6afd2ca6e7753a326595a4c003ebf63c25b53485649e012a61168"
+    },
+    {
+      "path": "hooks/dte_enforcement_hook.py",
+      "size": 30613,
+      "sha256": "a0e997e778e4691117dddc62c277549dc214d80b64d0840cf1dcc6c7b0c2f1a4"
+    },
+    {
+      "path": "prompts/DTE_STATIC_PREFIX.md",
+      "size": 9580,
+      "sha256": "63eb4c979ad40a10be1d5b378532a7e9f8f40c754b3aeba331bd5889a992f3f5"
+    },
+    {
+      "path": "prompts/executor.md",
+      "size": 388,
+      "sha256": "0bc416a7a86a4c6c18a32eb9a9ec301e527922d8a8ada5304c5bb73d74da0b2d"
+    },
+    {
+      "path": "prompts/executor_subagent.md",
+      "size": 1743,
+      "sha256": "61214c19ab809a2fb69621675f6b7ad34d34eb5ce48147c35520c714507f73ef"
+    },
+    {
+      "path": "prompts/relation_oracle.md",
+      "size": 1562,
+      "sha256": "d2c888ba982b72a2940388da7765ab08fe7b3785619a0ffcdf4d8ea2a4b39cbd"
+    },
+    {
+      "path": "prompts/strategy_generator.md",
+      "size": 360,
+      "sha256": "6b0523eb4aa281febaf7ea9c63baf9383f133f629b670767293e5571186df883"
+    },
+    {
+      "path": "prompts/synthesis.md",
+      "size": 322,
+      "sha256": "0cd5dbe8144f2d800395e62b509f58af40d9c9ba39059945299af5c3e2c99665"
+    },
+    {
+      "path": "schemas/expansion_request.schema.json",
+      "size": 11764,
+      "sha256": "5d534975366dd8816e4c98c5c8d73f4669d3df1886e591a8ddd2a0a5300074af"
+    },
+    {
+      "path": "schemas/run_spec.schema.json",
+      "size": 6171,
+      "sha256": "5237cde61121d475fdb60f55c1760af687610a65563d6a243edeead10143adcf"
+    },
+    {
+      "path": "schemas/search_node.schema.json",
+      "size": 3739,
+      "sha256": "3bd3365b122f2276b36e1db4b0af29ca293008c50fc621a62d9e8ae9ea934c6d"
+    },
+    {
+      "path": "schemas/synthesis_control_request.schema.json",
+      "size": 823,
+      "sha256": "e692835637641b24baae73981f2c03375317c2e2b21f92d70a5ad782c8b039ac"
+    },
+    {
+      "path": "scripts/dte_hook_driver_entry.py",
+      "size": 342,
+      "sha256": "bff2a0137a1e706e25d77549181a53c1fec58cd58bc7622a6fdd3472f42b3253"
+    },
+    {
+      "path": "scripts/generate_bundle_manifest.py",
+      "size": 783,
+      "sha256": "4d14a750c237d13fcaf8e1dafa407a229dad559c0140a47c46c42c64d6a5614c"
+    },
+    {
+      "path": "scripts/install_dte_hooks.py",
+      "size": 31813,
+      "sha256": "c5c01739f1af6008000f13ad494668181cc537494e8d099b16615652b803874e"
+    },
+    {
+      "path": "scripts/install_skill_bundle.py",
+      "size": 2415,
+      "sha256": "1bf8f160c5e667aa580467b565ceca4efaec075546675098bffbe487038660f9"
+    },
+    {
+      "path": "src/dte_backend/__init__.py",
+      "size": 2007,
+      "sha256": "4579af3e31a43d8d290ff91e3829a6245927e6a37010a47aee54dc701f430125"
+    },
+    {
+      "path": "src/dte_backend/__main__.py",
+      "size": 26249,
+      "sha256": "e425455f29a4cad6799c2425a195657518393e5627be03dae29193ec4e952090"
+    },
+    {
+      "path": "src/dte_backend/adapter.py",
+      "size": 5620,
+      "sha256": "6a185c1667c7edbe4ebf9350cb10208079c3d17660e54b5b59b2a7a804df9a61"
+    },
+    {
+      "path": "src/dte_backend/app_driver.py",
+      "size": 250508,
+      "sha256": "765562166b9c566dc44bed8cbb87dbc663badd987b8775ed5c964fc13681b944"
+    },
+    {
+      "path": "src/dte_backend/artifacts.py",
+      "size": 8688,
+      "sha256": "880a583c807c0a5fdfc3c6a60fa03525e022c418b1c33777b7a48f813fbd62b2"
+    },
+    {
+      "path": "src/dte_backend/bundle_manifest.py",
+      "size": 3168,
+      "sha256": "0e4d0768264305942e989924b49b7232ed53475a6a03fa6066c4b09a6d9c17a2"
+    },
+    {
+      "path": "src/dte_backend/cache.py",
+      "size": 2486,
+      "sha256": "27fe8a6030596cbc10db4e83f766a48d67430a440b6693a7ced3df89fde70419"
+    },
+    {
+      "path": "src/dte_backend/context_envelope.py",
+      "size": 3871,
+      "sha256": "2f3db5edbe173acbd18500e36d84023f4a9f135cc255a5ccfe34a116c14bebab"
+    },
+    {
+      "path": "src/dte_backend/continuation.py",
+      "size": 10575,
+      "sha256": "d0eef5804497a5ff129eae7d40ad196d090e84b6315fc473da1b8bba51943cf5"
+    },
+    {
+      "path": "src/dte_backend/control.py",
+      "size": 2649,
+      "sha256": "2c7d987e58fde677107a6b1a1e6c5841a78db9b97b711ff70b39038a6e331e90"
+    },
+    {
+      "path": "src/dte_backend/controller_atlas.py",
+      "size": 2508,
+      "sha256": "2d0ecb95ac6a3e118e8f51883feb9d738973b158713b43aece102e612ebb7ca9"
+    },
+    {
+      "path": "src/dte_backend/controller_state.py",
+      "size": 3279,
+      "sha256": "44254701803bb13279f328343a142c208a56261b9db4872e97d8789fc5ab8666"
+    },
+    {
+      "path": "src/dte_backend/controller_value.py",
+      "size": 3733,
+      "sha256": "536403e27186f6be676bed7abfe9d93f00063e28e8027b4a810a240ead2ef021"
+    },
+    {
+      "path": "src/dte_backend/embedding.py",
+      "size": 3914,
+      "sha256": "ac40a90cbb89e2f201f9f2f54296e3169231f62c29649e7040710a354e87ad23"
+    },
+    {
+      "path": "src/dte_backend/entropy.py",
+      "size": 7330,
+      "sha256": "c41e946f5dd397b547ee6d8bc29c762240020f8fe9b509a1aa63c074a45efdbe"
+    },
+    {
+      "path": "src/dte_backend/episode_adapter.py",
+      "size": 22924,
+      "sha256": "e68a0e85d3e2836978e548aa1cae22dff351671a8b2f0c491fd639ba5823c65f"
+    },
+    {
+      "path": "src/dte_backend/episode_commit.py",
+      "size": 30855,
+      "sha256": "c57f41ea061701144ffeba48b834e1c940bfc6da1f2b8977b4e6d4289c6fcc81"
+    },
+    {
+      "path": "src/dte_backend/episode_models.py",
+      "size": 19328,
+      "sha256": "167698abc80a1c47b3348c581b985ab2249baa3816c2e345091da5435a70149d"
+    },
+    {
+      "path": "src/dte_backend/epistemic.py",
+      "size": 39815,
+      "sha256": "03da2e7703ff7cadd170bb1b00359fdcb4da6127a3aadb66d50e2967b2309c33"
+    },
+    {
+      "path": "src/dte_backend/epistemic_commit.py",
+      "size": 12228,
+      "sha256": "41ac6e19ff2fac9a5e549f82c515f14032c570b4fe2c6de1361205728ce3ea29"
+    },
+    {
+      "path": "src/dte_backend/epistemic_models.py",
+      "size": 21573,
+      "sha256": "4cda0bf7209f5c26ce92a6cb9d846eda8973ce019cfaa5f98609d786e7c709e3"
+    },
+    {
+      "path": "src/dte_backend/executor_adapter.py",
+      "size": 2386,
+      "sha256": "f82dd97670effde1fb3ff4d36cb91c6c8f428b08b597ea220e7fbcbef0220895"
+    },
+    {
+      "path": "src/dte_backend/expansion.py",
+      "size": 3399,
+      "sha256": "1eab133fbe8897a2fb36c29a199c5b4fda5a2399ee4460077459b895778976bc"
+    },
+    {
+      "path": "src/dte_backend/file_cache.py",
+      "size": 1676,
+      "sha256": "07632ddc99010a1789239394a04735e3e4b35aad74822184c87b3a9e52e351ea"
+    },
+    {
+      "path": "src/dte_backend/guards.py",
+      "size": 547,
+      "sha256": "a58257459cbc3b36c6c71b78ef3088cd81d19eb5c67e7d366189c7138e270ae0"
+    },
+    {
+      "path": "src/dte_backend/hook_driver.py",
+      "size": 107477,
+      "sha256": "a48c3840ae937478c1a967c995122771e53420eeee4dea49c971b5faab502491"
+    },
+    {
+      "path": "src/dte_backend/human.py",
+      "size": 1667,
+      "sha256": "efd6a1b3f786a864c2a44b9e411e74b77b37d95425b5e8382a4a5c4123fc3b66"
+    },
+    {
+      "path": "src/dte_backend/kde.py",
+      "size": 2839,
+      "sha256": "6c956715fa9df43ac63757ef3becf8b4add272f54a8e82f9ef0eb4cf0d63f038"
+    },
+    {
+      "path": "src/dte_backend/math_engine.py",
+      "size": 6434,
+      "sha256": "3815ba6f6de41b5df705f1431f59a01db232da3af8447f0a8a60a081af3ed6c2"
+    },
+    {
+      "path": "src/dte_backend/merge.py",
+      "size": 13370,
+      "sha256": "26d4ee807dde4f6a9b4d42ba3249dd067a7b0b5281becea489dbe785e04bef47"
+    },
+    {
+      "path": "src/dte_backend/models.py",
+      "size": 7368,
+      "sha256": "ce4eead867cf61ba7b4eea06157485e795ed871bc52a0f35d3f4d112a40b4f0d"
+    },
+    {
+      "path": "src/dte_backend/new_controller.py",
+      "size": 346,
+      "sha256": "891ee5e9e2153a1448d8c731413601bbee9a529a5461828214da9b7837ae137a"
+    },
+    {
+      "path": "src/dte_backend/novelty.py",
+      "size": 7665,
+      "sha256": "7bb61834f1480a649f7d073b2eb812eb0639a7328a84da44818bdafeb59af2a3"
+    },
+    {
+      "path": "src/dte_backend/observability.py",
+      "size": 91295,
+      "sha256": "8ef5aa012d9866e12e963f7c52f660babd19d0272b5f70ab17f48a4cb6db9753"
+    },
+    {
+      "path": "src/dte_backend/observability_models.py",
+      "size": 23503,
+      "sha256": "4648644b6d2aa01d112263e7fe405e1c0333371396e24094f1bde597b885b107"
+    },
+    {
+      "path": "src/dte_backend/oracle_validation.py",
+      "size": 5379,
+      "sha256": "683fdab186159f2d7953219c633c512212d93de3f2a01ad47a4a1608a45cdd58"
+    },
+    {
+      "path": "src/dte_backend/oracles.py",
+      "size": 1678,
+      "sha256": "5562b8005bafa52b7fe52971b205e36adfaf84efc5c66c46018d51184214cb55"
+    },
+    {
+      "path": "src/dte_backend/prompt_builder.py",
+      "size": 2934,
+      "sha256": "2e837d06dd9238a0dbcb70c778eb822f6051ad9b5ea5e6f48b385c6f0b292648"
+    },
+    {
+      "path": "src/dte_backend/reference_atlas.py",
+      "size": 3253,
+      "sha256": "9da4fb5180efd88e70b66e4935331637ae191db6bf908b4d8d04e8f256982401"
+    },
+    {
+      "path": "src/dte_backend/relation_candidates.py",
+      "size": 26640,
+      "sha256": "dcef5109b415b37804eba042da4cfece5f694fe8e2d93481dafc6f7f305093d5"
+    },
+    {
+      "path": "src/dte_backend/relation_models.py",
+      "size": 18370,
+      "sha256": "b40c2a8d932207842ab20c654d82bcdeee164aa4f2435f3f7d1afc7d68665af6"
+    },
+    {
+      "path": "src/dte_backend/relation_readiness.py",
+      "size": 11255,
+      "sha256": "d77ee39a8447775135b91b7b495f83acb9e3eb6c26e009e3451a64c0a82b291f"
+    },
+    {
+      "path": "src/dte_backend/relation_workflow.py",
+      "size": 4000,
+      "sha256": "45b0f7d904b7e7148e32336ab2149d961eac9580c55a06a4220a9b7d1f05d755"
+    },
+    {
+      "path": "src/dte_backend/role_pipeline.py",
+      "size": 300,
+      "sha256": "39e9a5500f69a2557cfbfe1789b722c633fa6b1db7b1d755f00af1bfc1745937"
+    },
+    {
+      "path": "src/dte_backend/runner.py",
+      "size": 14380,
+      "sha256": "11c34e4bb5f6a268516b2ea7db7b9a5ec1fa57eed1564203f18aa3b5fcc2f753"
+    },
+    {
+      "path": "src/dte_backend/seed_transitions.py",
+      "size": 2039,
+      "sha256": "383ec1eda0c2fcb6bca3d56e8ac49f9eb06f500901521bb5dec67f6c431e3fbe"
+    },
+    {
+      "path": "src/dte_backend/space_distribution.py",
+      "size": 3722,
+      "sha256": "c9b84914d10d43f988519990204846d1fe1735ca2d9273d2fc2de0c9a3192104"
+    },
+    {
+      "path": "src/dte_backend/space_geometry.py",
+      "size": 7351,
+      "sha256": "747757a23579a7cebf7a958e316cda268d9356937b1d7e19617a4e3ec5786318"
+    },
+    {
+      "path": "src/dte_backend/space_measure.py",
+      "size": 2714,
+      "sha256": "a796f617d587fba66eae1920fb17d2e0530f1519de2061d4cbd64ba93648d6e6"
+    },
+    {
+      "path": "src/dte_backend/strict_runner.py",
+      "size": 9155,
+      "sha256": "dd13c1d07e522551c88a16d0a6b05e2a3369f28f42fd5a3e72665700b560361a"
+    },
+    {
+      "path": "src/dte_backend/subprocess_oracles.py",
+      "size": 1300,
+      "sha256": "e91f4d596a7f4adffab2f7bf3d15a78a17618f8b9820642146ee2deae5e6d204"
+    },
+    {
+      "path": "src/dte_backend/synthesis.py",
+      "size": 7367,
+      "sha256": "fedc969db1bae05d8d6627d7348f11470be59553f89df363c611b3ca64b3077a"
+    },
+    {
+      "path": "src/dte_backend/telemetry.py",
+      "size": 8685,
+      "sha256": "9f56e70652cb5fdc333ed895642d8a0de472847e3a61ecf47f220bf208eee676"
+    },
+    {
+      "path": "src/dte_backend/text_features.py",
+      "size": 2953,
+      "sha256": "94ad18228601b69c4c51b1be04eb4b018b234eaa13d50e93ca97728c789f3705"
+    },
+    {
+      "path": "src/dte_backend/transition_children.py",
+      "size": 1230,
+      "sha256": "d5564a866f4bcb4cb54e4dea6f55892b7947a86021df0eea5a48532ef0f3f80a"
+    },
+    {
+      "path": "src/dte_backend/transition_state.py",
+      "size": 1813,
+      "sha256": "aca90596772b2d07166337b401d54085e4c3b4239fff20188e83baccf3bc12ed"
+    },
+    {
+      "path": "src/dte_backend/validators.py",
+      "size": 812,
+      "sha256": "b7c578325f60737a6feda3660fd6c53b4d15782a3c931cf2a5e6718591ce4092"
+    }
+  ],
+  "bundle_sha256": "a85c3abf62134f7283a4b7f1bef31892d88c83e24491fa87bb0b388ba56da866"
+}

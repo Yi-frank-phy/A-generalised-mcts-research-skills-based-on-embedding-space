@@ -91,7 +91,7 @@ def _validate_geodesic(values: np.ndarray, count: int) -> np.ndarray:
     return matrix
 
 
-def _query_reference_weights(
+def query_reference_weights(
     query_embeddings: np.ndarray,
     reference_embeddings: np.ndarray,
     *,
@@ -142,7 +142,7 @@ def reference_radii_for_queries(
     """
     reference = _normalized(reference_embeddings, "reference_embeddings")
     geodesic = _validate_geodesic(geodesic_distances, len(reference))
-    weights = _query_reference_weights(query_embeddings, reference_embeddings)
+    weights = query_reference_weights(query_embeddings, reference_embeddings)
     return np.asarray(weights @ geodesic, dtype=float)
 
 

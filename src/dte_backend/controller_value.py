@@ -13,6 +13,10 @@ from .space_measure import intrinsic_cell_volumes, intrinsic_proper_volume_at_ra
 from .transition_state import embed_transition_nodes, require_completed_transition
 
 
+def _interpolation_neighbors(atlas: FrozenReferenceAtlas) -> int:
+    return min(len(atlas.embeddings), max(2, int(atlas.graph_k) + 1))
+
+
 def proper_volume_values_for_queries(
     source_embeddings: np.ndarray,
     query_radii: np.ndarray,
@@ -21,7 +25,7 @@ def proper_volume_values_for_queries(
     """Continuously extend reference proper-volume profiles to arbitrary sources.
 
     Reference vertex a owns the finite cumulative ball-measure profile D_a(r)
-    computed on the frozen atlas. An off-atlas source x receives the same
+    computed on the frozen atlas. An off-atlas source x receives the same local
     partition-of-unity interpolation used by the distance-profile extension:
 
         D_x(r) = sum_a lambda_a(x) D_a(r).
@@ -38,6 +42,7 @@ def proper_volume_values_for_queries(
     weights = query_reference_weights(
         source_embeddings,
         atlas.embeddings,
+        neighbor_count=_interpolation_neighbors(atlas),
     )
     volumes = intrinsic_cell_volumes(atlas.reference_density)
     result = np.zeros_like(radii, dtype=float)
@@ -66,6 +71,7 @@ def proper_volume_distance_matrix(
         targets,
         atlas.embeddings,
         atlas.geodesic_distances,
+        neighbor_count=_interpolation_neighbors(atlas),
     )
     return proper_volume_values_for_queries(sources, move_radii, atlas)
 

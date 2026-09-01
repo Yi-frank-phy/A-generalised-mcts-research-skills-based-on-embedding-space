@@ -101,10 +101,11 @@ def query_reference_weights(
     """Continuous local partition-of-unity weights over the frozen atlas.
 
     Off atlas this uses a compact-support modified Shepard construction. The
-    support radius is just outside the requested local-neighbour radius, so a
-    landmark entering or leaving support does so with vanishing weight. This
-    avoids both hard kNN membership jumps and the near-uniform global Shepard
-    weights caused by high-dimensional angular concentration.
+    requested local neighbours receive overlapping support whose boundary is
+    set by the next-nearest reference; landmarks enter or leave that support
+    with vanishing weight. This avoids both hard kNN membership jumps and the
+    near-uniform global Shepard weights caused by high-dimensional angular
+    concentration.
 
     At an exact reference location the corresponding reference row is recovered
     exactly. ``neighbor_count=None`` retains all references for compatibility;
@@ -142,8 +143,13 @@ def query_reference_weights(
             weights[row, exact] = 1.0 / float(len(exact))
             continue
 
+        # Use the next-nearest point as the compact-support boundary whenever
+        # possible. This leaves a finite overlap region between the landmarks
+        # that actually interpolate the query instead of approximating a hard
+        # nearest-cell switch.
+        boundary_index = min(support_count, n_reference - 1)
         local_radius = float(
-            np.partition(angular[row], support_count - 1)[support_count - 1]
+            np.partition(angular[row], boundary_index)[boundary_index]
         )
         support_radius = max(
             local_radius * (1.0 + 1e-6),

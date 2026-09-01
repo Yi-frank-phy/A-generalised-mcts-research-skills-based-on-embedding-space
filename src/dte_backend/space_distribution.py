@@ -74,7 +74,13 @@ def temperature_for_entropy(radii: np.ndarray, volumes: np.ndarray, target_entro
     return float(0.5 * (low + high))
 
 
-def node_reward_sd_from_occupancy(radii: np.ndarray, reference_density: np.ndarray, occupancy_fraction: float) -> dict[str, float]:
+def node_reward_sd_from_occupancy(
+    radii: np.ndarray,
+    reference_density: np.ndarray,
+    occupancy_fraction: float,
+    *,
+    reward_values: np.ndarray | None = None,
+) -> dict[str, float]:
     rho = float(occupancy_fraction)
     if not np.isfinite(rho) or not 0.0 < rho <= 1.0:
         raise ValueError("occupancy_fraction must lie in (0,1]")
@@ -82,11 +88,24 @@ def node_reward_sd_from_occupancy(radii: np.ndarray, reference_density: np.ndarr
     target = float(-np.log(rho))
     temperature = temperature_for_entropy(radii, volumes, target)
     probabilities = boltzmann_distribution(radii, temperature, volumes)
-    stats = volume_reward_statistics(radii, volumes, probabilities)
+
+    if reward_values is None:
+        stats = volume_reward_statistics(radii, volumes, probabilities)
+        reward_mean = float(stats["mean"])
+        reward_sd = float(stats["sd"])
+    else:
+        reward = _vec(reward_values, "reward_values")
+        if len(reward) != len(radii) or np.any(reward < 0.0):
+            raise ValueError("reward_values must be non-negative and align with radii")
+        reward_mean = float(np.sum(probabilities * reward))
+        reward_sd = float(
+            np.sqrt(np.sum(probabilities * (reward - reward_mean) ** 2))
+        )
+
     return {
         "temperature": temperature,
         "target_entropy": target,
-        "volume_reward_mean": float(stats["mean"]),
-        "volume_reward_sd": float(stats["sd"]),
+        "volume_reward_mean": reward_mean,
+        "volume_reward_sd": reward_sd,
         "geometric_half_peak_sd": min(float(temperature * np.log(2.0)), float(np.max(radii))),
     }

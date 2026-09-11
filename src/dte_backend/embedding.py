@@ -57,45 +57,98 @@ class GeminiEmbedding2Provider:
     api_key: str | None = None
     name: str = "gemini-embedding-2"
 
+    _BATCH_SIZE = 100
+
     def _key(self) -> str:
         key = self.api_key or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
         if not key:
             raise RuntimeError("GeminiEmbedding2Provider requires GEMINI_API_KEY or GOOGLE_API_KEY")
         return key
 
-    def _embed_one(self, text: str) -> list[float]:
+    def _post_json(self, method: str, payload: dict[str, object]) -> dict[str, object]:
         url = (
             "https://generativelanguage.googleapis.com/v1beta/"
-            f"models/{self.model}:embedContent?key={self._key()}"
+            f"models/{self.model}:{method}?key={self._key()}"
         )
-        payload = {
-            "content": {"parts": [{"text": text}]},
-            "outputDimensionality": self.dim,
-        }
         data = json.dumps(payload).encode("utf-8")
-        req = urlrequest.Request(url, data=data, headers={"Content-Type": "application/json"}, method="POST")
         last_error: Exception | None = None
         for attempt in range(5):
+            req = urlrequest.Request(
+                url,
+                data=data,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
             try:
                 with urlrequest.urlopen(req, timeout=60) as resp:
                     parsed = json.loads(resp.read().decode("utf-8"))
-                break
+                if not isinstance(parsed, dict):
+                    raise RuntimeError("Gemini embedding response must be a JSON object")
+                return parsed
+            except urlerror.HTTPError as exc:
+                last_error = exc
+                if exc.code not in {429, 500, 502, 503, 504} or attempt == 4:
+                    raise
+                retry_after = exc.headers.get("Retry-After") if exc.headers else None
+                try:
+                    requested_delay = float(retry_after) if retry_after else 0.0
+                except ValueError:
+                    requested_delay = 0.0
+                minimum_delay = 60.0 if exc.code == 429 else float(2**attempt)
+                time.sleep(max(minimum_delay, requested_delay))
             except (urlerror.URLError, TimeoutError, ssl.SSLError) as exc:
                 last_error = exc
                 if attempt == 4:
                     raise
                 time.sleep(2**attempt)
-        else:
-            raise RuntimeError(f"Gemini embedding request failed: {last_error}")
+        raise RuntimeError(f"Gemini embedding request failed: {last_error}")
+
+    def _embed_one(self, text: str) -> list[float]:
+        parsed = self._post_json(
+            "embedContent",
+            {
+                "content": {"parts": [{"text": text}]},
+                "outputDimensionality": self.dim,
+            },
+        )
         values = parsed.get("embedding", {}).get("values")
         if not isinstance(values, list):
             raise RuntimeError(f"Gemini embedding response missing embedding.values: {parsed}")
         return [float(v) for v in values]
 
     def embed_texts(self, texts: list[str]) -> list[list[float]]:
-        # Free AI Studio embedding does not expose a batch tier in the same way;
-        # keep batching at the DTE cache/request layer, not inside this REST loop.
-        return [self._embed_one(text) for text in texts]
+        if not texts:
+            return []
+
+        model_name = f"models/{self.model}"
+        vectors: list[list[float]] = []
+        for start in range(0, len(texts), self._BATCH_SIZE):
+            batch = texts[start : start + self._BATCH_SIZE]
+            parsed = self._post_json(
+                "batchEmbedContents",
+                {
+                    "requests": [
+                        {
+                            "model": model_name,
+                            "content": {"parts": [{"text": text}]},
+                            "outputDimensionality": self.dim,
+                        }
+                        for text in batch
+                    ]
+                },
+            )
+            embeddings = parsed.get("embeddings")
+            if not isinstance(embeddings, list) or len(embeddings) != len(batch):
+                raise RuntimeError(
+                    "Gemini batch embedding response has the wrong number of embeddings"
+                )
+            for embedding in embeddings:
+                if not isinstance(embedding, dict) or not isinstance(embedding.get("values"), list):
+                    raise RuntimeError(
+                        "Gemini batch embedding response missing embedding values"
+                    )
+                vectors.append([float(value) for value in embedding["values"]])
+        return vectors
 
 
 def get_embedding_provider(name: str = "hash", dim: int = 3072) -> EmbeddingProvider:

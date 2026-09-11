@@ -1,0 +1,113 @@
+name: DTE strict-run proof
+
+on:
+  push:
+    branches:
+      - dte-strict-run-proof-20260911
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  strict-run-proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: python -m pip install -e .[dev]
+
+      - name: Verify bundle
+        run: python scripts/generate_bundle_manifest.py --verify
+
+      - name: Run full test suite
+        run: python -m pytest -q
+
+      - name: Run repository smoke workflow
+        run: python scripts/smoke_workflow.py
+
+      - name: Record strict-run CLI surface
+        run: |
+          mkdir -p artifacts/strict-run-proof
+          python -m dte_backend strict-run --help | tee artifacts/strict-run-proof/strict_run_help.txt
+
+      - name: Require Gemini secret
+        run: |
+          if [ -z "$GEMINI_API_KEY" ]; then
+            echo "GEMINI_API_KEY secret is unavailable" | tee artifacts/strict-run-proof/blocker.txt
+            exit 1
+          fi
+
+      - name: Verify Gemini 3072 geometry
+        run: python scripts/gemini_smoke.py | tee artifacts/strict-run-proof/gemini_smoke.txt
+
+      - name: Prepare real run specification
+        run: |
+          jq '.problem = "Exercise the DTE strict-run lifecycle on the checked-in frontier fixture." |
+              .goal = "Reach a terminal strict-run state and emit the complete observable artifact set." |
+              .constraints = [
+                "Use Gemini embedding geometry at dimension 3072.",
+                "Use a persistent semantic cache.",
+                "Do not treat smoke adapters as research judgment."
+              ] |
+              .embedding_provider = "gemini-embedding-2" |
+              .embedding_dimension = 3072'               examples/run_spec.json > artifacts/strict-run-proof/run_spec.real.json
+
+      - name: Run real strict workflow to terminal state
+        run: |
+          python -m dte_backend strict-run             --mode real             --spec artifacts/strict-run-proof/run_spec.real.json             --nodes examples/frontier_nodes.json             --out-dir artifacts/strict-run-proof/run             --cache-path .dte_cache/strict-run-proof-cache.json             | tee artifacts/strict-run-proof/strict_run_stdout.txt
+
+      - name: Validate terminal artifacts
+        run: |
+          required=(
+            main_agent_status.md
+            frontier.md
+            entropy_trace.md
+            relation_candidates.md
+            human_questions.md
+            report.md
+            strict_run_status.json
+            nodes.json
+            traces.json
+            role_audit.md
+          )
+          for name in "${required[@]}"; do
+            test -s "artifacts/strict-run-proof/run/$name"
+          done
+          jq -e '
+            .mode == "real" and
+            .embedding_provider == "gemini-embedding-2" and
+            .embedding_dimension == 3072 and
+            .finalized == true
+          ' artifacts/strict-run-proof/run/strict_run_status.json
+          cp .dte_cache/strict-run-proof-cache.json artifacts/strict-run-proof/cache.json
+          {
+            echo "## DTE strict-run proof"
+            echo
+            echo "- Commit: ${GITHUB_SHA}"
+            echo "- Python: 3.12"
+            echo "- Mode: real"
+            echo "- Embedding: gemini-embedding-2 / 3072"
+            echo "- Required artifacts: present and nonempty"
+            echo
+            echo '~~~json'
+            cat artifacts/strict-run-proof/run/strict_run_status.json
+            echo '~~~'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload proof bundle
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dte-strict-run-proof-${{ github.run_id }}
+          path: artifacts/strict-run-proof
+          if-no-files-found: warn
+          retention-days: 14
